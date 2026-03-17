@@ -145,36 +145,38 @@ def train(args):
                 ema_model.step(model.parameters())
 
             global_step += 1
-            if global_step % 100 == 0 and accelerator.is_main_process:
+            if global_step % 1000 == 0 and accelerator.is_main_process:
                 wandb.log({
                     "train_loss": loss.item(),
                     "step": global_step,
                     "lr": lr_scheduler.get_last_lr()[0]
                 })
 
-        model.eval()
-        val_loss = 0.0
-        val_steps = 0
-        
-        with torch.no_grad():
-            for val_images, val_images_add in test_dataloader:
-                val_t = diffusion.sample_timesteps(val_images.shape[0]).to(device)
-                val_x_t = diffusion.mix_images(val_images, val_images_add, val_t)
-                
-                val_pred = model(val_x_t, val_t).sample
-                v_loss = F.mse_loss(val_pred, val_images)
-                
-                v_loss = accelerator.gather(v_loss).mean()
-                val_loss += v_loss.item()
-                val_steps += 1
-                
-        avg_val_loss = val_loss / val_steps
-        
-        if accelerator.is_main_process:
-            wandb.log({
-                "val_loss": avg_val_loss,
-                "epoch": epoch
-            })
+        if (epoch + 1) % 5 == 0:
+            model.eval()
+            val_loss = 0.0
+            val_steps = 0
+            
+            with torch.no_grad():
+                for val_images, val_images_add in test_dataloader:
+                    val_t = diffusion.sample_timesteps(val_images.shape[0]).to(device)
+                    val_x_t = diffusion.mix_images(val_images, val_images_add, val_t)
+                    
+                    val_pred = model(val_x_t, val_t).sample
+                    v_loss = F.mse_loss(val_pred, val_images)
+                    
+                    v_loss = accelerator.gather(v_loss).mean()
+                    
+                    val_loss += v_loss.detach() 
+                    val_steps += 1
+                    
+            avg_val_loss = val_loss.item() / val_steps
+            
+            if accelerator.is_main_process:
+                wandb.log({
+                    "val_loss": avg_val_loss,
+                    "epoch": epoch
+                })
 
         if (epoch + 1) % 50 == 0 and accelerator.is_main_process:
             unet = accelerator.unwrap_model(model)
