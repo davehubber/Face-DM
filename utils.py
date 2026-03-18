@@ -1,23 +1,24 @@
-import os, numpy as np, pandas as pd
+import os
 import torch
+import math
+import numpy as np
 import torchvision
-import torchvision.transforms.functional as TF
-import random
-from PIL import Image
-from matplotlib import pyplot as plt
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
+from diffusers import PriorTransformer
+from skimage.metrics import structural_similarity, peak_signal_noise_ratio
 
-def plot_images(images):
-    plt.figure(figsize=(32, 32))
-    plt.imshow(torch.cat([
-        torch.cat([i for i in images.cpu()], dim=-1),
-    ], dim=-2).permute(1, 2, 0).cpu())
-    plt.show()
+def setup_logging(run_name):
+    base_dir = os.path.join("experiments", run_name)
+    os.makedirs(os.path.join(base_dir, "checkpoints"), exist_ok=True)
+    os.makedirs(os.path.join(base_dir, "samples", "eval"), exist_ok=True)
+    os.makedirs(os.path.join(base_dir, "samples", "one_shot"), exist_ok=True)
+    os.makedirs(os.path.join(base_dir, "results"), exist_ok=True)
+    return base_dir
 
 def save_images(images, obtained_images, original_images, added_images, path, **kwargs):
     input_images = (original_images * 0.5 + added_images * 0.5).type(torch.uint8)
-    
     B, C, H, W = original_images.shape
+    
     all_images = torch.stack([
         original_images, 
         added_images, 
@@ -27,79 +28,77 @@ def save_images(images, obtained_images, original_images, added_images, path, **
     ], dim=1).view(-1, C, H, W)
     
     grid = torchvision.utils.make_grid(all_images, nrow=5, padding=2, pad_value=255, **kwargs)
-    
     ndarr = grid.permute(1, 2, 0).to('cpu').numpy().astype(np.uint8)
     
+    from PIL import Image
     im = Image.fromarray(ndarr)
     im.save(path)
 
-def save_image_sampling(images, path, **kwargs):
-    grid = torchvision.utils.make_grid(images, nrow=8, **kwargs)
-    ndarr = grid.permute(1, 2, 0).to('cpu').numpy()
-    im = Image.fromarray(ndarr)
-    im.save(path)
-
-class TheDataset(Dataset):
-    def __init__(self, dataset_path, partition, csv_file, transform=None):
-        self.dataset_path = dataset_path
-        self.partition = partition
+class EmbeddingDataset(Dataset):
+    def __init__(self, data_dir, partition='train', scale_factor=17.2):
+        self.scale_factor = scale_factor
+        self.embeds1 = torch.load(os.path.join(data_dir, f"{partition}_dataset1_embeds.pt"))
+        self.embeds2 = torch.load(os.path.join(data_dir, f"{partition}_dataset2_embeds.pt"))
         
-        df = pd.read_csv(csv_file, sep=",")
-
-        if 'partition' in df.columns:
-            df = df[df['partition'] == partition]
-
-        self.image_paths_1 = np.asarray(df['Image1'].values)
-        self.image_paths_2 = np.asarray(df['Image2'].values)
-
-        self.transform = transform
-        print('Size of ' + partition + ': ' + str(len(self.image_paths_1)))
-        
-    def __getitem__(self, index):
-        x1 = Image.open(os.path.join(self.dataset_path, self.image_paths_1[index])).convert("RGB")
-        x2 = Image.open(os.path.join(self.dataset_path, self.image_paths_2[index])).convert("RGB")
-        
-        if self.partition == 'train':
-            if random.random() > 0.5:
-                x1 = TF.hflip(x1)
-                x2 = TF.hflip(x2)
-
-        if self.transform is not None:
-            x1 = self.transform(x1)
-            x2 = self.transform(x2)
+        self.embeds1 = self.embeds1 * self.scale_factor
+        self.embeds2 = self.embeds2 * self.scale_factor
             
-        return x1, x2
+    def __getitem__(self, index):
+        return self.embeds1[index], self.embeds2[index]
     
     def __len__(self):
-        return len(self.image_paths_1)
+        return len(self.embeds1)
 
-def get_data(args, partition):
-    transforms = torchvision.transforms.Compose([
-        torchvision.transforms.Resize(args.image_size),
-        torchvision.transforms.ToTensor(),
-        torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ])
+class ColdDiffusionEmbeds:
+    def __init__(self, max_timesteps=250, alpha_start=0., alpha_max=0.5, device="cuda"):
+        self.max_timesteps = max_timesteps
+        self.device = device
+        self.alteration_per_t = (alpha_max - alpha_start) / max_timesteps
 
-    dataset = TheDataset(args.dataset_path, partition, args.partition_file, transform=transforms)
-    
-    num_workers = min(os.cpu_count() or 1, 8) 
-    
-    dataloader = DataLoader(
-        dataset, 
-        batch_size=args.batch_size, 
-        shuffle=(partition == 'train'), 
-        num_workers=num_workers, 
-        pin_memory=True,
-        persistent_workers=(num_workers > 0),
-        prefetch_factor=2 if num_workers > 0 else None
+    def mix_embeds(self, emb_1, emb_2, t):
+        w1 = (1. - self.alteration_per_t * t).unsqueeze(1)
+        w2 = (self.alteration_per_t * t).unsqueeze(1)
+        return emb_1 * w1 + emb_2 * w2
+
+    def sample_timesteps(self, n):
+        return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
+
+    def sample(self, model, superimposed_emb, alpha_init=0.5):
+        n = len(superimposed_emb)
+        init_timestep = math.ceil(alpha_init / self.alteration_per_t)
+        model.eval()
+        with torch.no_grad():
+            x_t = superimposed_emb.clone()
+
+            for i in reversed(range(1, init_timestep + 1)):
+                t = (torch.ones(n) * i).long().to(self.device)
+                predicted_emb = model(hidden_states=x_t, timestep=t, proj_embedding=superimposed_emb).predicted_image_embedding
+                other_emb = (superimposed_emb - (1. - alpha_init) * predicted_emb) / alpha_init
+                x_t = x_t - self.mix_embeds(predicted_emb, other_emb, t) + self.mix_embeds(predicted_emb, other_emb, t-1)
+        
+        model.train()
+        other_emb = (superimposed_emb - (1 - alpha_init) * x_t) / alpha_init
+        return x_t, other_emb
+
+def get_prior_model():
+    return PriorTransformer(
+        num_embeddings=1,
+        embedding_dim=768,
+        num_attention_heads=12,
+        num_layers=12,
+        project_dim=768,
     )
-    return dataloader
 
-def setup_logging(run_name):
-    base_dir = os.path.join("experiments", run_name)
-    os.makedirs(os.path.join(base_dir, "checkpoints"), exist_ok=True)
-    os.makedirs(os.path.join(base_dir, "samples", "train_fixed"), exist_ok=True)
-    os.makedirs(os.path.join(base_dir, "samples", "eval"), exist_ok=True)
-    os.makedirs(os.path.join(base_dir, "samples", "one_shot"), exist_ok=True)
-    os.makedirs(os.path.join(base_dir, "results"), exist_ok=True)
-    return base_dir
+def calculate_metrics(image, add_image, result_ori_image, result_add_image):
+    ssim_original = structural_similarity(image, result_ori_image, data_range=255, channel_axis=-1)
+    ssim_added = structural_similarity(add_image, result_add_image, data_range=255, channel_axis=-1)
+    psnr_original = peak_signal_noise_ratio(image, result_ori_image, data_range=255)
+    psnr_added = peak_signal_noise_ratio(add_image, result_add_image, data_range=255)
+    return ssim_original, ssim_added, psnr_original, psnr_added
+
+def decode_batch_to_images(embeds, decoder, scale_factor):
+    embeds_unscaled = embeds / scale_factor
+    images = decoder(image_embeds=embeds_unscaled.to(torch.float16), num_inference_steps=25, output_type="pt").images
+    images_lpips = (images * 2) - 1
+    images_uint8 = (images * 255).clamp(0, 255).type(torch.uint8)
+    return images_lpips, images_uint8
