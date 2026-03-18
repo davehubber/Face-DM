@@ -226,8 +226,9 @@ def eval(args):
     lpips_model = lpips.LPIPS(net='alex').to(device)
 
     ssim_o, ssim_a, lpips_o, lpips_a, psnr_o, psnr_a = [], [], [], [], [], []
-    success_count = 0
-    total_count = 0
+    success_count_target = 0
+    success_count_deduced = 0
+    total_items = 0
     
     grid_si, grid_soi, grid_i, grid_ia = [], [], [], []
     collected_for_grid = 0
@@ -268,10 +269,10 @@ def eval(args):
                 ssim_s_a = structural_similarity(images_add_np[k], superimposed_np[k], data_range=255, channel_axis=-1)
                 
                 if so > ssim_s_o:
-                    success_count += 1
+                    success_count_target += 1
                 if sa > ssim_s_a:
-                    success_count += 1
-                total_count += 2
+                    success_count_deduced += 1
+                total_items += 1
 
                 ssim_o.append(so)
                 ssim_a.append(sa)
@@ -293,17 +294,19 @@ def eval(args):
     avg_psnr_a = np.average(psnr_a)
     avg_lpips_o = np.average(lpips_o)
     avg_lpips_a = np.average(lpips_a)
-    success_rate = (success_count / total_count) * 100
+    success_rate_target = (success_count_target / total_items) * 100
+    success_rate_deduced = (success_count_deduced / total_items) * 100
 
     metrics_report = (
-        f"Metrics organized by original images:\n"
-        f"SSIM Original: {avg_ssim_o}\n"
-        f"SSIM Added: {avg_ssim_a}\n"
-        f"PSNR Original: {avg_psnr_o}\n"
-        f"PSNR Added: {avg_psnr_a}\n"
-        f"LPIPS Original: {avg_lpips_o}\n"
-        f"LPIPS Added: {avg_lpips_a}\n"
-        f"Success Rate of Reversal (%S): {success_rate:.2f}%\n"
+        f"--- One-Shot Evaluation Metrics (Entire Test Set) ---\n"
+        f"SSIM Target: {avg_ssim_o:.4f}\n"
+        f"SSIM Deduced: {avg_ssim_a:.4f}\n"
+        f"PSNR Target: {avg_psnr_o:.4f}\n"
+        f"PSNR Deduced: {avg_psnr_a:.4f}\n"
+        f"LPIPS Target: {avg_lpips_o:.4f}\n"
+        f"LPIPS Deduced: {avg_lpips_a:.4f}\n"
+        f"Success Rate of Reversal Target (%S): {success_rate_target:.2f}%\n"
+        f"Success Rate of Reversal Deduced (%S): {success_rate_deduced:.2f}%\n"
     )
     print(f'\n{metrics_report}')
     
@@ -328,8 +331,9 @@ def one_shot_eval(args):
     lpips_model = lpips.LPIPS(net='alex').to(device)
     
     ssim_o, ssim_a, psnr_o, psnr_a, lpips_o, lpips_a = [], [], [], [], [], []
-    success_count = 0
-    total_count = 0
+    success_count_target = 0
+    success_count_deduced = 0
+    total_items = 0
 
     grid_si, grid_soi, grid_i, grid_ia = [], [], [], []
     collected_for_grid = 0
@@ -380,10 +384,10 @@ def one_shot_eval(args):
                 ssim_s_a = structural_similarity(images_add_np[k], S_np[k], data_range=255, channel_axis=-1)
                 
                 if so > ssim_s_o:
-                    success_count += 1
+                    success_count_target += 1
                 if sa > ssim_s_a:
-                    success_count += 1
-                total_count += 2
+                    success_count_deduced += 1
+                total_items += 1
                 
                 ssim_o.append(so)
                 ssim_a.append(sa)
@@ -402,17 +406,19 @@ def one_shot_eval(args):
     avg_ssim_o, avg_ssim_a = np.average(ssim_o), np.average(ssim_a)
     avg_psnr_o, avg_psnr_a = np.average(psnr_o), np.average(psnr_a)
     avg_lpips_o, avg_lpips_a = np.average(lpips_o), np.average(lpips_a)
-    success_rate = (success_count / total_count) * 100
+    success_rate_target = (success_count_target / total_items) * 100
+    success_rate_deduced = (success_count_deduced / total_items) * 100
 
     metrics_report = (
         f"--- One-Shot Evaluation Metrics (Entire Test Set) ---\n"
-        f"SSIM Original: {avg_ssim_o:.4f}\n"
-        f"SSIM Added: {avg_ssim_a:.4f}\n"
-        f"PSNR Original: {avg_psnr_o:.4f}\n"
-        f"PSNR Added: {avg_psnr_a:.4f}\n"
-        f"LPIPS Original: {avg_lpips_o:.4f}\n"
-        f"LPIPS Added: {avg_lpips_a:.4f}\n"
-        f"Success Rate of Reversal (%S): {success_rate:.2f}%\n"
+        f"SSIM Target: {avg_ssim_o:.4f}\n"
+        f"SSIM Deduced: {avg_ssim_a:.4f}\n"
+        f"PSNR Target: {avg_psnr_o:.4f}\n"
+        f"PSNR Deduced: {avg_psnr_a:.4f}\n"
+        f"LPIPS Target: {avg_lpips_o:.4f}\n"
+        f"LPIPS Deduced: {avg_lpips_a:.4f}\n"
+        f"Success Rate of Reversal Target (%S): {success_rate_target:.2f}%\n"
+        f"Success Rate of Reversal Deduced (%S): {success_rate_deduced:.2f}%\n"
     )
     
     print(f"\n{metrics_report}")
