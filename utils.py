@@ -66,5 +66,4 @@ def get_prior_model():
         embedding_dim=768,
         num_attention_heads=12,
         num_layers=12,
-        project_dim=768,
     )
