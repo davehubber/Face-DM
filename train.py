@@ -35,7 +35,7 @@ def train(args):
     ema_model.to(device)
 
     if accelerator.is_main_process:
-        wandb.init(project="Face-DM-Embeds", name=args.run_name, config=vars(args))
+        wandb.init(project="Face-DM", name=args.run_name, config=vars(args))
 
     global_step = 0
     model, optimizer, train_dataloader, test_dataloader, lr_scheduler = accelerator.prepare(
