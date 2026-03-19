@@ -185,8 +185,8 @@ def launch():
     parser.add_argument('--lr', default=1e-4, help='Learning rate', type=float, required=False)
 
     args = parser.parse_args()
-    train(args)
-    eval(args)
+    #train(args)
+    #eval(args)
     one_shot_eval(args)
 
 
