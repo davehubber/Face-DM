@@ -91,7 +91,8 @@ def train(args):
                         "train_loss": loss.item(), 
                         "val_loss": avg_val_loss,
                         "step": global_step, 
-                        "lr": lr_scheduler.get_last_lr()
+                        "epoch": epoch,
+                        "lr": optimizer.param_groups['lr']
                     })
                 
                 model.train()
