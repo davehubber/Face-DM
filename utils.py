@@ -15,8 +15,8 @@ def setup_logging(run_name):
 class EmbeddingDataset(Dataset):
     def __init__(self, data_dir, partition='train', scale_factor=17.2):
         self.scale_factor = scale_factor
-        self.embeds1 = torch.load(os.path.join(data_dir, f"{partition}_dataset1_embeds.pt"))
-        self.embeds2 = torch.load(os.path.join(data_dir, f"{partition}_dataset2_embeds.pt"))
+        self.embeds1 = torch.load(os.path.join(data_dir, f"{partition}_dataset1_embeds.pt"), weights_only=True)
+        self.embeds2 = torch.load(os.path.join(data_dir, f"{partition}_dataset2_embeds.pt"), weights_only=True)
 
         self.embeds1 = self.embeds1 * self.scale_factor
         self.embeds2 = self.embeds2 * self.scale_factor
@@ -29,7 +29,7 @@ class EmbeddingDataset(Dataset):
 
 
 class ColdDiffusionEmbeds:
-    def __init__(self, max_timesteps=250, alpha_start=0., alpha_max=0.5, device="cuda"):
+    def __init__(self, max_timesteps=10, alpha_start=0., alpha_max=0.5, device="cuda"):
         self.max_timesteps = max_timesteps
         self.device = device
         self.alteration_per_t = (alpha_max - alpha_start) / max_timesteps

@@ -1,3 +1,0 @@
---- One-Shot Evaluation Metrics ---
-Latent MSE Target: 0.0096
-Latent MSE Deduced: 0.1532
