@@ -13,7 +13,7 @@ def setup_logging(run_name):
 
 
 class EmbeddingDataset(Dataset):
-    def __init__(self, data_dir, partition='train', scale_factor=17.2):
+    def __init__(self, data_dir, partition='train', scale_factor=27.7191):
         self.scale_factor = scale_factor
         self.embeds1 = torch.load(os.path.join(data_dir, f"{partition}_dataset1_embeds.pt"), weights_only=True)
         self.embeds2 = torch.load(os.path.join(data_dir, f"{partition}_dataset2_embeds.pt"), weights_only=True)

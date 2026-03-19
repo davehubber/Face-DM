@@ -1,0 +1,5 @@
+--- Regular Evaluation Metrics ---
+Cosine Sim Target: 0.9866
+Cosine Sim Deduced: 0.9865
+Top-1 Acc Target: 0.6139
+Top-1 Acc Deduced: 0.4115

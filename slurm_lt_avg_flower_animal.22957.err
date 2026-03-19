@@ -1,0 +1,9 @@
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /nas-ctm01/homes/dacordeiro/.netrc.
+wandb: Currently logged in as: davcordeiro03 (davcordeiro03-inesc-tec) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run farn6qby
+wandb: Tracking run with wandb version 0.25.0
+wandb: Run data is saved locally in /nas-ctm01/homes/dacordeiro/Face-DM/wandb/run-20260319_180707-farn6qby
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run lt_avg_flower_animal
+wandb: ⭐️ View project at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM
+wandb: 🚀 View run at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/farn6qby
