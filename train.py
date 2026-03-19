@@ -92,7 +92,7 @@ def train(args):
                         "val_loss": avg_val_loss,
                         "step": global_step, 
                         "epoch": epoch,
-                        "lr": optimizer.param_groups['lr']
+                        "lr": optimizer.param_groups[0]['lr']
                     })
                 
                 model.train()
