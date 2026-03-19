@@ -62,8 +62,13 @@ class ColdDiffusionEmbeds:
 
 def get_prior_model():
     return PriorTransformer(
-        num_embeddings=1,
         embedding_dim=768,
         num_attention_heads=12,
         num_layers=12,
+        embedding_proj_dim=768,
+        clip_embed_dim=768,
+        num_embeddings=0,
+        additional_embeddings=3,
+        encoder_hid_proj_type=None,
+        added_emb_type=None,
     )
