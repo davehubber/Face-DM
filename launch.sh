@@ -8,4 +8,4 @@
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train.py --dataset_path "/nas-ctm01/datasets/public/Oxford102Flowers/jpg" --run_name "lt_avg_flower_animal" --partition_file "partition.csv" --batch_size 2048 --epochs 150
+python train.py --data_dir "data_embeddings" --run_name "lt_avg_flower_animal" --partition_file "partition.csv" --batch_size 2048 --epochs 150
