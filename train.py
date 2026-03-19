@@ -50,7 +50,7 @@ def train(args):
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_embeds(e1, e2, t)
                 superimposed = (e1 + e2) / 2.0
-                predicted_emb = model(hidden_states=x_t, timestep=t, proj_embedding=superimposed).predicted_image_embedding
+                predicted_emb = model(hidden_states=x_t, timestep=t, proj_embedding=superimposed).predicted_image_embedding.squeeze(1)
 
                 loss = F.mse_loss(predicted_emb, e1)
 
@@ -80,7 +80,7 @@ def train(args):
                     val_x_t = diffusion.mix_embeds(v_e1, v_e2, val_t)
                     val_sup = (v_e1 + v_e2) / 2.0
 
-                    val_pred = model(hidden_states=val_x_t, timestep=val_t, proj_embedding=val_sup).predicted_image_embedding
+                    val_pred = model(hidden_states=val_x_t, timestep=val_t, proj_embedding=val_sup).predicted_image_embedding.squeeze(1)
                     v_loss = F.mse_loss(val_pred, v_e1)
                     v_loss = accelerator.gather(v_loss).mean()
                     val_loss += v_loss.detach()
@@ -156,7 +156,7 @@ def one_shot_eval(args):
         t = (torch.ones(n) * init_timestep).long().to(device)
 
         with torch.no_grad():
-            pred_e1 = model(hidden_states=S, timestep=t, proj_embedding=S).predicted_image_embedding
+            pred_e1 = model(hidden_states=S, timestep=t, proj_embedding=S).predicted_image_embedding.squeeze(1)
             pred_e2 = (S - (1 - args.alpha_init) * pred_e1) / args.alpha_init
 
         latent_mse_t.append(F.mse_loss(pred_e1, e1).item())

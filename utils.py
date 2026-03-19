@@ -51,7 +51,7 @@ class ColdDiffusionEmbeds:
 
             for i in reversed(range(1, init_timestep + 1)):
                 t = (torch.ones(n) * i).long().to(self.device)
-                predicted_emb = model(hidden_states=x_t, timestep=t, proj_embedding=superimposed_emb).predicted_image_embedding
+                predicted_emb = model(hidden_states=x_t, timestep=t, proj_embedding=superimposed_emb).predicted_image_embedding.squeeze(1)
                 other_emb = (superimposed_emb - (1. - alpha_init) * predicted_emb) / alpha_init
                 x_t = x_t - self.mix_embeds(predicted_emb, other_emb, t) + self.mix_embeds(predicted_emb, other_emb, t-1)
 
