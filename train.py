@@ -74,7 +74,7 @@ def train(args):
 
                 with torch.no_grad():
                     for v_e1, v_e2 in test_dataloader:
-                        val_t = diffusion.sample_timesteps(v_e1.shape).to(device)
+                        val_t = diffusion.sample_timesteps(v_e1.shape[0]).to(device)
                         val_x_t = diffusion.mix_embeds(v_e1, v_e2, val_t)
                         val_sup = (v_e1 + v_e2) / 2.0
 
