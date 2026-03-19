@@ -1,0 +1,3 @@
+--- Regular Evaluation Metrics ---
+Latent MSE Target: 0.0106
+Latent MSE Deduced: 0.0106
