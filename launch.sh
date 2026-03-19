@@ -8,4 +8,4 @@
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train.py --data_dir "data_embeddings" --run_name "lt_avg_flower_animal" --batch_size 1536 --epochs 150
+python train.py --data_dir "data_embeddings" --run_name "lt_avg_flower_animal" --batch_size 1024 --epochs 150
