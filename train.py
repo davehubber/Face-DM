@@ -131,13 +131,13 @@ def eval(args):
         pred_e1_norm = F.normalize(pred_e1, dim=-1)
         e1_norm = F.normalize(e1, dim=-1)
         sim_matrix_t = pred_e1_norm @ e1_norm.T
-        top1_t = (sim_matrix_t.argmax(dim=1) == torch.arange(e1.shape, device=device)).float().mean().item()
+        top1_t = (sim_matrix_t.argmax(dim=1) == torch.arange(e1.shape[0], device=device)).float().mean().item()
         top1_acc_t_list.append(top1_t)
 
         pred_e2_norm = F.normalize(pred_e2, dim=-1)
         e2_norm = F.normalize(e2, dim=-1)
         sim_matrix_d = pred_e2_norm @ e2_norm.T
-        top1_d = (sim_matrix_d.argmax(dim=1) == torch.arange(e2.shape, device=device)).float().mean().item()
+        top1_d = (sim_matrix_d.argmax(dim=1) == torch.arange(e2.shape[0], device=device)).float().mean().item()
         top1_acc_d_list.append(top1_d)
 
     metrics_report = (
