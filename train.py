@@ -1,16 +1,14 @@
 import os
 import torch
 import math
+import wandb
 import numpy as np
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from diffusers.training_utils import EMAModel
-import wandb
-
-from utils import setup_logging, EmbeddingDataset, ColdDiffusionEmbeds, get_prior_model
-
+from utils import setup_logging, EmbeddingDataset, ColdDiffusionEmbeds, get_prior_model, run_image_evaluation
 
 def train(args):
     base_dir = setup_logging(args.run_name)
@@ -148,6 +146,10 @@ def eval(args):
         f"Top-1 Acc Target: {np.mean(top1_acc_t_list):.4f}\n"
         f"Top-1 Acc Deduced: {np.mean(top1_acc_d_list):.4f}\n"
     )
+
+    img_report = run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode="Regular")
+    metrics_report += img_report
+
     print(f'\n{metrics_report}')
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
@@ -202,6 +204,9 @@ def one_shot_eval(args):
         f"Top-1 Acc Deduced: {np.mean(top1_acc_d_list):.4f}\n"
     )
 
+    img_report = run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode="Regular")
+    metrics_report += img_report
+
     print(f"\n{metrics_report}")
     with open(os.path.join(base_dir, "results", "one_shot_metrics.txt"), "w") as f:
         f.write(metrics_report)
@@ -218,7 +223,7 @@ def launch():
     parser.add_argument('--lr', default=1e-4, help='Learning rate', type=float, required=False)
 
     args = parser.parse_args()
-    train(args)
+    #train(args)
     eval(args)
     one_shot_eval(args)
 
