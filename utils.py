@@ -75,8 +75,9 @@ def get_prior_model():
 
 def get_decoder_pipeline(device):
     pipeline = StableUnCLIPPipeline.from_pretrained(
-        "stabilityai/stable-diffusion-2-1-unclip-small", 
-        torch_dtype=torch.float16
+        "sd2-community/stable-diffusion-2-1-unclip-small",
+        torch_dtype=torch.float16,
+        variant="fp16",
     )
     pipeline = pipeline.to(device)
     pipeline.set_progress_bar_config(disable=True)
