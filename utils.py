@@ -99,18 +99,18 @@ def decode_embeddings_to_images(embeddings, pipeline, device):
 
 def compute_image_metrics(gt, pred, avg, psnr_fn, ssim_fn, lpips_fn):
     psnr_val = psnr_fn(pred, gt).item()
-    ssim_val = ssim_fn(pred.unsqueeze(0), gt.unsqueeze(0)).item()
-    
+    ssim_val = ssim_fn(pred, gt).item()
+
     gt_lpips = gt * 2.0 - 1.0
     pred_lpips = pred * 2.0 - 1.0
     avg_lpips = avg * 2.0 - 1.0
-    
-    lpips_val = lpips_fn(pred_lpips.unsqueeze(0), gt_lpips.unsqueeze(0)).item()
-    
+
+    lpips_val = lpips_fn(pred_lpips, gt_lpips).item()
+
     dist_to_gt = lpips_val
-    dist_to_avg = lpips_fn(pred_lpips.unsqueeze(0), avg_lpips.unsqueeze(0)).item()
+    dist_to_avg = lpips_fn(pred_lpips, avg_lpips).item()
     success = 1 if dist_to_gt < dist_to_avg else 0
-    
+
     return psnr_val, ssim_val, lpips_val, success
 
 def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode="Regular"):
@@ -163,7 +163,13 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
             p, s, l, succ = compute_image_metrics(gt2_img, pred2_img, avg_img, psnr_metric, ssim_metric, lpips_metric)
             psnr_list.append(p); ssim_list.append(s); lpips_list.append(l); success_count += succ
             
-            grid_images.extend([gt1_img, gt2_img, avg_img, pred1_img, pred2_img])
+            grid_images.extend([
+                gt1_img.squeeze(0),
+                gt2_img.squeeze(0),
+                avg_img.squeeze(0),
+                pred1_img.squeeze(0),
+                pred2_img.squeeze(0),
+            ])
             evaluated_count += 1
 
         if evaluated_count >= num_eval_images:
