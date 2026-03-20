@@ -4,7 +4,7 @@ import math
 import numpy as np
 import torchvision
 from torch.utils.data import Dataset
-from diffusers import PriorTransformer, StableUnCLIPPipeline
+from diffusers import PriorTransformer, StableUnCLIPImg2ImgPipeline
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
@@ -74,19 +74,25 @@ def get_prior_model():
     )
 
 def get_decoder_pipeline(device):
-    pipeline = StableUnCLIPPipeline.from_pretrained(
+    pipeline = StableUnCLIPImg2ImgPipeline.from_pretrained(
         "sd2-community/stable-diffusion-2-1-unclip-small",
         torch_dtype=torch.float16,
-        variant="fp16",
+        use_safetensors=True,
     )
     pipeline = pipeline.to(device)
     pipeline.set_progress_bar_config(disable=True)
     return pipeline
 
 def decode_embeddings_to_images(embeddings, pipeline, device):
-    embeddings = embeddings.to(dtype=pipeline.unet.dtype, device=device)
-    
-    images = pipeline(image_embeddings=embeddings, num_inference_steps=20).images
+    embeddings = embeddings.to(device=device, dtype=pipeline.unet.dtype)
+
+    images = pipeline(
+        prompt=[""] * embeddings.shape[0],
+        image_embeds=embeddings,
+        noise_level=0,
+        num_inference_steps=20,
+    ).images
+
     transform = torchvision.transforms.ToTensor()
     image_tensors = torch.stack([transform(img) for img in images]).to(device)
     return image_tensors
