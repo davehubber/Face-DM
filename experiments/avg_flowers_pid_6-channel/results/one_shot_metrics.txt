@@ -1,0 +1,9 @@
+--- One-Shot Evaluation Metrics (Permutation-Invariant Matching) ---
+SSIM Image 1: 0.6965
+SSIM Image 2: 0.6978
+PSNR Image 1: 20.2100
+PSNR Image 2: 20.1988
+LPIPS Image 1: 0.1048
+LPIPS Image 2: 0.1048
+Success Rate Image 1 (%S): 95.32%
+Success Rate Image 2 (%S): 94.82%
