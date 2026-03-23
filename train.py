@@ -535,9 +535,9 @@ def launch():
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
 
-    eval_grid_only(args)
+    #eval_grid_only(args)
     #train(args)
-    #eval(args)
+    eval(args)
     #one_shot_eval(args)
 
 if __name__ == '__main__':
