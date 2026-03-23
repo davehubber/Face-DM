@@ -145,7 +145,7 @@ def train(args):
     for val_img, val_img_add in test_dataloader:
         fixed_val_images.append(val_img)
         fixed_val_images_add.append(val_img_add)
-        if sum(x.shape for x in fixed_val_images) >= 10:
+        if sum(x.shape[0] for x in fixed_val_images) >= 10:
             break
     fixed_val_images = torch.cat(fixed_val_images)[:10].to(device)
     fixed_val_images_add = torch.cat(fixed_val_images_add)[:10].to(device)
@@ -153,7 +153,7 @@ def train(args):
     for epoch in range(args.epochs):
         model.train()
         for _, (images, images_add) in enumerate(train_dataloader):
-            t = diffusion.sample_timesteps(images.shape).to(device)
+            t = diffusion.sample_timesteps(images.shape[0]).to(device)
 
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_images(images, images_add, t)
@@ -189,7 +189,7 @@ def train(args):
             
             with torch.no_grad():
                 for val_images, val_images_add in test_dataloader:
-                    val_t = diffusion.sample_timesteps(val_images.shape).to(device)
+                    val_t = diffusion.sample_timesteps(val_images.shape[0]).to(device)
                     val_x_t = diffusion.mix_images(val_images, val_images_add, val_t)
                     
                     val_pred = model(val_x_t, val_t).sample
