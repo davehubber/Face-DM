@@ -28,35 +28,63 @@ class ColdDiffusion:
         n = len(superimposed_image)
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
         model.eval()
+        
         with torch.no_grad():
             x_t = superimposed_image.to(self.device)
 
-            for i in reversed(range(1, init_timestep + 1)):
+            # --- Initial Model Prediction ---
+            t_init = (torch.ones(n) * init_timestep).long().to(self.device)
+            init_preds = model(x_t, t_init).sample
+            
+            # Setup Path 1 (Targeting image_1)
+            pred_1 = init_preds[:, :3]
+            other_1 = (superimposed_image - (1. - alpha_init) * pred_1) / alpha_init
+            x_t_1 = x_t - self.mix_images(pred_1, other_1, t_init) + self.mix_images(pred_1, other_1, t_init-1)
+
+            # Setup Path 2 (Targeting image_add)
+            pred_2 = init_preds[:, 3:]
+            other_2 = (superimposed_image - alpha_init * pred_2) / (1. - alpha_init)
+            x_t_2 = x_t - self.mix_images(other_2, pred_2, t_init) + self.mix_images(other_2, pred_2, t_init-1)
+
+            # --- 2 Different Reverse Sampling Paths ---
+            for i in reversed(range(1, init_timestep)):
                 t = (torch.ones(n) * i).long().to(self.device)
 
-                predicted_image = model(x_t, t).sample
-                
-                other_image = (superimposed_image - (1. - alpha_init) * predicted_image) / alpha_init
+                # Path 1 Update
+                preds_1 = model(x_t_1, t).sample
+                p_1 = preds_1[:, :3]
+                o_1 = (superimposed_image - (1. - alpha_init) * p_1) / alpha_init
+                x_t_1 = x_t_1 - self.mix_images(p_1, o_1, t) + self.mix_images(p_1, o_1, t-1)
 
-                x_t = x_t - self.mix_images(predicted_image, other_image, t) + self.mix_images(predicted_image, other_image, t-1)
+                # Path 2 Update
+                preds_2 = model(x_t_2, t).sample
+                p_2 = preds_2[:, 3:]
+                o_2 = (superimposed_image - alpha_init * p_2) / (1. - alpha_init)
+                x_t_2 = x_t_2 - self.mix_images(o_2, p_2, t) + self.mix_images(o_2, p_2, t-1)
         
         model.train()
 
-        other_image = (superimposed_image - (1 - alpha_init) * x_t) / alpha_init
-        other_image = (other_image.clamp(-1, 1) + 1) / 2
-        other_image = (other_image * 255).type(torch.uint8)
+        # x_t_1 converges purely to image_1.
+        out_img_1 = x_t_1 
+        
+        # Because of the formulation of `mix_images()`, x_t_2 also theoretically converges to image_1 (o_2). 
+        # To get the final refined image_add for Path 2, we deduce it from x_t_2.
+        out_img_2 = (superimposed_image - (1 - alpha_init) * x_t_2) / alpha_init
+        
+        out_img_2 = (out_img_2.clamp(-1, 1) + 1) / 2
+        out_img_2 = (out_img_2 * 255).type(torch.uint8)
 
-        x_t = (x_t.clamp(-1, 1) + 1) / 2
-        x_t = (x_t * 255).type(torch.uint8)
+        out_img_1 = (out_img_1.clamp(-1, 1) + 1) / 2
+        out_img_1 = (out_img_1 * 255).type(torch.uint8)
 
-        return x_t, other_image
+        return out_img_1, out_img_2
 
 def get_unet(image_size):
-    resolution = image_size[0] if isinstance(image_size, tuple) else image_size
+    resolution = image_size if isinstance(image_size, tuple) else image_size
     return UNet2DModel(
         sample_size=resolution,
         in_channels=3,
-        out_channels=3,
+        out_channels=6, # Changed from 3 to 6
         layers_per_block=2,
         block_out_channels=(64, 128, 256, 512),
         down_block_types=(
@@ -117,7 +145,7 @@ def train(args):
     for val_img, val_img_add in test_dataloader:
         fixed_val_images.append(val_img)
         fixed_val_images_add.append(val_img_add)
-        if sum(x.shape[0] for x in fixed_val_images) >= 10:
+        if sum(x.shape for x in fixed_val_images) >= 10:
             break
     fixed_val_images = torch.cat(fixed_val_images)[:10].to(device)
     fixed_val_images_add = torch.cat(fixed_val_images_add)[:10].to(device)
@@ -125,13 +153,15 @@ def train(args):
     for epoch in range(args.epochs):
         model.train()
         for _, (images, images_add) in enumerate(train_dataloader):
-            t = diffusion.sample_timesteps(images.shape[0]).to(device)
+            t = diffusion.sample_timesteps(images.shape).to(device)
 
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_images(images, images_add, t)
                 predicted_image = model(x_t, t).sample
 
-                loss = F.mse_loss(predicted_image, images)
+                # Combine the ground truths and calculate a 6-channel MSE loss
+                target = torch.cat([images, images_add], dim=1)
+                loss = F.mse_loss(predicted_image, target)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -149,7 +179,7 @@ def train(args):
                 wandb.log({
                     "train_loss": loss.item(),
                     "step": global_step,
-                    "lr": lr_scheduler.get_last_lr()[0]
+                    "lr": lr_scheduler.get_last_lr()
                 })
 
         if (epoch + 1) % 5 == 0:
@@ -159,11 +189,12 @@ def train(args):
             
             with torch.no_grad():
                 for val_images, val_images_add in test_dataloader:
-                    val_t = diffusion.sample_timesteps(val_images.shape[0]).to(device)
+                    val_t = diffusion.sample_timesteps(val_images.shape).to(device)
                     val_x_t = diffusion.mix_images(val_images, val_images_add, val_t)
                     
                     val_pred = model(val_x_t, val_t).sample
-                    v_loss = F.mse_loss(val_pred, val_images)
+                    val_target = torch.cat([val_images, val_images_add], dim=1)
+                    v_loss = F.mse_loss(val_pred, val_target)
                     
                     v_loss = accelerator.gather(v_loss).mean()
                     
@@ -346,8 +377,8 @@ def one_shot_eval(args):
         
         with torch.no_grad():
             predicted_image = model(S, t).sample
-            sampled_images = predicted_image
-            sampled_other_image = (S - (1 - args.alpha_init) * sampled_images) / args.alpha_init
+            sampled_images = predicted_image[:, :3]
+            sampled_other_image = predicted_image[:, 3:]
 
         images = (images.clamp(-1, 1) + 1) / 2
         images = (images * 255).type(torch.uint8)
