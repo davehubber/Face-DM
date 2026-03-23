@@ -37,14 +37,19 @@ class ColdDiffusion:
             init_preds = model(x_t, t_init).sample
             
             # Setup Path 1 (Targeting image_1)
-            pred_1 = init_preds[:, :3]
-            other_1 = (superimposed_image - (1. - alpha_init) * pred_1) / alpha_init
-            x_t_1 = x_t - self.mix_images(pred_1, other_1, t_init) + self.mix_images(pred_1, other_1, t_init-1)
+            p_1 = init_preds[:, :3]
+            o_1 = (superimposed_image - (1. - alpha_init) * p_1) / alpha_init
+            x_t_1 = x_t - self.mix_images(p_1, o_1, t_init) + self.mix_images(p_1, o_1, t_init-1)
 
-            # Setup Path 2 (Targeting image_add)
-            pred_2 = init_preds[:, 3:]
-            other_2 = (superimposed_image - alpha_init * pred_2) / (1. - alpha_init)
-            x_t_2 = x_t - self.mix_images(other_2, pred_2, t_init) + self.mix_images(other_2, pred_2, t_init-1)
+            # Setup Path 2 (Targeting image_add / image_2)
+            p_2 = init_preds[:, 3:]
+            o_2 = (superimposed_image - alpha_init * p_2) / (1. - alpha_init)
+            
+            # Swap p_2 and o_2 so that x_t_2 converges directly to p_2 (image_2)
+            x_t_2 = x_t - self.mix_images(p_2, o_2, t_init) + self.mix_images(p_2, o_2, t_init-1)
+            
+            # Track the previous prediction to detect the channel flip
+            prev_p_2 = p_2
 
             # --- 2 Different Reverse Sampling Paths ---
             for i in reversed(range(1, init_timestep)):
@@ -58,24 +63,34 @@ class ColdDiffusion:
 
                 # Path 2 Update
                 preds_2 = model(x_t_2, t).sample
-                p_2 = preds_2[:, 3:]
-                o_2 = (superimposed_image - alpha_init * p_2) / (1. - alpha_init)
-                x_t_2 = x_t_2 - self.mix_images(o_2, p_2, t) + self.mix_images(o_2, p_2, t-1)
+                
+                # Detect if the model flipped the output channels due to image_2 becoming dominant
+                dist_no_flip = ((preds_2[:, 3:] - prev_p_2)**2).mean(dim=(1, 2, 3))
+                dist_flip = ((preds_2[:, :3] - prev_p_2)**2).mean(dim=(1, 2, 3))
+                
+                # Create a mask: 1 if flipped, 0 if not flipped
+                flip_mask = (dist_flip < dist_no_flip).float().view(-1, 1, 1, 1)
+                
+                # Route the correct channels to p_2 based on the flip mask
+                curr_p_2 = flip_mask * preds_2[:, :3] + (1 - flip_mask) * preds_2[:, 3:]
+                
+                # Deduce curr_o_2 based on the current p_2 extraction
+                curr_o_2 = (superimposed_image - alpha_init * curr_p_2) / (1. - alpha_init)
+                
+                # Step backwards using the swapped order
+                x_t_2 = x_t_2 - self.mix_images(curr_p_2, curr_o_2, t) + self.mix_images(curr_p_2, curr_o_2, t-1)
+                
+                # Update tracker
+                prev_p_2 = curr_p_2
         
         model.train()
 
-        # x_t_1 converges purely to image_1.
-        out_img_1 = x_t_1 
-        
-        # Because of the formulation of `mix_images()`, x_t_2 also theoretically converges to image_1 (o_2). 
-        # To get the final refined image_add for Path 2, we deduce it from x_t_2.
-        out_img_2 = (superimposed_image - (1 - alpha_init) * x_t_2) / alpha_init
-        
-        out_img_2 = (out_img_2.clamp(-1, 1) + 1) / 2
-        out_img_2 = (out_img_2 * 255).type(torch.uint8)
-
-        out_img_1 = (out_img_1.clamp(-1, 1) + 1) / 2
+        # Format outputs (x_t_2 now natively converges to image_2)
+        out_img_1 = (x_t_1.clamp(-1, 1) + 1) / 2
         out_img_1 = (out_img_1 * 255).type(torch.uint8)
+
+        out_img_2 = (x_t_2.clamp(-1, 1) + 1) / 2
+        out_img_2 = (out_img_2 * 255).type(torch.uint8)
 
         return out_img_1, out_img_2
 
@@ -84,7 +99,7 @@ def get_unet(image_size):
     return UNet2DModel(
         sample_size=resolution,
         in_channels=3,
-        out_channels=6, # Changed from 3 to 6
+        out_channels=6, 
         layers_per_block=2,
         block_out_channels=(64, 128, 256, 512),
         down_block_types=(
@@ -145,7 +160,7 @@ def train(args):
     for val_img, val_img_add in test_dataloader:
         fixed_val_images.append(val_img)
         fixed_val_images_add.append(val_img_add)
-        if sum(x.shape[0] for x in fixed_val_images) >= 10:
+        if sum(x.shape for x in fixed_val_images) >= 10:
             break
     fixed_val_images = torch.cat(fixed_val_images)[:10].to(device)
     fixed_val_images_add = torch.cat(fixed_val_images_add)[:10].to(device)
@@ -153,13 +168,12 @@ def train(args):
     for epoch in range(args.epochs):
         model.train()
         for _, (images, images_add) in enumerate(train_dataloader):
-            t = diffusion.sample_timesteps(images.shape[0]).to(device)
+            t = diffusion.sample_timesteps(images.shape).to(device)
 
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_images(images, images_add, t)
                 predicted_image = model(x_t, t).sample
 
-                # Combine the ground truths and calculate a 6-channel MSE loss
                 target = torch.cat([images, images_add], dim=1)
                 loss = F.mse_loss(predicted_image, target)
 
@@ -189,7 +203,7 @@ def train(args):
             
             with torch.no_grad():
                 for val_images, val_images_add in test_dataloader:
-                    val_t = diffusion.sample_timesteps(val_images.shape[0]).to(device)
+                    val_t = diffusion.sample_timesteps(val_images.shape).to(device)
                     val_x_t = diffusion.mix_images(val_images, val_images_add, val_t)
                     
                     val_pred = model(val_x_t, val_t).sample
@@ -230,7 +244,6 @@ def train(args):
             torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "unet_ema.pt"))
             
             ema_model.restore(unet.parameters())
-
 
 def calculate_metrics(image, add_image, result_ori_image, result_add_image):
     ssim_original = structural_similarity(image, result_ori_image, data_range=255, channel_axis=-1)
@@ -343,7 +356,6 @@ def eval(args):
     
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
-
 
 def one_shot_eval(args):
     accelerator = Accelerator()
