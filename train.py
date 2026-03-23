@@ -114,6 +114,22 @@ def get_unet(image_size):
         ),
     )
 
+def permutation_invariant_mse_loss(predicted_image, image_1, image_2):
+    pred_1 = predicted_image[:, :3]
+    pred_2 = predicted_image[:, 3:]
+
+    loss_direct = (
+        ((pred_1 - image_1) ** 2).mean(dim=(1, 2, 3)) +
+        ((pred_2 - image_2) ** 2).mean(dim=(1, 2, 3))
+    )
+
+    loss_swapped = (
+        ((pred_1 - image_2) ** 2).mean(dim=(1, 2, 3)) +
+        ((pred_2 - image_1) ** 2).mean(dim=(1, 2, 3))
+    )
+
+    return torch.minimum(loss_direct, loss_swapped).mean()
+
 def train(args):
     base_dir = setup_logging(args.run_name)
     
@@ -158,7 +174,7 @@ def train(args):
     for val_img, val_img_add in test_dataloader:
         fixed_val_images.append(val_img)
         fixed_val_images_add.append(val_img_add)
-        if sum(x.shape for x in fixed_val_images) >= 10:
+        if sum(x.shape[0] for x in fixed_val_images) >= 10:
             break
     fixed_val_images = torch.cat(fixed_val_images)[:10].to(device)
     fixed_val_images_add = torch.cat(fixed_val_images_add)[:10].to(device)
@@ -166,14 +182,13 @@ def train(args):
     for epoch in range(args.epochs):
         model.train()
         for _, (images, images_add) in enumerate(train_dataloader):
-            t = diffusion.sample_timesteps(images.shape).to(device)
+            t = diffusion.sample_timesteps(images.shape[0]).to(device)
 
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_images(images, images_add, t)
                 predicted_image = model(x_t, t).sample
 
-                target = torch.cat([images, images_add], dim=1)
-                loss = F.mse_loss(predicted_image, target)
+                loss = permutation_invariant_mse_loss(predicted_image, images, images_add)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -191,7 +206,7 @@ def train(args):
                 wandb.log({
                     "train_loss": loss.item(),
                     "step": global_step,
-                    "lr": lr_scheduler.get_last_lr()
+                    "lr": lr_scheduler.get_last_lr()[0]
                 })
 
         if (epoch + 1) % 5 == 0:
@@ -201,16 +216,14 @@ def train(args):
             
             with torch.no_grad():
                 for val_images, val_images_add in test_dataloader:
-                    val_t = diffusion.sample_timesteps(val_images.shape).to(device)
+                    val_t = diffusion.sample_timesteps(val_images.shape[0]).to(device)
                     val_x_t = diffusion.mix_images(val_images, val_images_add, val_t)
                     
                     val_pred = model(val_x_t, val_t).sample
-                    val_target = torch.cat([val_images, val_images_add], dim=1)
-                    v_loss = F.mse_loss(val_pred, val_target)
+                    v_loss = permutation_invariant_mse_loss(val_pred, val_images, val_images_add)
+                    v_loss = accelerator.gather(v_loss.unsqueeze(0)).mean()
                     
-                    v_loss = accelerator.gather(v_loss).mean()
-                    
-                    val_loss += v_loss.detach() 
+                    val_loss += v_loss.detach()
                     val_steps += 1
                     
             avg_val_loss = val_loss.item() / val_steps
@@ -218,30 +231,66 @@ def train(args):
             if accelerator.is_main_process:
                 wandb.log({
                     "val_loss": avg_val_loss,
-                    "epoch": epoch
+                    "epoch": epoch + 1
                 })
 
         if (epoch + 1) % 50 == 0 and accelerator.is_main_process:
             unet = accelerator.unwrap_model(model)
-            
+
             torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "unet_active.pt"))
 
             ema_model.store(unet.parameters())
             ema_model.copy_to(unet.parameters())
 
-            sampled_images, other_images = diffusion.sample(unet, (fixed_val_images + fixed_val_images_add) / 2.)
+            sampled_images, other_images = diffusion.sample(
+                unet,
+                (fixed_val_images + fixed_val_images_add) / 2.
+            )
 
-            f_images = (fixed_val_images.clamp(-1, 1) + 1) / 2
-            f_images = (f_images * 255).type(torch.uint8)
-            f_images_add = (fixed_val_images_add.clamp(-1, 1) + 1) / 2
-            f_images_add = (f_images_add * 255).type(torch.uint8)
-            
+            # Convert sampled uint8 outputs back to [-1, 1] for permutation-invariant matching
+            sampled_images_f = (sampled_images.float() / 255.0) * 2 - 1
+            other_images_f = (other_images.float() / 255.0) * 2 - 1
+
+            # Match predictions to the GT pair in the best order
+            matched_pred_1, matched_pred_2, _ = match_by_best_mse_assignment(
+                sampled_images_f,
+                other_images_f,
+                fixed_val_images,
+                fixed_val_images_add
+            )
+
+            # Convert matched predictions back to uint8 for saving
+            matched_pred_1 = ((matched_pred_1.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+            matched_pred_2 = ((matched_pred_2.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+
+            f_images = ((fixed_val_images.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+            f_images_add = ((fixed_val_images_add.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+
             save_path = os.path.join(base_dir, "samples", "train_fixed", f"epoch_{epoch+1}.jpg")
-            save_images(sampled_images, other_images, f_images, f_images_add, save_path)
-            
+            save_images(matched_pred_1, matched_pred_2, f_images, f_images_add, save_path)
+
             torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "unet_ema.pt"))
-            
+
             ema_model.restore(unet.parameters())
+
+def match_by_best_mse_assignment(pred_1, pred_2, gt_1, gt_2):
+    mse_direct = (
+        ((pred_1 - gt_1) ** 2).mean(dim=(1, 2, 3)) +
+        ((pred_2 - gt_2) ** 2).mean(dim=(1, 2, 3))
+    )
+    mse_swapped = (
+        ((pred_1 - gt_2) ** 2).mean(dim=(1, 2, 3)) +
+        ((pred_2 - gt_1) ** 2).mean(dim=(1, 2, 3))
+    )
+
+    swap_mask = mse_swapped < mse_direct
+    matched_pred_1 = pred_1.clone()
+    matched_pred_2 = pred_2.clone()
+
+    matched_pred_1[swap_mask] = pred_2[swap_mask]
+    matched_pred_2[swap_mask] = pred_1[swap_mask]
+
+    return matched_pred_1, matched_pred_2, swap_mask
 
 def calculate_metrics(image, add_image, result_ori_image, result_add_image):
     ssim_original = structural_similarity(image, result_ori_image, data_range=255, channel_axis=-1)
@@ -257,71 +306,90 @@ def eval(args):
 
     test_dataloader = get_data(args, 'test')
     model = get_unet(args.image_size)
-    
+
     model, test_dataloader = accelerator.prepare(model, test_dataloader)
-    
+
     model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
     accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
     diffusion = ColdDiffusion(img_size=args.image_size, device=device)
-    lpips_model = lpips.LPIPS(net='alex').to(device)
+    lpips_model = lpips.LPIPS(net='alex').to(device).eval()
 
-    ssim_o, ssim_a, lpips_o, lpips_a, psnr_o, psnr_a = [], [], [], [], [], []
-    success_count_target = 0
-    success_count_deduced = 0
+    ssim_1, ssim_2, lpips_1, lpips_2, psnr_1, psnr_2 = [], [], [], [], [], []
+    success_count_1 = 0
+    success_count_2 = 0
     total_items = 0
-    
+
     grid_si, grid_soi, grid_i, grid_ia = [], [], [], []
     collected_for_grid = 0
 
-    for i, (images, images_add) in enumerate(test_dataloader):
+    for images, images_add in test_dataloader:
         superimposed = images * (1 - args.alpha_init) + images_add * args.alpha_init
-        sampled_images, sampled_other_image = diffusion.sample(model, superimposed, args.alpha_init)
-        
-        images = (images.clamp(-1, 1) + 1) / 2
-        images = (images * 255).type(torch.uint8)
-        
-        images_add = (images_add.clamp(-1, 1) + 1) / 2
-        images_add = (images_add * 255).type(torch.uint8)
-        
-        superimposed = (superimposed.clamp(-1, 1) + 1) / 2
-        superimposed = (superimposed * 255).type(torch.uint8)
+
+        with torch.no_grad():
+            pred_1_uint8, pred_2_uint8 = diffusion.sample(model, superimposed, args.alpha_init)
+
+        # Convert predictions back to [-1, 1] only for matching
+        pred_1 = (pred_1_uint8.float() / 255.0) * 2 - 1
+        pred_2 = (pred_2_uint8.float() / 255.0) * 2 - 1
+
+        # Match predictions to GT with permutation-invariant assignment
+        matched_pred_1, matched_pred_2, _ = match_by_best_mse_assignment(pred_1, pred_2, images, images_add)
+
+        # Convert everything to uint8 for metrics / saving
+        images_u8 = ((images.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        images_add_u8 = ((images_add.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        matched_pred_1_u8 = ((matched_pred_1.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        matched_pred_2_u8 = ((matched_pred_2.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        superimposed_u8 = ((superimposed.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
 
         if collected_for_grid < 50:
-            grid_si.append(sampled_images.cpu())
-            grid_soi.append(sampled_other_image.cpu())
-            grid_i.append(images.cpu())
-            grid_ia.append(images_add.cpu())
-            collected_for_grid += len(images)
+            grid_si.append(matched_pred_1_u8.cpu())
+            grid_soi.append(matched_pred_2_u8.cpu())
+            grid_i.append(images_u8.cpu())
+            grid_ia.append(images_add_u8.cpu())
+            collected_for_grid += len(images_u8)
 
-        images_np = images.cpu().permute(0, 2, 3, 1).numpy()
-        sampled_images_np = sampled_images.cpu().permute(0, 2, 3, 1).numpy()
-        images_add_np = images_add.cpu().permute(0, 2, 3, 1).numpy()
-        sampled_other_image_np = sampled_other_image.cpu().permute(0, 2, 3, 1).numpy()
-        superimposed_np = superimposed.cpu().permute(0, 2, 3, 1).numpy()
-        
+        images_np = images_u8.cpu().permute(0, 2, 3, 1).numpy()
+        images_add_np = images_add_u8.cpu().permute(0, 2, 3, 1).numpy()
+        matched_pred_1_np = matched_pred_1_u8.cpu().permute(0, 2, 3, 1).numpy()
+        matched_pred_2_np = matched_pred_2_u8.cpu().permute(0, 2, 3, 1).numpy()
+        superimposed_np = superimposed_u8.cpu().permute(0, 2, 3, 1).numpy()
+
         with torch.no_grad():
             for k in range(len(images_np)):
-                so, sa, po, pa = calculate_metrics(images_np[k], images_add_np[k], sampled_images_np[k], sampled_other_image_np[k])
-                lo = lpips_model((images[k].unsqueeze(0).float() - 127.5) / 127.5, (sampled_images[k].unsqueeze(0).float() - 127.5) / 127.5)
-                la = lpips_model((images_add[k].unsqueeze(0).float() - 127.5) / 127.5, (sampled_other_image[k].unsqueeze(0).float() - 127.5) / 127.5)
-                
-                ssim_s_o = structural_similarity(images_np[k], superimposed_np[k], data_range=255, channel_axis=-1)
-                ssim_s_a = structural_similarity(images_add_np[k], superimposed_np[k], data_range=255, channel_axis=-1)
-                
-                if so > ssim_s_o:
-                    success_count_target += 1
-                if sa > ssim_s_a:
-                    success_count_deduced += 1
+                s1, s2, p1, p2 = calculate_metrics(
+                    images_np[k],
+                    images_add_np[k],
+                    matched_pred_1_np[k],
+                    matched_pred_2_np[k]
+                )
+
+                l1 = lpips_model(
+                    (images_u8[k].unsqueeze(0).float() - 127.5) / 127.5,
+                    (matched_pred_1_u8[k].unsqueeze(0).float() - 127.5) / 127.5
+                )
+                l2 = lpips_model(
+                    (images_add_u8[k].unsqueeze(0).float() - 127.5) / 127.5,
+                    (matched_pred_2_u8[k].unsqueeze(0).float() - 127.5) / 127.5
+                )
+
+                ssim_s_1 = structural_similarity(images_np[k], superimposed_np[k], data_range=255, channel_axis=-1)
+                ssim_s_2 = structural_similarity(images_add_np[k], superimposed_np[k], data_range=255, channel_axis=-1)
+
+                if s1 > ssim_s_1:
+                    success_count_1 += 1
+                if s2 > ssim_s_2:
+                    success_count_2 += 1
                 total_items += 1
 
-                ssim_o.append(so)
-                ssim_a.append(sa)
-                psnr_o.append(po)
-                psnr_a.append(pa)
-                lpips_o.append(lo.detach().cpu().numpy())
-                lpips_a.append(la.detach().cpu().numpy())
+                ssim_1.append(s1)
+                ssim_2.append(s2)
+                psnr_1.append(p1)
+                psnr_2.append(p2)
+                lpips_1.append(l1.detach().cpu().item())
+                lpips_2.append(l2.detach().cpu().item())
 
     if collected_for_grid > 0:
         grid_si = torch.cat(grid_si)[:50]
@@ -330,28 +398,29 @@ def eval(args):
         grid_ia = torch.cat(grid_ia)[:50]
         save_images(grid_si, grid_soi, grid_i, grid_ia, os.path.join(base_dir, "samples", "eval", "eval_grid_50.jpg"))
 
-    avg_ssim_o = np.average(ssim_o)
-    avg_ssim_a = np.average(ssim_a)
-    avg_psnr_o = np.average(psnr_o)
-    avg_psnr_a = np.average(psnr_a)
-    avg_lpips_o = np.average(lpips_o)
-    avg_lpips_a = np.average(lpips_a)
-    success_rate_target = (success_count_target / total_items) * 100
-    success_rate_deduced = (success_count_deduced / total_items) * 100
+    avg_ssim_1 = np.average(ssim_1)
+    avg_ssim_2 = np.average(ssim_2)
+    avg_psnr_1 = np.average(psnr_1)
+    avg_psnr_2 = np.average(psnr_2)
+    avg_lpips_1 = np.average(lpips_1)
+    avg_lpips_2 = np.average(lpips_2)
+    success_rate_1 = (success_count_1 / total_items) * 100
+    success_rate_2 = (success_count_2 / total_items) * 100
 
     metrics_report = (
-        f"--- One-Shot Evaluation Metrics (Entire Test Set) ---\n"
-        f"SSIM Target: {avg_ssim_o:.4f}\n"
-        f"SSIM Deduced: {avg_ssim_a:.4f}\n"
-        f"PSNR Target: {avg_psnr_o:.4f}\n"
-        f"PSNR Deduced: {avg_psnr_a:.4f}\n"
-        f"LPIPS Target: {avg_lpips_o:.4f}\n"
-        f"LPIPS Deduced: {avg_lpips_a:.4f}\n"
-        f"Success Rate of Reversal Target (%S): {success_rate_target:.2f}%\n"
-        f"Success Rate of Reversal Deduced (%S): {success_rate_deduced:.2f}%\n"
+        f"--- Iterative Evaluation Metrics (Permutation-Invariant Matching) ---\n"
+        f"SSIM Image 1: {avg_ssim_1:.4f}\n"
+        f"SSIM Image 2: {avg_ssim_2:.4f}\n"
+        f"PSNR Image 1: {avg_psnr_1:.4f}\n"
+        f"PSNR Image 2: {avg_psnr_2:.4f}\n"
+        f"LPIPS Image 1: {avg_lpips_1:.4f}\n"
+        f"LPIPS Image 2: {avg_lpips_2:.4f}\n"
+        f"Success Rate Image 1 (%S): {success_rate_1:.2f}%\n"
+        f"Success Rate Image 2 (%S): {success_rate_2:.2f}%\n"
     )
-    print(f'\n{metrics_report}')
-    
+
+    print(f"\n{metrics_report}")
+
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
@@ -413,80 +482,90 @@ def one_shot_eval(args):
 
     test_dataloader = get_data(args, 'test')
     model = get_unet(args.image_size)
-    
+
     model, test_dataloader = accelerator.prepare(model, test_dataloader)
     model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
     accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
-    
+
     diffusion = ColdDiffusion(img_size=args.image_size, device=device)
-    lpips_model = lpips.LPIPS(net='alex').to(device)
-    
-    ssim_o, ssim_a, psnr_o, psnr_a, lpips_o, lpips_a = [], [], [], [], [], []
-    success_count_target = 0
-    success_count_deduced = 0
+    lpips_model = lpips.LPIPS(net='alex').to(device).eval()
+
+    ssim_1, ssim_2, psnr_1, psnr_2, lpips_1, lpips_2 = [], [], [], [], [], []
+    success_count_1 = 0
+    success_count_2 = 0
     total_items = 0
 
     grid_si, grid_soi, grid_i, grid_ia = [], [], [], []
     collected_for_grid = 0
-    
+
     for images, images_add in test_dataloader:
         n = len(images)
         S = images * (1 - args.alpha_init) + images_add * args.alpha_init
         init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
-        t = (torch.ones(n) * init_timestep).long().to(device)
-        
+        t = (torch.ones(n, device=device) * init_timestep).long()
+
         with torch.no_grad():
             predicted_image = model(S, t).sample
-            sampled_images = predicted_image[:, :3]
-            sampled_other_image = predicted_image[:, 3:]
+            pred_1 = predicted_image[:, :3]
+            pred_2 = predicted_image[:, 3:]
 
-        images = (images.clamp(-1, 1) + 1) / 2
-        images = (images * 255).type(torch.uint8)
-        images_add = (images_add.clamp(-1, 1) + 1) / 2
-        images_add = (images_add * 255).type(torch.uint8)
-        sampled_images = (sampled_images.clamp(-1, 1) + 1) / 2
-        sampled_images = (sampled_images * 255).type(torch.uint8)
-        sampled_other_image = (sampled_other_image.clamp(-1, 1) + 1) / 2
-        sampled_other_image = (sampled_other_image * 255).type(torch.uint8)
-        
-        S_formatted = (S.clamp(-1, 1) + 1) / 2
-        S_formatted = (S_formatted * 255).type(torch.uint8)
+        # Match predictions to GT with permutation-invariant assignment
+        matched_pred_1, matched_pred_2, _ = match_by_best_mse_assignment(pred_1, pred_2, images, images_add)
+
+        # Convert to uint8
+        images_u8 = ((images.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        images_add_u8 = ((images_add.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        matched_pred_1_u8 = ((matched_pred_1.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        matched_pred_2_u8 = ((matched_pred_2.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        S_u8 = ((S.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
 
         if collected_for_grid < 50:
-            grid_si.append(sampled_images.cpu())
-            grid_soi.append(sampled_other_image.cpu())
-            grid_i.append(images.cpu())
-            grid_ia.append(images_add.cpu())
+            grid_si.append(matched_pred_1_u8.cpu())
+            grid_soi.append(matched_pred_2_u8.cpu())
+            grid_i.append(images_u8.cpu())
+            grid_ia.append(images_add_u8.cpu())
             collected_for_grid += n
 
-        images_np = images.cpu().permute(0, 2, 3, 1).numpy()
-        sampled_images_np = sampled_images.cpu().permute(0, 2, 3, 1).numpy()
-        images_add_np = images_add.cpu().permute(0, 2, 3, 1).numpy()
-        sampled_other_image_np = sampled_other_image.cpu().permute(0, 2, 3, 1).numpy()
-        S_np = S_formatted.cpu().permute(0, 2, 3, 1).numpy()
-        
+        images_np = images_u8.cpu().permute(0, 2, 3, 1).numpy()
+        images_add_np = images_add_u8.cpu().permute(0, 2, 3, 1).numpy()
+        matched_pred_1_np = matched_pred_1_u8.cpu().permute(0, 2, 3, 1).numpy()
+        matched_pred_2_np = matched_pred_2_u8.cpu().permute(0, 2, 3, 1).numpy()
+        S_np = S_u8.cpu().permute(0, 2, 3, 1).numpy()
+
         with torch.no_grad():
             for k in range(n):
-                so, sa, po, pa = calculate_metrics(images_np[k], images_add_np[k], sampled_images_np[k], sampled_other_image_np[k])
-                lo = lpips_model((images[k].unsqueeze(0).float() - 127.5) / 127.5, (sampled_images[k].unsqueeze(0).float() - 127.5) / 127.5)
-                la = lpips_model((images_add[k].unsqueeze(0).float() - 127.5) / 127.5, (sampled_other_image[k].unsqueeze(0).float() - 127.5) / 127.5)
-                
-                ssim_s_o = structural_similarity(images_np[k], S_np[k], data_range=255, channel_axis=-1)
-                ssim_s_a = structural_similarity(images_add_np[k], S_np[k], data_range=255, channel_axis=-1)
-                
-                if so > ssim_s_o:
-                    success_count_target += 1
-                if sa > ssim_s_a:
-                    success_count_deduced += 1
+                s1, s2, p1, p2 = calculate_metrics(
+                    images_np[k],
+                    images_add_np[k],
+                    matched_pred_1_np[k],
+                    matched_pred_2_np[k]
+                )
+
+                l1 = lpips_model(
+                    (images_u8[k].unsqueeze(0).float() - 127.5) / 127.5,
+                    (matched_pred_1_u8[k].unsqueeze(0).float() - 127.5) / 127.5
+                )
+                l2 = lpips_model(
+                    (images_add_u8[k].unsqueeze(0).float() - 127.5) / 127.5,
+                    (matched_pred_2_u8[k].unsqueeze(0).float() - 127.5) / 127.5
+                )
+
+                ssim_s_1 = structural_similarity(images_np[k], S_np[k], data_range=255, channel_axis=-1)
+                ssim_s_2 = structural_similarity(images_add_np[k], S_np[k], data_range=255, channel_axis=-1)
+
+                if s1 > ssim_s_1:
+                    success_count_1 += 1
+                if s2 > ssim_s_2:
+                    success_count_2 += 1
                 total_items += 1
-                
-                ssim_o.append(so)
-                ssim_a.append(sa)
-                psnr_o.append(po)
-                psnr_a.append(pa)
-                lpips_o.append(lo.detach().cpu().numpy())
-                lpips_a.append(la.detach().cpu().numpy())
+
+                ssim_1.append(s1)
+                ssim_2.append(s2)
+                psnr_1.append(p1)
+                psnr_2.append(p2)
+                lpips_1.append(l1.detach().cpu().item())
+                lpips_2.append(l2.detach().cpu().item())
 
     if collected_for_grid > 0:
         grid_si = torch.cat(grid_si)[:50]
@@ -495,26 +574,29 @@ def one_shot_eval(args):
         grid_ia = torch.cat(grid_ia)[:50]
         save_images(grid_si, grid_soi, grid_i, grid_ia, os.path.join(base_dir, "samples", "one_shot", "one_shot_grid_50.jpg"))
 
-    avg_ssim_o, avg_ssim_a = np.average(ssim_o), np.average(ssim_a)
-    avg_psnr_o, avg_psnr_a = np.average(psnr_o), np.average(psnr_a)
-    avg_lpips_o, avg_lpips_a = np.average(lpips_o), np.average(lpips_a)
-    success_rate_target = (success_count_target / total_items) * 100
-    success_rate_deduced = (success_count_deduced / total_items) * 100
+    avg_ssim_1 = np.average(ssim_1)
+    avg_ssim_2 = np.average(ssim_2)
+    avg_psnr_1 = np.average(psnr_1)
+    avg_psnr_2 = np.average(psnr_2)
+    avg_lpips_1 = np.average(lpips_1)
+    avg_lpips_2 = np.average(lpips_2)
+    success_rate_1 = (success_count_1 / total_items) * 100
+    success_rate_2 = (success_count_2 / total_items) * 100
 
     metrics_report = (
-        f"--- One-Shot Evaluation Metrics (Entire Test Set) ---\n"
-        f"SSIM Target: {avg_ssim_o:.4f}\n"
-        f"SSIM Deduced: {avg_ssim_a:.4f}\n"
-        f"PSNR Target: {avg_psnr_o:.4f}\n"
-        f"PSNR Deduced: {avg_psnr_a:.4f}\n"
-        f"LPIPS Target: {avg_lpips_o:.4f}\n"
-        f"LPIPS Deduced: {avg_lpips_a:.4f}\n"
-        f"Success Rate of Reversal Target (%S): {success_rate_target:.2f}%\n"
-        f"Success Rate of Reversal Deduced (%S): {success_rate_deduced:.2f}%\n"
+        f"--- One-Shot Evaluation Metrics (Permutation-Invariant Matching) ---\n"
+        f"SSIM Image 1: {avg_ssim_1:.4f}\n"
+        f"SSIM Image 2: {avg_ssim_2:.4f}\n"
+        f"PSNR Image 1: {avg_psnr_1:.4f}\n"
+        f"PSNR Image 2: {avg_psnr_2:.4f}\n"
+        f"LPIPS Image 1: {avg_lpips_1:.4f}\n"
+        f"LPIPS Image 2: {avg_lpips_2:.4f}\n"
+        f"Success Rate Image 1 (%S): {success_rate_1:.2f}%\n"
+        f"Success Rate Image 2 (%S): {success_rate_2:.2f}%\n"
     )
-    
+
     print(f"\n{metrics_report}")
-    
+
     with open(os.path.join(base_dir, "results", "one_shot_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
@@ -535,10 +617,11 @@ def launch():
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
 
-    #eval_grid_only(args)
-    #train(args)
+    train(args)
     eval(args)
-    #one_shot_eval(args)
+    one_shot_eval(args)
+
+    #eval_grid_only(args)
 
 if __name__ == '__main__':
     launch()

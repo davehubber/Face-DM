@@ -75,7 +75,7 @@ class LpipsOrderer:
 
 def generate_partition_csv(
     folder_path: str,
-    output_csv: str = "partition.csv",
+    output_csv: str = "partition_lpips.csv",
     seed: int = 42,
     test_count: int = 1000,
     lpips_image_size: int = 256,
@@ -111,7 +111,7 @@ def generate_partition_csv(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--folder_path", type=str, default="/nas-ctm01/datasets/public/Oxford102Flowers/jpg")
-    parser.add_argument("--output_csv", type=str, default="partition.csv")
+    parser.add_argument("--output_csv", type=str, default="partition_lpips.csv")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--test_count", type=int, default=1000)
     parser.add_argument("--lpips_image_size", type=int, default=256)
