@@ -39,17 +39,18 @@ class ColdDiffusion:
             # Setup Path 1 (Targeting image_1)
             p_1 = init_preds[:, :3]
             o_1 = (superimposed_image - (1. - alpha_init) * p_1) / alpha_init
-            x_t_1 = x_t - self.mix_images(p_1, o_1, t_init) + self.mix_images(p_1, o_1, t_init-1)
+            x_t_1 = x_t - self.mix_images(p_1, o_1, t_init) + self.mix_images(p_1, o_1, t_init - 1)
 
             # Setup Path 2 (Targeting image_add / image_2)
             p_2 = init_preds[:, 3:]
             o_2 = (superimposed_image - alpha_init * p_2) / (1. - alpha_init)
-            
-            # Swap p_2 and o_2 so that x_t_2 converges directly to p_2 (image_2)
-            x_t_2 = x_t - self.mix_images(p_2, o_2, t_init) + self.mix_images(p_2, o_2, t_init-1)
-            
-            # Track the previous prediction to detect the channel flip
-            prev_p_2 = p_2
+            x_t_2 = x_t - self.mix_images(p_2, o_2, t_init) + self.mix_images(p_2, o_2, t_init - 1)
+
+            # Fixed reference: initial prediction for branch 2
+            ref_p_2 = p_2.clone()
+
+            # Per-sample flag: once True, always use the first 3 channels
+            has_flipped = torch.zeros(n, dtype=torch.bool, device=self.device)
 
             # --- 2 Different Reverse Sampling Paths ---
             for i in reversed(range(1, init_timestep)):
@@ -59,33 +60,30 @@ class ColdDiffusion:
                 preds_1 = model(x_t_1, t).sample
                 p_1 = preds_1[:, :3]
                 o_1 = (superimposed_image - (1. - alpha_init) * p_1) / alpha_init
-                x_t_1 = x_t_1 - self.mix_images(p_1, o_1, t) + self.mix_images(p_1, o_1, t-1)
+                x_t_1 = x_t_1 - self.mix_images(p_1, o_1, t) + self.mix_images(p_1, o_1, t - 1)
 
                 # Path 2 Update
                 preds_2 = model(x_t_2, t).sample
-                
-                # Detect if the model flipped the output channels due to image_2 becoming dominant
-                dist_no_flip = ((preds_2[:, 3:] - prev_p_2)**2).mean(dim=(1, 2, 3))
-                dist_flip = ((preds_2[:, :3] - prev_p_2)**2).mean(dim=(1, 2, 3))
-                
-                # Create a mask: 1 if flipped, 0 if not flipped
-                flip_mask = (dist_flip < dist_no_flip).float().view(-1, 1, 1, 1)
-                
-                # Route the correct channels to p_2 based on the flip mask
-                curr_p_2 = flip_mask * preds_2[:, :3] + (1 - flip_mask) * preds_2[:, 3:]
-                
-                # Deduce curr_o_2 based on the current p_2 extraction
+
+                # For samples that have not flipped yet, compare against the initial branch-2 prediction
+                unresolved = ~has_flipped
+                if unresolved.any():
+                    dist_no_flip = ((preds_2[unresolved, 3:] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
+                    dist_flip = ((preds_2[unresolved, :3] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
+
+                    newly_flipped = dist_flip < dist_no_flip
+                    has_flipped[unresolved] = newly_flipped
+
+                # Before flip: use last 3 channels
+                # After flip: always use first 3 channels
+                curr_p_2 = preds_2[:, 3:].clone()
+                curr_p_2[has_flipped] = preds_2[has_flipped, :3]
+
                 curr_o_2 = (superimposed_image - alpha_init * curr_p_2) / (1. - alpha_init)
-                
-                # Step backwards using the swapped order
-                x_t_2 = x_t_2 - self.mix_images(curr_p_2, curr_o_2, t) + self.mix_images(curr_p_2, curr_o_2, t-1)
-                
-                # Update tracker
-                prev_p_2 = curr_p_2
-        
+                x_t_2 = x_t_2 - self.mix_images(curr_p_2, curr_o_2, t) + self.mix_images(curr_p_2, curr_o_2, t - 1)
+
         model.train()
 
-        # Format outputs (x_t_2 now natively converges to image_2)
         out_img_1 = (x_t_1.clamp(-1, 1) + 1) / 2
         out_img_1 = (out_img_1 * 255).type(torch.uint8)
 
@@ -357,6 +355,57 @@ def eval(args):
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
+def eval_grid_only(args):
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
+
+    test_dataloader = get_data(args, 'test')
+    model = get_unet(args.image_size)
+
+    model, test_dataloader = accelerator.prepare(model, test_dataloader)
+
+    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
+    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+
+    diffusion = ColdDiffusion(img_size=args.image_size, device=device)
+
+    grid_si, grid_soi, grid_i, grid_ia = [], [], [], []
+    collected_for_grid = 0
+
+    with torch.no_grad():
+        for images, images_add in test_dataloader:
+            superimposed = images * (1 - args.alpha_init) + images_add * args.alpha_init
+            sampled_images, sampled_other_image = diffusion.sample(model, superimposed, args.alpha_init)
+
+            images = (images.clamp(-1, 1) + 1) / 2
+            images = (images * 255).type(torch.uint8)
+
+            images_add = (images_add.clamp(-1, 1) + 1) / 2
+            images_add = (images_add * 255).type(torch.uint8)
+
+            grid_si.append(sampled_images.cpu())
+            grid_soi.append(sampled_other_image.cpu())
+            grid_i.append(images.cpu())
+            grid_ia.append(images_add.cpu())
+
+            collected_for_grid += len(images)
+
+            if collected_for_grid >= 50:
+                break
+
+    if collected_for_grid > 0 and accelerator.is_main_process:
+        grid_si = torch.cat(grid_si)[:50]
+        grid_soi = torch.cat(grid_soi)[:50]
+        grid_i = torch.cat(grid_i)[:50]
+        grid_ia = torch.cat(grid_ia)[:50]
+
+        save_path = os.path.join(base_dir, "samples", "eval", "eval_grid_50.jpg")
+        save_images(grid_si, grid_soi, grid_i, grid_ia, save_path)
+
+        print(f"Saved eval grid to: {save_path}")
+
 def one_shot_eval(args):
     accelerator = Accelerator()
     device = accelerator.device
@@ -486,8 +535,9 @@ def launch():
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
 
+    eval_grid_only(args)
     #train(args)
-    eval(args)
+    #eval(args)
     #one_shot_eval(args)
 
 if __name__ == '__main__':
