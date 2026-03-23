@@ -1,0 +1,9 @@
+--- One-Shot Evaluation Metrics (Entire Test Set) ---
+SSIM Target: 0.7170
+SSIM Deduced: 0.6018
+PSNR Target: 19.6165
+PSNR Deduced: 18.8982
+LPIPS Target: 0.1135
+LPIPS Deduced: 0.1869
+Success Rate of Reversal Target (%S): 81.56%
+Success Rate of Reversal Deduced (%S): 74.44%
