@@ -1,10 +1,11 @@
 import os, torch, numpy as np, math
-import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 import wandb
 import lpips
 from torchvision.utils import save_image
 from torch import optim
 from utils import *
+from PIL import Image, ImageDraw
 
 from accelerate import Accelerator
 from diffusers import UNet2DModel
@@ -425,14 +426,13 @@ def eval(args):
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
-def save_transition_grid_4th_pair(args):
+def save_transition_grid_4th_pair_with_labels(args):
     accelerator = Accelerator()
     device = accelerator.device
     base_dir = os.path.join("experiments", args.run_name)
 
     test_dataloader = get_data(args, 'test')
     model = get_unet(args.image_size)
-
     model, test_dataloader = accelerator.prepare(model, test_dataloader)
 
     model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
@@ -441,90 +441,100 @@ def save_transition_grid_4th_pair(args):
 
     diffusion = ColdDiffusion(img_size=args.image_size, device=device)
 
-    # 1. Fetch exactly the 4th pair of images
+    # 1. Fetch exactly the 4th pair
     all_images = []
     all_images_add = []
     for images, images_add in test_dataloader:
         all_images.append(images)
         all_images_add.append(images_add)
-        if sum(x.shape[0] for x in all_images) >= 4:
+        if sum(x.shape for x in all_images) >= 4:
             break
             
     images = torch.cat(all_images)[:4]
     images_add = torch.cat(all_images_add)[:4]
 
-    # Select index 3 (4th pair) and keep batch dimension
     image = images[3:4].to(device)
     image_add = images_add[3:4].to(device)
-
     superimposed = image * (1 - args.alpha_init) + image_add * args.alpha_init
 
-    # 2. Re-implement sampling process to capture step-by-step intermediates
+    # 2. Setup Loop Variables
     n = len(superimposed)
     alpha_init = args.alpha_init
     init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
     
-    # Visual Separator: a 5-pixel wide black vertical line
     _, _, H, W = image.shape
-    separator = torch.zeros((1, 3, H, 5), device=device)
+    new_H = H + 20 # Extra 20 pixels at the bottom for text
+    separator = torch.zeros((1, 3, new_H, 5), device=device) # Taller separator
     
     def process_img(img_tensor):
-        """Converts [-1, 1] tensor to for saving."""
         return (img_tensor.clamp(-1, 1) + 1) / 2
+
+    def add_label_to_image(img_tensor, text):
+        """Pads the image and adds a text label at the bottom."""
+        img_pil = TF.to_pil_image(img_tensor.cpu())
+        new_img = Image.new("RGB", (img_pil.width, new_H), (255, 255, 255))
+        new_img.paste(img_pil, (0, 0))
+        
+        if text:
+            draw = ImageDraw.Draw(new_img)
+            draw.text((4, img_pil.height + 2), text, fill=(0, 0, 0))
+            
+        return TF.to_tensor(new_img).unsqueeze(0).to(img_tensor.device)
 
     rows = []
 
     with torch.no_grad():
         x_t = superimposed.clone()
 
-        # --- Initial Model Prediction ---
+        # --- Initial Step ---
         t_init = (torch.ones(n) * init_timestep).long().to(device)
         init_preds = model(x_t, t_init).sample
         
-        # Path 1 Setup
-        p_1 = init_preds[:, :3]
-        p_1_other = init_preds[:, 3:]
+        p_1, p_1_other = init_preds[:, :3], init_preds[:, 3:]
         o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
         x_t_1 = x_t - diffusion.mix_images(p_1, o_1, t_init) + diffusion.mix_images(p_1, o_1, t_init - 1)
 
-        # Path 2 Setup
-        p_2 = init_preds[:, 3:]
-        p_2_other = init_preds[:, :3]
+        p_2, p_2_other = init_preds[:, 3:], init_preds[:, :3]
         o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
         x_t_2 = x_t - diffusion.mix_images(p_2, o_2, t_init) + diffusion.mix_images(p_2, o_2, t_init - 1)
 
         ref_p_2 = p_2.clone()
         has_flipped = torch.zeros(n, dtype=torch.bool, device=device)
 
-        # Append initial step row
+        # Calculate weights for the *next* mixture (t_init - 1)
+        w2_next = diffusion.alteration_per_t * (init_timestep - 1)
+        w1_next = 1.0 - w2_next
+        
+        lbl1 = f"{w1_next * 100:.1f}%"
+        lbl2 = f"{w2_next * 100:.1f}%"
+
+        # Construct row 1
         row_imgs = [
-            process_img(p_1), process_img(x_t_1), process_img(p_1_other),
+            add_label_to_image(process_img(p_1), lbl1),
+            add_label_to_image(process_img(x_t_1), "Mix"),
+            add_label_to_image(process_img(p_1_other), lbl2),
             separator,
-            process_img(p_2_other), process_img(x_t_2), process_img(p_2)
+            add_label_to_image(process_img(p_2_other), lbl1),
+            add_label_to_image(process_img(x_t_2), "Mix"),
+            add_label_to_image(process_img(p_2), lbl2)
         ]
-        rows.append(torch.cat(row_imgs, dim=3)) # Concatenate horizontally
+        rows.append(torch.cat(row_imgs, dim=3))
 
         # --- Reverse Sampling Loop ---
         for i in reversed(range(1, init_timestep)):
             t = (torch.ones(n) * i).long().to(device)
 
-            # Path 1 Update
             preds_1 = model(x_t_1, t).sample
-            p_1 = preds_1[:, :3]
-            p_1_other = preds_1[:, 3:]
+            p_1, p_1_other = preds_1[:, :3], preds_1[:, 3:]
             o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
             x_t_1 = x_t_1 - diffusion.mix_images(p_1, o_1, t) + diffusion.mix_images(p_1, o_1, t - 1)
 
-            # Path 2 Update
             preds_2 = model(x_t_2, t).sample
-
-            # Evaluate flip logic to maintain consistent image assignments across channels
             unresolved = ~has_flipped
             if unresolved.any():
                 dist_no_flip = ((preds_2[unresolved, 3:] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
                 dist_flip = ((preds_2[unresolved, :3] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
-                newly_flipped = dist_flip < dist_no_flip
-                has_flipped[unresolved] = newly_flipped
+                has_flipped[unresolved] = dist_flip < dist_no_flip
 
             curr_p_2 = preds_2[:, 3:].clone()
             curr_p_2[has_flipped] = preds_2[has_flipped, :3]
@@ -535,24 +545,34 @@ def save_transition_grid_4th_pair(args):
             curr_o_2 = (superimposed - alpha_init * curr_p_2) / (1. - alpha_init)
             x_t_2 = x_t_2 - diffusion.mix_images(curr_p_2, curr_o_2, t) + diffusion.mix_images(curr_p_2, curr_o_2, t - 1)
 
-            # Append current step row
+            # Calculate weights for the *next* mixture (t - 1)
+            w2_next = diffusion.alteration_per_t * (i - 1)
+            w1_next = 1.0 - w2_next
+            
+            lbl1 = f"{w1_next * 100:.1f}%"
+            lbl2 = f"{w2_next * 100:.1f}%"
+
+            # Construct loop row
             row_imgs = [
-                process_img(p_1), process_img(x_t_1), process_img(p_1_other),
+                add_label_to_image(process_img(p_1), lbl1),
+                add_label_to_image(process_img(x_t_1), "Mix"),
+                add_label_to_image(process_img(p_1_other), lbl2),
                 separator,
-                process_img(curr_p_2_other), process_img(x_t_2), process_img(curr_p_2)
+                add_label_to_image(process_img(curr_p_2_other), lbl1),
+                add_label_to_image(process_img(x_t_2), "Mix"),
+                add_label_to_image(process_img(curr_p_2), lbl2)
             ]
             rows.append(torch.cat(row_imgs, dim=3))
 
-    # 3. Compile and save the complete grid
-    full_grid = torch.cat(rows, dim=2) # Concatenate vertically
+    full_grid = torch.cat(rows, dim=2) 
     
     save_dir = os.path.join(base_dir, "samples", "eval")
     os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "transition_grid_4th_pair.jpg")
+    save_path = os.path.join(save_dir, "transition_grid_4th_pair_labels.jpg")
     
     save_image(full_grid, save_path)
     if accelerator.is_main_process:
-        print(f"\nSaved step-by-step transition grid to: {save_path}")
+        print(f"\nSaved step-by-step transition grid (with labels) to: {save_path}")
 
 def eval_grid_only(args):
     accelerator = Accelerator()
@@ -752,7 +772,7 @@ def launch():
     #one_shot_eval(args)
 
     #eval_grid_only(args)
-    save_transition_grid_4th_pair(args)
+    save_transition_grid_4th_pair_with_labels(args)
 
 if __name__ == '__main__':
     launch()
