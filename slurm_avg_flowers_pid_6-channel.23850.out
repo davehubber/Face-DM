@@ -1,0 +1,16 @@
+Size of test: 5000
+Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]
+Loading model from: /nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/lpips/weights/v0.1/alex.pth
+Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]
+Loading model from: /nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/lpips/weights/v0.1/alex.pth
+
+--- Iterative Evaluation Metrics (Permutation-Invariant Matching) ---
+SSIM Image 1: 0.6609
+SSIM Image 2: 0.6588
+PSNR Image 1: 19.3848
+PSNR Image 2: 19.3109
+LPIPS Image 1: 0.1521
+LPIPS Image 2: 0.1554
+Success Rate Image 1 (%S): 74.46%
+Success Rate Image 2 (%S): 73.44%
+
