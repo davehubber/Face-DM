@@ -42,6 +42,7 @@ class ColdDiffusion:
         """
         Assign the two current predicted images to the two previous tracked images
         by minimizing the total LPIPS continuity cost over the pair.
+        Returns the aligned pair and a mask indicating where swaps occurred.
         """
         cand_a = preds[:, :3]
         cand_b = preds[:, 3:]
@@ -56,14 +57,15 @@ class ColdDiffusion:
         )
 
         keep_direct = cost_direct <= cost_swapped
+        swap_mask = ~keep_direct
 
         curr_first = cand_a.clone()
         curr_second = cand_b.clone()
 
-        curr_first[~keep_direct] = cand_b[~keep_direct]
-        curr_second[~keep_direct] = cand_a[~keep_direct]
+        curr_first[swap_mask] = cand_b[swap_mask]
+        curr_second[swap_mask] = cand_a[swap_mask]
 
-        return curr_first, curr_second
+        return curr_first, curr_second, swap_mask
 
 
     def sample(self, model, superimposed_image, alpha_init=0.5):
@@ -91,22 +93,19 @@ class ColdDiffusion:
             a0 = init_preds[:, :3]
             b0 = init_preds[:, 3:]
 
-            # Two opposite trajectories:
-            # trajectory 1 aims to end at a0-like identity
-            # trajectory 2 aims to end at b0-like identity
+            # Two opposite trajectories
             p_1, o_1 = a0.clone(), b0.clone()
             p_2, o_2 = b0.clone(), a0.clone()
 
             # Mathematically extract the estimates for the "other" images
-            # given the aligned prediction, the initial mixture (x_init), and alpha_init
             o_1_ext = (x_init - p_1 * (1. - alpha_init)) / alpha_init
             o_2_ext = (x_init - p_2 * alpha_init) / (1. - alpha_init)
 
-            # First reverse step for each trajectory using the extracted mathematical estimates
+            # First reverse step for each trajectory
             x_t_1 = x_init - self.mix_images(p_1, o_1_ext, t_init) + self.mix_images(p_1, o_1_ext, t_init - 1)
             x_t_2 = x_init - self.mix_images(p_2, o_2_ext, t_init) + self.mix_images(p_2, o_2_ext, t_init - 1)
 
-            # Track the full network-predicted pair for continuity logic
+            # Initialize continuity anchors. These will now ONLY update when a switch is detected.
             prev_p_1, prev_o_1 = p_1.detach().clone(), o_1.detach().clone()
             prev_p_2, prev_o_2 = p_2.detach().clone(), o_2.detach().clone()
 
@@ -114,25 +113,31 @@ class ColdDiffusion:
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
                 t_next = torch.full((n,), i - 1, device=self.device, dtype=torch.long)
 
-                # Trajectory 1
+                # ---------------- Trajectory 1 ----------------
                 preds_1 = model(x_t_1, t).sample
-                p_1, o_1 = self._assign_pair_by_continuity(preds_1, prev_p_1, prev_o_1)
+                p_1, o_1, swap_mask_1 = self._assign_pair_by_continuity(preds_1, prev_p_1, prev_o_1)
+                
+                # Update continuity anchors ONLY for the items in the batch that swapped
+                if swap_mask_1.any():
+                    prev_p_1[swap_mask_1] = p_1.detach()[swap_mask_1].clone()
+                    prev_o_1[swap_mask_1] = o_1.detach()[swap_mask_1].clone()
                 
                 # Re-extract mathematically for the reverse step
                 o_1_ext = (x_init - p_1 * (1. - alpha_init)) / alpha_init
                 x_t_1 = x_t_1 - self.mix_images(p_1, o_1_ext, t) + self.mix_images(p_1, o_1_ext, t_next)
-                
-                prev_p_1, prev_o_1 = p_1.detach().clone(), o_1.detach().clone()
 
-                # Trajectory 2
+                # ---------------- Trajectory 2 ----------------
                 preds_2 = model(x_t_2, t).sample
-                p_2, o_2 = self._assign_pair_by_continuity(preds_2, prev_p_2, prev_o_2)
+                p_2, o_2, swap_mask_2 = self._assign_pair_by_continuity(preds_2, prev_p_2, prev_o_2)
+                
+                # Update continuity anchors ONLY for the items in the batch that swapped
+                if swap_mask_2.any():
+                    prev_p_2[swap_mask_2] = p_2.detach()[swap_mask_2].clone()
+                    prev_o_2[swap_mask_2] = o_2.detach()[swap_mask_2].clone()
                 
                 # Re-extract mathematically for the reverse step
                 o_2_ext = (x_init - p_2 * alpha_init) / (1. - alpha_init)
                 x_t_2 = x_t_2 - self.mix_images(p_2, o_2_ext, t) + self.mix_images(p_2, o_2_ext, t_next)
-                
-                prev_p_2, prev_o_2 = p_2.detach().clone(), o_2.detach().clone()
 
         if was_training:
             model.train()
@@ -474,6 +479,73 @@ def eval(args):
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
+def eval_grid_only(args):
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
+
+    test_dataloader = get_data(args, 'test')
+    model = get_unet(args.image_size)
+
+    model, test_dataloader = accelerator.prepare(model, test_dataloader)
+
+    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
+    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+
+    # Note: We don't need to load the LPIPS model here anymore
+    diffusion = ColdDiffusion(img_size=args.image_size, device=device)
+
+    grid_si, grid_soi, grid_i, grid_ia = [], [], [], []
+    collected_for_grid = 0
+    num_grid_images = 5
+
+    for images, images_add in test_dataloader:
+        # Stop inferencing once we have enough images for the grid
+        if collected_for_grid >= num_grid_images:
+            break
+
+        superimposed = images * (1 - args.alpha_init) + images_add * args.alpha_init
+
+        with torch.no_grad():
+            pred_1_uint8, pred_2_uint8 = diffusion.sample(model, superimposed, args.alpha_init)
+
+        # Convert predictions back to [-1, 1] only for matching
+        pred_1 = (pred_1_uint8.float() / 255.0) * 2 - 1
+        pred_2 = (pred_2_uint8.float() / 255.0) * 2 - 1
+
+        # Match predictions to GT with permutation-invariant assignment
+        matched_pred_1, matched_pred_2, _ = match_by_best_mse_assignment(pred_1, pred_2, images, images_add)
+
+        # Convert everything to uint8 for saving
+        images_u8 = ((images.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        images_add_u8 = ((images_add.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        matched_pred_1_u8 = ((matched_pred_1.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        matched_pred_2_u8 = ((matched_pred_2.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+
+        # Append to our grid lists
+        grid_si.append(matched_pred_1_u8.cpu())
+        grid_soi.append(matched_pred_2_u8.cpu())
+        grid_i.append(images_u8.cpu())
+        grid_ia.append(images_add_u8.cpu())
+        
+        collected_for_grid += len(images_u8)
+
+    # Stitch and save the final grid
+    if collected_for_grid > 0:
+        grid_si = torch.cat(grid_si)[:num_grid_images]
+        grid_soi = torch.cat(grid_soi)[:num_grid_images]
+        grid_i = torch.cat(grid_i)[:num_grid_images]
+        grid_ia = torch.cat(grid_ia)[:num_grid_images]
+        
+        # Ensure the output directory exists
+        save_dir = os.path.join(base_dir, "samples", "eval")
+        os.makedirs(save_dir, exist_ok=True)
+        
+        save_path = os.path.join(save_dir, "eval_grid_only_50.jpg")
+        save_images(grid_si, grid_soi, grid_i, grid_ia, save_path)
+        print(f"\nSaved image grid successfully to: {save_path}")
+
 def one_shot_eval(args):
     accelerator = Accelerator()
     device = accelerator.device
@@ -617,7 +689,8 @@ def launch():
     args.image_size = (args.image_size, args.image_size)
 
     #train(args)
-    eval(args)
+    #eval(args)
+    eval_grid_only(args)
     #one_shot_eval(args)
 
 if __name__ == '__main__':
