@@ -440,6 +440,7 @@ def save_transition_grid_4th_pair_with_labels(args):
     model.eval()
 
     diffusion = ColdDiffusion(img_size=args.image_size, device=device)
+    lpips_model = lpips.LPIPS(net='alex').to(device).eval()
 
     # 1. Fetch exactly the 4th pair
     all_images = []
@@ -463,14 +464,13 @@ def save_transition_grid_4th_pair_with_labels(args):
     init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
 
     _, _, H, W = image.shape
-    new_H = H + 20  # Extra 20 pixels at the bottom for text
+    new_H = H + 20
     separator = torch.zeros((1, 3, new_H, 5), device=device)
 
     def process_img(img_tensor):
         return (img_tensor.clamp(-1, 1) + 1) / 2
 
     def add_label_to_image(img_tensor, text):
-        """Pads the image and adds a text label at the bottom."""
         img_pil = TF.to_pil_image(img_tensor.cpu()[0])
         new_img = Image.new("RGB", (img_pil.width, new_H), (255, 255, 255))
         new_img.paste(img_pil, (0, 0))
@@ -481,6 +481,31 @@ def save_transition_grid_4th_pair_with_labels(args):
 
         return TF.to_tensor(new_img).unsqueeze(0).to(img_tensor.device)
 
+    def lpips_dist_batch(ref, cand):
+        # Both tensors expected in [-1, 1]
+        return lpips_model(ref.clamp(-1, 1), cand.clamp(-1, 1)).view(-1)
+
+    def choose_target_by_continuity(preds, prev_target):
+        """
+        Picks whichever 3-channel half is more LPIPS-consistent with the
+        previously chosen target for this branch.
+        """
+        cand_a = preds[:, :3]
+        cand_b = preds[:, 3:]
+
+        dist_a = lpips_dist_batch(prev_target, cand_a)
+        dist_b = lpips_dist_batch(prev_target, cand_b)
+
+        choose_a = dist_a <= dist_b
+
+        curr_target = cand_b.clone()
+        curr_target[choose_a] = cand_a[choose_a]
+
+        curr_other_raw = cand_a.clone()
+        curr_other_raw[choose_a] = cand_b[choose_a]
+
+        return curr_target, curr_other_raw
+
     rows = []
 
     with torch.no_grad():
@@ -490,35 +515,40 @@ def save_transition_grid_4th_pair_with_labels(args):
         t_init = (torch.ones(n) * init_timestep).long().to(device)
         init_preds = model(x_t, t_init).sample
 
-        # Path 1
+        # Seed both branches from opposite channel choices
         p_1 = init_preds[:, :3]
-        o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
-        x_t_1 = x_t - diffusion.mix_images(p_1, o_1, t_init) + diffusion.mix_images(p_1, o_1, t_init - 1)
-
-        # Path 2
         p_2 = init_preds[:, 3:]
+
+        # Actual companions used to form the next mixtures
+        o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
         o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
+
+        x_t_1 = x_t - diffusion.mix_images(p_1, o_1, t_init) + diffusion.mix_images(p_1, o_1, t_init - 1)
         x_t_2 = x_t - diffusion.mix_images(p_2, o_2, t_init) + diffusion.mix_images(p_2, o_2, t_init - 1)
 
-        ref_p_2 = p_2.clone()
-        has_flipped = torch.zeros(n, dtype=torch.bool, device=device)
+        # Track previous chosen target per branch
+        prev_target_1 = p_1.detach().clone()
+        prev_target_2 = p_2.detach().clone()
 
-        # Calculate weights for the *next* mixture (t_init - 1)
+        # Weights of the next mixture (t_init - 1)
         w2_next = diffusion.alteration_per_t * (init_timestep - 1)
         w1_next = 1.0 - w2_next
 
         lbl1 = f"{w1_next * 100:.1f}%"
         lbl2 = f"{w2_next * 100:.1f}%"
 
-        # Construct initial row using the ACTUAL pair used in each update
+        # Left branch: mix_images(p_1, o_1, ...)
+        #   left p_1 gets lbl1, right o_1 gets lbl2
+        # Right branch: mix_images(p_2, o_2, ...)
+        #   left o_2 gets lbl2, right p_2 gets lbl1
         row_imgs = [
             add_label_to_image(process_img(p_1), lbl1),
             add_label_to_image(process_img(x_t_1), "Mix"),
             add_label_to_image(process_img(o_1), lbl2),
             separator,
-            add_label_to_image(process_img(o_2), lbl1),
+            add_label_to_image(process_img(o_2), lbl2),
             add_label_to_image(process_img(x_t_2), "Mix"),
-            add_label_to_image(process_img(p_2), lbl2),
+            add_label_to_image(process_img(p_2), lbl1),
         ]
         rows.append(torch.cat(row_imgs, dim=3))
 
@@ -526,42 +556,35 @@ def save_transition_grid_4th_pair_with_labels(args):
         for i in reversed(range(1, init_timestep)):
             t = (torch.ones(n) * i).long().to(device)
 
-            # Path 1 update
+            # -------- Branch 1: continuity-based channel assignment --------
             preds_1 = model(x_t_1, t).sample
-            p_1 = preds_1[:, :3]
+            p_1, _ = choose_target_by_continuity(preds_1, prev_target_1)
             o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
             x_t_1 = x_t_1 - diffusion.mix_images(p_1, o_1, t) + diffusion.mix_images(p_1, o_1, t - 1)
+            prev_target_1 = p_1.detach().clone()
 
-            # Path 2 update
+            # -------- Branch 2: continuity-based channel assignment --------
             preds_2 = model(x_t_2, t).sample
-            unresolved = ~has_flipped
-            if unresolved.any():
-                dist_no_flip = ((preds_2[unresolved, 3:] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
-                dist_flip = ((preds_2[unresolved, :3] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
-                has_flipped[unresolved] = dist_flip < dist_no_flip
+            p_2, _ = choose_target_by_continuity(preds_2, prev_target_2)
+            o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
+            x_t_2 = x_t_2 - diffusion.mix_images(p_2, o_2, t) + diffusion.mix_images(p_2, o_2, t - 1)
+            prev_target_2 = p_2.detach().clone()
 
-            curr_p_2 = preds_2[:, 3:].clone()
-            curr_p_2[has_flipped] = preds_2[has_flipped, :3]
-
-            curr_o_2 = (superimposed - alpha_init * curr_p_2) / (1. - alpha_init)
-            x_t_2 = x_t_2 - diffusion.mix_images(curr_p_2, curr_o_2, t) + diffusion.mix_images(curr_p_2, curr_o_2, t - 1)
-
-            # Calculate weights for the *next* mixture (t - 1)
+            # Weights of the next mixture (t - 1)
             w2_next = diffusion.alteration_per_t * (i - 1)
             w1_next = 1.0 - w2_next
 
             lbl1 = f"{w1_next * 100:.1f}%"
             lbl2 = f"{w2_next * 100:.1f}%"
 
-            # Construct loop row using the ACTUAL pair used in each update
             row_imgs = [
                 add_label_to_image(process_img(p_1), lbl1),
                 add_label_to_image(process_img(x_t_1), "Mix"),
                 add_label_to_image(process_img(o_1), lbl2),
                 separator,
-                add_label_to_image(process_img(curr_o_2), lbl1),
+                add_label_to_image(process_img(o_2), lbl2),
                 add_label_to_image(process_img(x_t_2), "Mix"),
-                add_label_to_image(process_img(curr_p_2), lbl2),
+                add_label_to_image(process_img(p_2), lbl1),
             ]
             rows.append(torch.cat(row_imgs, dim=3))
 
