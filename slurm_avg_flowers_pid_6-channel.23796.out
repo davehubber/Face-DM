@@ -1,5 +1,0 @@
-Size of test: 5000
-Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]
-Loading model from: /nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/lpips/weights/v0.1/alex.pth
-Downloading: "https://huggingface.co/chaofengc/IQA-PyTorch-Weights/resolve/main/niqe_modelparameters.mat" to /nas-ctm01/homes/dacordeiro/.cache/torch/hub/pyiqa/niqe_modelparameters.mat
-

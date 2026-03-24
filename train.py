@@ -448,7 +448,7 @@ def save_transition_grid(args, num_steps=50):
     for images, images_add in test_dataloader:
         all_images.append(images)
         all_images_add.append(images_add)
-        if sum(x.shape for x in all_images) >= 4:
+        if sum(x.shape[0] for x in all_images) >= 4:
             break
 
     images = torch.cat(all_images)[:4]
@@ -501,8 +501,8 @@ def save_transition_grid(args, num_steps=50):
         x_t = superimposed.clone()
 
         # --- Initial Step ---
-        t_init = (torch.ones(n) * timesteps).long().to(device)
-        t_next = (torch.ones(n) * timesteps).long().to(device)
+        t_init = (torch.ones(n) * timesteps[0]).long().to(device)
+        t_next = (torch.ones(n) * timesteps[0]).long().to(device)
         
         init_preds = model(x_t, t_init).sample
 
