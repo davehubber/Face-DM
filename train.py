@@ -38,26 +38,38 @@ class ColdDiffusion:
             cand.float().clamp(-1, 1)
         ).view(-1)
 
-    def _choose_target_by_continuity(self, preds, prev_target):
+    def _assign_pair_by_continuity(self, preds, prev_first, prev_second):
+        """
+        Assign the two current predicted images to the two previous tracked images
+        by minimizing the total LPIPS continuity cost over the pair.
+        """
         cand_a = preds[:, :3]
         cand_b = preds[:, 3:]
 
-        dist_a = self._lpips_dist_batch(prev_target, cand_a)
-        dist_b = self._lpips_dist_batch(prev_target, cand_b)
+        cost_direct = (
+            self._lpips_dist_batch(prev_first, cand_a) +
+            self._lpips_dist_batch(prev_second, cand_b)
+        )
+        cost_swapped = (
+            self._lpips_dist_batch(prev_first, cand_b) +
+            self._lpips_dist_batch(prev_second, cand_a)
+        )
 
-        choose_a = dist_a <= dist_b
+        keep_direct = cost_direct <= cost_swapped
 
-        curr_target = cand_b.clone()
-        curr_target[choose_a] = cand_a[choose_a]
+        curr_first = cand_a.clone()
+        curr_second = cand_b.clone()
 
-        curr_other = cand_a.clone()
-        curr_other[choose_a] = cand_b[choose_a]
+        curr_first[~keep_direct] = cand_b[~keep_direct]
+        curr_second[~keep_direct] = cand_a[~keep_direct]
 
-        return curr_target, curr_other
+        return curr_first, curr_second
+
 
     def sample(self, model, superimposed_image, alpha_init=0.5):
         n = len(superimposed_image)
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
+        init_timestep = max(1, min(self.max_timesteps, init_timestep))
 
         was_training = model.training
         model.eval()
@@ -65,48 +77,55 @@ class ColdDiffusion:
         with torch.no_grad():
             self._get_lpips_model()
 
-            x_t = superimposed_image.to(self.device)
-            superimposed = x_t
+            x_init = superimposed_image.to(self.device)
 
-            t_init = (torch.ones(n, device=self.device) * init_timestep).long()
-            init_preds = model(x_t, t_init).sample
+            t_init = torch.full(
+                (n,),
+                init_timestep,
+                device=self.device,
+                dtype=torch.long
+            )
 
-            p_1 = init_preds[:, :3]
-            p_2 = init_preds[:, 3:]
+            # Initial paired prediction from the mixture
+            init_preds = model(x_init, t_init).sample
+            a0 = init_preds[:, :3]
+            b0 = init_preds[:, 3:]
 
-            o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
-            o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
+            # Two opposite trajectories:
+            # trajectory 1 aims to end at a0-like identity
+            # trajectory 2 aims to end at b0-like identity
+            p_1, o_1 = a0.clone(), b0.clone()
+            p_2, o_2 = b0.clone(), a0.clone()
 
-            x_t_1 = x_t - self.mix_images(p_1, o_1, t_init) + self.mix_images(p_1, o_1, t_init - 1)
-            x_t_2 = x_t - self.mix_images(p_2, o_2, t_init) + self.mix_images(p_2, o_2, t_init - 1)
+            # First reverse step for each trajectory
+            x_t_1 = x_init - self.mix_images(p_1, o_1, t_init) + self.mix_images(p_1, o_1, t_init - 1)
+            x_t_2 = x_init - self.mix_images(p_2, o_2, t_init) + self.mix_images(p_2, o_2, t_init - 1)
 
-            prev_target_1 = p_1.detach().clone()
-            prev_target_2 = p_2.detach().clone()
+            # Track the full pair for continuity, not only one image
+            prev_p_1, prev_o_1 = p_1.detach().clone(), o_1.detach().clone()
+            prev_p_2, prev_o_2 = p_2.detach().clone(), o_2.detach().clone()
 
             for i in reversed(range(1, init_timestep)):
-                t = (torch.ones(n, device=self.device) * i).long()
-                t_next = (torch.ones(n, device=self.device) * (i - 1)).long()
+                t = torch.full((n,), i, device=self.device, dtype=torch.long)
+                t_next = torch.full((n,), i - 1, device=self.device, dtype=torch.long)
 
+                # Trajectory 1
                 preds_1 = model(x_t_1, t).sample
-                p_1, _ = self._choose_target_by_continuity(preds_1, prev_target_1)
-                o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
+                p_1, o_1 = self._assign_pair_by_continuity(preds_1, prev_p_1, prev_o_1)
                 x_t_1 = x_t_1 - self.mix_images(p_1, o_1, t) + self.mix_images(p_1, o_1, t_next)
-                prev_target_1 = p_1.detach().clone()
+                prev_p_1, prev_o_1 = p_1.detach().clone(), o_1.detach().clone()
 
+                # Trajectory 2
                 preds_2 = model(x_t_2, t).sample
-                p_2, _ = self._choose_target_by_continuity(preds_2, prev_target_2)
-                o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
+                p_2, o_2 = self._assign_pair_by_continuity(preds_2, prev_p_2, prev_o_2)
                 x_t_2 = x_t_2 - self.mix_images(p_2, o_2, t) + self.mix_images(p_2, o_2, t_next)
-                prev_target_2 = p_2.detach().clone()
+                prev_p_2, prev_o_2 = p_2.detach().clone(), o_2.detach().clone()
 
         if was_training:
             model.train()
 
-        out_img_1 = (x_t_1.clamp(-1, 1) + 1) / 2
-        out_img_1 = (out_img_1 * 255).type(torch.uint8)
-
-        out_img_2 = (x_t_2.clamp(-1, 1) + 1) / 2
-        out_img_2 = (out_img_2 * 255).type(torch.uint8)
+        out_img_1 = ((x_t_1.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        out_img_2 = ((x_t_2.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
 
         return out_img_1, out_img_2
 
