@@ -449,7 +449,7 @@ def save_transition_grid_4th_pair_with_labels(args):
         all_images_add.append(images_add)
         if sum(x.shape[0] for x in all_images) >= 4:
             break
-            
+
     images = torch.cat(all_images)[:4]
     images_add = torch.cat(all_images_add)[:4]
 
@@ -461,11 +461,11 @@ def save_transition_grid_4th_pair_with_labels(args):
     n = len(superimposed)
     alpha_init = args.alpha_init
     init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
-    
+
     _, _, H, W = image.shape
-    new_H = H + 20 # Extra 20 pixels at the bottom for text
-    separator = torch.zeros((1, 3, new_H, 5), device=device) # Taller separator
-    
+    new_H = H + 20  # Extra 20 pixels at the bottom for text
+    separator = torch.zeros((1, 3, new_H, 5), device=device)
+
     def process_img(img_tensor):
         return (img_tensor.clamp(-1, 1) + 1) / 2
 
@@ -474,11 +474,11 @@ def save_transition_grid_4th_pair_with_labels(args):
         img_pil = TF.to_pil_image(img_tensor.cpu()[0])
         new_img = Image.new("RGB", (img_pil.width, new_H), (255, 255, 255))
         new_img.paste(img_pil, (0, 0))
-        
+
         if text:
             draw = ImageDraw.Draw(new_img)
             draw.text((4, img_pil.height + 2), text, fill=(0, 0, 0))
-            
+
         return TF.to_tensor(new_img).unsqueeze(0).to(img_tensor.device)
 
     rows = []
@@ -489,12 +489,14 @@ def save_transition_grid_4th_pair_with_labels(args):
         # --- Initial Step ---
         t_init = (torch.ones(n) * init_timestep).long().to(device)
         init_preds = model(x_t, t_init).sample
-        
-        p_1, p_1_other = init_preds[:, :3], init_preds[:, 3:]
+
+        # Path 1
+        p_1 = init_preds[:, :3]
         o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
         x_t_1 = x_t - diffusion.mix_images(p_1, o_1, t_init) + diffusion.mix_images(p_1, o_1, t_init - 1)
 
-        p_2, p_2_other = init_preds[:, 3:], init_preds[:, :3]
+        # Path 2
+        p_2 = init_preds[:, 3:]
         o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
         x_t_2 = x_t - diffusion.mix_images(p_2, o_2, t_init) + diffusion.mix_images(p_2, o_2, t_init - 1)
 
@@ -504,19 +506,19 @@ def save_transition_grid_4th_pair_with_labels(args):
         # Calculate weights for the *next* mixture (t_init - 1)
         w2_next = diffusion.alteration_per_t * (init_timestep - 1)
         w1_next = 1.0 - w2_next
-        
+
         lbl1 = f"{w1_next * 100:.1f}%"
         lbl2 = f"{w2_next * 100:.1f}%"
 
-        # Construct row 1
+        # Construct initial row using the ACTUAL pair used in each update
         row_imgs = [
             add_label_to_image(process_img(p_1), lbl1),
             add_label_to_image(process_img(x_t_1), "Mix"),
-            add_label_to_image(process_img(p_1_other), lbl2),
+            add_label_to_image(process_img(o_1), lbl2),
             separator,
-            add_label_to_image(process_img(p_2_other), lbl1),
+            add_label_to_image(process_img(o_2), lbl1),
             add_label_to_image(process_img(x_t_2), "Mix"),
-            add_label_to_image(process_img(p_2), lbl2)
+            add_label_to_image(process_img(p_2), lbl2),
         ]
         rows.append(torch.cat(row_imgs, dim=3))
 
@@ -524,23 +526,22 @@ def save_transition_grid_4th_pair_with_labels(args):
         for i in reversed(range(1, init_timestep)):
             t = (torch.ones(n) * i).long().to(device)
 
+            # Path 1 update
             preds_1 = model(x_t_1, t).sample
-            p_1, p_1_other = preds_1[:, :3], preds_1[:, 3:]
+            p_1 = preds_1[:, :3]
             o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
             x_t_1 = x_t_1 - diffusion.mix_images(p_1, o_1, t) + diffusion.mix_images(p_1, o_1, t - 1)
 
+            # Path 2 update
             preds_2 = model(x_t_2, t).sample
-            #unresolved = ~has_flipped
-            #if unresolved.any():
-            #    dist_no_flip = ((preds_2[unresolved, 3:] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
-            #    dist_flip = ((preds_2[unresolved, :3] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
-            #    has_flipped[unresolved] = dist_flip < dist_no_flip
+            unresolved = ~has_flipped
+            if unresolved.any():
+                dist_no_flip = ((preds_2[unresolved, 3:] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
+                dist_flip = ((preds_2[unresolved, :3] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
+                has_flipped[unresolved] = dist_flip < dist_no_flip
 
             curr_p_2 = preds_2[:, 3:].clone()
             curr_p_2[has_flipped] = preds_2[has_flipped, :3]
-            
-            curr_p_2_other = preds_2[:, :3].clone()
-            curr_p_2_other[has_flipped] = preds_2[has_flipped, 3:]
 
             curr_o_2 = (superimposed - alpha_init * curr_p_2) / (1. - alpha_init)
             x_t_2 = x_t_2 - diffusion.mix_images(curr_p_2, curr_o_2, t) + diffusion.mix_images(curr_p_2, curr_o_2, t - 1)
@@ -548,28 +549,28 @@ def save_transition_grid_4th_pair_with_labels(args):
             # Calculate weights for the *next* mixture (t - 1)
             w2_next = diffusion.alteration_per_t * (i - 1)
             w1_next = 1.0 - w2_next
-            
+
             lbl1 = f"{w1_next * 100:.1f}%"
             lbl2 = f"{w2_next * 100:.1f}%"
 
-            # Construct loop row
+            # Construct loop row using the ACTUAL pair used in each update
             row_imgs = [
                 add_label_to_image(process_img(p_1), lbl1),
                 add_label_to_image(process_img(x_t_1), "Mix"),
-                add_label_to_image(process_img(p_1_other), lbl2),
+                add_label_to_image(process_img(o_1), lbl2),
                 separator,
-                add_label_to_image(process_img(curr_p_2_other), lbl1),
+                add_label_to_image(process_img(curr_o_2), lbl1),
                 add_label_to_image(process_img(x_t_2), "Mix"),
-                add_label_to_image(process_img(curr_p_2), lbl2)
+                add_label_to_image(process_img(curr_p_2), lbl2),
             ]
             rows.append(torch.cat(row_imgs, dim=3))
 
-    full_grid = torch.cat(rows, dim=2) 
-    
+    full_grid = torch.cat(rows, dim=2)
+
     save_dir = os.path.join(base_dir, "samples", "eval")
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, "transition_grid_4th_pair_labels.jpg")
-    
+
     save_image(full_grid, save_path)
     if accelerator.is_main_process:
         print(f"\nSaved step-by-step transition grid (with labels) to: {save_path}")
