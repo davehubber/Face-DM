@@ -8,4 +8,4 @@
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train.py --dataset_path "/nas-ctm01/datasets/public/Oxford102Flowers/jpg" --run_name "avg_flowers_pid_6-channel" --partition_file "partition_unsorted.csv" --batch_size 256 --epochs 300
+python train.py --dataset_path "/nas-ctm01/datasets/public/Oxford102Flowers/jpg" --run_name "avg_flowers_default" --partition_file "partition_brightness.csv" --batch_size 256 --epochs 150
