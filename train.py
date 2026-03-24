@@ -489,14 +489,24 @@ def save_transition_grid_4th_pair_with_labels(args):
     def compute_niqe_label(img_tensor):
         """
         Computes NIQE on the clamped [0,1] image used for display.
+        Returns N/A if the image is too small for NIQE.
         """
         if niqe_metric is None:
             return "NIQE: N/A"
 
         img_01 = process_img(img_tensor).clamp(0, 1)
-        with torch.no_grad():
-            score = niqe_metric(img_01).item()
-        return f"NIQE: {score:.2f}"
+        _, _, h, w = img_01.shape
+
+        # pyiqa NIQE uses 96x96 blocks internally
+        if h < 96 or w < 96:
+            return "NIQE: N/A"
+
+        try:
+            with torch.no_grad():
+                score = niqe_metric(img_01).item()
+            return f"NIQE: {score:.2f}"
+        except RuntimeError:
+            return "NIQE: N/A"
 
     def add_label_to_image(img_tensor, lines=None):
         """
