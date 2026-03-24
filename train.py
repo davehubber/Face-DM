@@ -447,7 +447,7 @@ def save_transition_grid_4th_pair_with_labels(args):
     for images, images_add in test_dataloader:
         all_images.append(images)
         all_images_add.append(images_add)
-        if sum(x.shape for x in all_images) >= 4:
+        if sum(x.shape[0] for x in all_images) >= 4:
             break
             
     images = torch.cat(all_images)[:4]
@@ -471,7 +471,7 @@ def save_transition_grid_4th_pair_with_labels(args):
 
     def add_label_to_image(img_tensor, text):
         """Pads the image and adds a text label at the bottom."""
-        img_pil = TF.to_pil_image(img_tensor.cpu())
+        img_pil = TF.to_pil_image(img_tensor.cpu()[0])
         new_img = Image.new("RGB", (img_pil.width, new_H), (255, 255, 255))
         new_img.paste(img_pil, (0, 0))
         
