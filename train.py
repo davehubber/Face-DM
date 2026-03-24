@@ -442,6 +442,14 @@ def save_transition_grid_4th_pair_with_labels(args):
     diffusion = ColdDiffusion(img_size=args.image_size, device=device)
     lpips_model = lpips.LPIPS(net='alex').to(device).eval()
 
+    # NIQE metric
+    try:
+        import pyiqa
+        niqe_metric = pyiqa.create_metric("niqe", device=device)
+    except ImportError:
+        niqe_metric = None
+        print("Warning: pyiqa not installed. NIQE labels will show as N/A.")
+
     # 1. Fetch exactly the 4th pair
     all_images = []
     all_images_add = []
@@ -464,7 +472,7 @@ def save_transition_grid_4th_pair_with_labels(args):
     init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
 
     _, _, H, W = image.shape
-    new_H = H + 34  # more space for two label lines
+    new_H = H + 46  # enough for 3 lines of text
     separator = torch.zeros((1, 3, new_H, 5), device=device)
 
     def process_img(img_tensor):
@@ -472,24 +480,42 @@ def save_transition_grid_4th_pair_with_labels(args):
 
     def count_oob_pixels(img_tensor):
         """
-        Counts spatial pixels that have at least one channel outside [-1, 1].
-        Expects shape [B, C, H, W]. Returns a Python int for B=1.
+        Counts spatial pixels where at least one channel is outside [-1, 1].
+        Expects shape [B, C, H, W]. Returns int for B=1.
         """
         oob_mask = ((img_tensor < -1) | (img_tensor > 1)).any(dim=1)  # [B, H, W]
         return int(oob_mask[0].sum().item())
 
-    def add_label_to_image(img_tensor, text_top="", text_bottom=""):
+    def compute_niqe_label(img_tensor):
+        """
+        Computes NIQE on the clamped [0,1] image used for display.
+        """
+        if niqe_metric is None:
+            return "NIQE: N/A"
+
+        img_01 = process_img(img_tensor).clamp(0, 1)
+        with torch.no_grad():
+            score = niqe_metric(img_01).item()
+        return f"NIQE: {score:.2f}"
+
+    def add_label_to_image(img_tensor, lines=None):
+        """
+        Pads the image and adds multiple text lines at the bottom.
+        """
+        if lines is None:
+            lines = []
+
         img_pil = TF.to_pil_image(img_tensor.cpu()[0])
         new_img = Image.new("RGB", (img_pil.width, new_H), (255, 255, 255))
         new_img.paste(img_pil, (0, 0))
 
         draw = ImageDraw.Draw(new_img)
         y0 = img_pil.height + 1
+        line_gap = 12
 
-        if text_top:
-            draw.text((4, y0), text_top, fill=(0, 0, 0))
-        if text_bottom:
-            draw.text((4, y0 + 12), text_bottom, fill=(0, 0, 0))
+        for idx, line in enumerate(lines):
+            if line:
+                draw.text((4, y0 + idx * line_gap), line, fill=(0, 0, 0))
 
         return TF.to_tensor(new_img).unsqueeze(0).to(img_tensor.device)
 
@@ -548,17 +574,24 @@ def save_transition_grid_4th_pair_with_labels(args):
         lbl1 = f"{w1_next * 100:.1f}%"
         lbl2 = f"{w2_next * 100:.1f}%"
 
-        oob_o1 = f"OOB: {count_oob_pixels(o_1)}"
-        oob_o2 = f"OOB: {count_oob_pixels(o_2)}"
+        p1_oob = f"OOB: {count_oob_pixels(p_1)}"
+        o1_oob = f"OOB: {count_oob_pixels(o_1)}"
+        o2_oob = f"OOB: {count_oob_pixels(o_2)}"
+        p2_oob = f"OOB: {count_oob_pixels(p_2)}"
+
+        p1_niqe = compute_niqe_label(p_1)
+        o1_niqe = compute_niqe_label(o_1)
+        o2_niqe = compute_niqe_label(o_2)
+        p2_niqe = compute_niqe_label(p_2)
 
         row_imgs = [
-            add_label_to_image(process_img(p_1), lbl1),
-            add_label_to_image(process_img(x_t_1), "Mix"),
-            add_label_to_image(process_img(o_1), lbl2, oob_o1),
+            add_label_to_image(process_img(p_1), [lbl1, p1_oob, p1_niqe]),
+            add_label_to_image(process_img(x_t_1), ["Mix"]),
+            add_label_to_image(process_img(o_1), [lbl2, o1_oob, o1_niqe]),
             separator,
-            add_label_to_image(process_img(o_2), lbl2, oob_o2),
-            add_label_to_image(process_img(x_t_2), "Mix"),
-            add_label_to_image(process_img(p_2), lbl1),
+            add_label_to_image(process_img(o_2), [lbl2, o2_oob, o2_niqe]),
+            add_label_to_image(process_img(x_t_2), ["Mix"]),
+            add_label_to_image(process_img(p_2), [lbl1, p2_oob, p2_niqe]),
         ]
         rows.append(torch.cat(row_imgs, dim=3))
 
@@ -587,17 +620,24 @@ def save_transition_grid_4th_pair_with_labels(args):
             lbl1 = f"{w1_next * 100:.1f}%"
             lbl2 = f"{w2_next * 100:.1f}%"
 
-            oob_o1 = f"OOB: {count_oob_pixels(o_1)}"
-            oob_o2 = f"OOB: {count_oob_pixels(o_2)}"
+            p1_oob = f"OOB: {count_oob_pixels(p_1)}"
+            o1_oob = f"OOB: {count_oob_pixels(o_1)}"
+            o2_oob = f"OOB: {count_oob_pixels(o_2)}"
+            p2_oob = f"OOB: {count_oob_pixels(p_2)}"
+
+            p1_niqe = compute_niqe_label(p_1)
+            o1_niqe = compute_niqe_label(o_1)
+            o2_niqe = compute_niqe_label(o_2)
+            p2_niqe = compute_niqe_label(p_2)
 
             row_imgs = [
-                add_label_to_image(process_img(p_1), lbl1),
-                add_label_to_image(process_img(x_t_1), "Mix"),
-                add_label_to_image(process_img(o_1), lbl2, oob_o1),
+                add_label_to_image(process_img(p_1), [lbl1, p1_oob, p1_niqe]),
+                add_label_to_image(process_img(x_t_1), ["Mix"]),
+                add_label_to_image(process_img(o_1), [lbl2, o1_oob, o1_niqe]),
                 separator,
-                add_label_to_image(process_img(o_2), lbl2, oob_o2),
-                add_label_to_image(process_img(x_t_2), "Mix"),
-                add_label_to_image(process_img(p_2), lbl1),
+                add_label_to_image(process_img(o_2), [lbl2, o2_oob, o2_niqe]),
+                add_label_to_image(process_img(x_t_2), ["Mix"]),
+                add_label_to_image(process_img(p_2), [lbl1, p2_oob, p2_niqe]),
             ]
             rows.append(torch.cat(row_imgs, dim=3))
 
