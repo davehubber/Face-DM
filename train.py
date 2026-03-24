@@ -426,7 +426,7 @@ def eval(args):
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
-def save_transition_grid(args, num_steps=50):
+def save_transition_grid(args, num_steps=10):
     accelerator = Accelerator()
     device = accelerator.device
     base_dir = os.path.join("experiments", args.run_name)
