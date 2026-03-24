@@ -426,7 +426,7 @@ def eval(args):
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
-def save_transition_grid_4th_pair_with_labels(args):
+def save_transition_grid(args, num_steps=50):
     accelerator = Accelerator()
     device = accelerator.device
     base_dir = os.path.join("experiments", args.run_name)
@@ -448,7 +448,7 @@ def save_transition_grid_4th_pair_with_labels(args):
     for images, images_add in test_dataloader:
         all_images.append(images)
         all_images_add.append(images_add)
-        if sum(x.shape[0] for x in all_images) >= 4:
+        if sum(x.shape for x in all_images) >= 4:
             break
 
     images = torch.cat(all_images)[:4]
@@ -458,77 +458,27 @@ def save_transition_grid_4th_pair_with_labels(args):
     image_add = images_add[3:4].to(device)
     superimposed = image * (1 - args.alpha_init) + image_add * args.alpha_init
 
-    # 2. Setup Loop Variables
+    # 2. Setup Variables and Stepping Schedule
     n = len(superimposed)
     alpha_init = args.alpha_init
     init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
 
+    # Calculate timestep jumps for the remix update step
+    step_size = max(1, init_timestep // num_steps)
+    timesteps = list(range(init_timestep, 0, -step_size))
+    if timesteps[-1] != 0:
+        timesteps.append(0)
+
     _, _, H, W = image.shape
-    new_H = H + 46  # enough for 3 lines of text
-    separator = torch.zeros((1, 3, new_H, 5), device=device)
+    separator = torch.zeros((1, 3, H, 5), device=device)
 
     def process_img(img_tensor):
         return (img_tensor.clamp(-1, 1) + 1) / 2
-
-    def count_oob_pixels(img_tensor):
-        """
-        Counts spatial pixels where at least one channel is outside [-1, 1].
-        Expects shape [B, C, H, W]. Returns int for B=1.
-        """
-        oob_mask = ((img_tensor < -1) | (img_tensor > 1)).any(dim=1)  # [B, H, W]
-        return int(oob_mask[0].sum().item())
-
-    def compute_oob_mse(img_tensor):
-        """
-        Mean squared overshoot beyond [-1, 1], averaged over OOB spatial pixels only.
-        For each channel:
-          if x > 1  -> error = (x - 1)^2
-          if x < -1 -> error = (x + 1)^2
-          else      -> error = 0
-        Then sum channel errors per spatial pixel and average over OOB pixels.
-        Returns 0.0 if there are no OOB pixels.
-        """
-        above = torch.relu(img_tensor - 1.0)
-        below = torch.relu(-1.0 - img_tensor)
-        sq_err = above.pow(2) + below.pow(2)          # [B, C, H, W]
-        per_pixel_err = sq_err.sum(dim=1)             # [B, H, W]
-        oob_mask = ((img_tensor < -1) | (img_tensor > 1)).any(dim=1)  # [B, H, W]
-
-        num_oob = oob_mask[0].sum().item()
-        if num_oob == 0:
-            return 0.0
-
-        return float(per_pixel_err[0][oob_mask[0]].mean().item())
-
-    def add_label_to_image(img_tensor, lines=None):
-        """
-        Pads the image and adds multiple text lines at the bottom.
-        """
-        if lines is None:
-            lines = []
-
-        img_pil = TF.to_pil_image(img_tensor.cpu()[0])
-        new_img = Image.new("RGB", (img_pil.width, new_H), (255, 255, 255))
-        new_img.paste(img_pil, (0, 0))
-
-        draw = ImageDraw.Draw(new_img)
-        y0 = img_pil.height + 1
-        line_gap = 12
-
-        for idx, line in enumerate(lines):
-            if line:
-                draw.text((4, y0 + idx * line_gap), line, fill=(0, 0, 0))
-
-        return TF.to_tensor(new_img).unsqueeze(0).to(img_tensor.device)
 
     def lpips_dist_batch(ref, cand):
         return lpips_model(ref.clamp(-1, 1), cand.clamp(-1, 1)).view(-1)
 
     def choose_target_by_continuity(preds, prev_target):
-        """
-        Picks whichever 3-channel half is more LPIPS-consistent with the
-        previously chosen target for this branch.
-        """
         cand_a = preds[:, :3]
         cand_b = preds[:, 3:]
 
@@ -551,7 +501,9 @@ def save_transition_grid_4th_pair_with_labels(args):
         x_t = superimposed.clone()
 
         # --- Initial Step ---
-        t_init = (torch.ones(n) * init_timestep).long().to(device)
+        t_init = (torch.ones(n) * timesteps).long().to(device)
+        t_next = (torch.ones(n) * timesteps).long().to(device)
+        
         init_preds = model(x_t, t_init).sample
 
         # Seed both branches from opposite channel choices
@@ -562,84 +514,44 @@ def save_transition_grid_4th_pair_with_labels(args):
         o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
         o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
 
-        x_t_1 = x_t - diffusion.mix_images(p_1, o_1, t_init) + diffusion.mix_images(p_1, o_1, t_init - 1)
-        x_t_2 = x_t - diffusion.mix_images(p_2, o_2, t_init) + diffusion.mix_images(p_2, o_2, t_init - 1)
+        # Remix update step using jump sequence
+        x_t_1 = x_t - diffusion.mix_images(p_1, o_1, t_init) + diffusion.mix_images(p_1, o_1, t_next)
+        x_t_2 = x_t - diffusion.mix_images(p_2, o_2, t_init) + diffusion.mix_images(p_2, o_2, t_next)
 
         # Track previous chosen target per branch
         prev_target_1 = p_1.detach().clone()
         prev_target_2 = p_2.detach().clone()
 
-        # Weights of the next mixture (t_init - 1)
-        w2_next = diffusion.alteration_per_t * (init_timestep - 1)
-        w1_next = 1.0 - w2_next
-
-        lbl1 = f"{w1_next * 100:.1f}%"
-        lbl2 = f"{w2_next * 100:.1f}%"
-
-        p1_oob = f"OOB: {count_oob_pixels(p_1)}"
-        o1_oob = f"OOB: {count_oob_pixels(o_1)}"
-        o2_oob = f"OOB: {count_oob_pixels(o_2)}"
-        p2_oob = f"OOB: {count_oob_pixels(p_2)}"
-
-        p1_oob_mse = f"OOB MSE: {compute_oob_mse(p_1):.4f}"
-        o1_oob_mse = f"OOB MSE: {compute_oob_mse(o_1):.4f}"
-        o2_oob_mse = f"OOB MSE: {compute_oob_mse(o_2):.4f}"
-        p2_oob_mse = f"OOB MSE: {compute_oob_mse(p_2):.4f}"
-
         row_imgs = [
-            add_label_to_image(process_img(p_1), [lbl1, p1_oob, p1_oob_mse]),
-            add_label_to_image(process_img(x_t_1), ["Mix"]),
-            add_label_to_image(process_img(o_1), [lbl2, o1_oob, o1_oob_mse]),
+            process_img(p_1), process_img(x_t_1), process_img(o_1),
             separator,
-            add_label_to_image(process_img(o_2), [lbl2, o2_oob, o2_oob_mse]),
-            add_label_to_image(process_img(x_t_2), ["Mix"]),
-            add_label_to_image(process_img(p_2), [lbl1, p2_oob, p2_oob_mse]),
+            process_img(o_2), process_img(x_t_2), process_img(p_2)
         ]
         rows.append(torch.cat(row_imgs, dim=3))
 
-        # --- Reverse Sampling Loop ---
-        for i in reversed(range(1, init_timestep)):
-            t = (torch.ones(n) * i).long().to(device)
+        # --- Reverse Sampling Loop (Jumping by step_size) ---
+        for i in range(1, len(timesteps) - 1):
+            t = (torch.ones(n) * timesteps[i]).long().to(device)
+            t_next = (torch.ones(n) * timesteps[i+1]).long().to(device)
 
             # -------- Branch 1 --------
             preds_1 = model(x_t_1, t).sample
             p_1, _ = choose_target_by_continuity(preds_1, prev_target_1)
             o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
-            x_t_1 = x_t_1 - diffusion.mix_images(p_1, o_1, t) + diffusion.mix_images(p_1, o_1, t - 1)
+            x_t_1 = x_t_1 - diffusion.mix_images(p_1, o_1, t) + diffusion.mix_images(p_1, o_1, t_next)
             prev_target_1 = p_1.detach().clone()
 
             # -------- Branch 2 --------
             preds_2 = model(x_t_2, t).sample
             p_2, _ = choose_target_by_continuity(preds_2, prev_target_2)
             o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
-            x_t_2 = x_t_2 - diffusion.mix_images(p_2, o_2, t) + diffusion.mix_images(p_2, o_2, t - 1)
+            x_t_2 = x_t_2 - diffusion.mix_images(p_2, o_2, t) + diffusion.mix_images(p_2, o_2, t_next)
             prev_target_2 = p_2.detach().clone()
 
-            # Weights of the next mixture (t - 1)
-            w2_next = diffusion.alteration_per_t * (i - 1)
-            w1_next = 1.0 - w2_next
-
-            lbl1 = f"{w1_next * 100:.1f}%"
-            lbl2 = f"{w2_next * 100:.1f}%"
-
-            p1_oob = f"OOB: {count_oob_pixels(p_1)}"
-            o1_oob = f"OOB: {count_oob_pixels(o_1)}"
-            o2_oob = f"OOB: {count_oob_pixels(o_2)}"
-            p2_oob = f"OOB: {count_oob_pixels(p_2)}"
-
-            p1_oob_mse = f"OOB MSE: {compute_oob_mse(p_1):.4f}"
-            o1_oob_mse = f"OOB MSE: {compute_oob_mse(o_1):.4f}"
-            o2_oob_mse = f"OOB MSE: {compute_oob_mse(o_2):.4f}"
-            p2_oob_mse = f"OOB MSE: {compute_oob_mse(p_2):.4f}"
-
             row_imgs = [
-                add_label_to_image(process_img(p_1), [lbl1, p1_oob, p1_oob_mse]),
-                add_label_to_image(process_img(x_t_1), ["Mix"]),
-                add_label_to_image(process_img(o_1), [lbl2, o1_oob, o1_oob_mse]),
+                process_img(p_1), process_img(x_t_1), process_img(o_1),
                 separator,
-                add_label_to_image(process_img(o_2), [lbl2, o2_oob, o2_oob_mse]),
-                add_label_to_image(process_img(x_t_2), ["Mix"]),
-                add_label_to_image(process_img(p_2), [lbl1, p2_oob, p2_oob_mse]),
+                process_img(o_2), process_img(x_t_2), process_img(p_2)
             ]
             rows.append(torch.cat(row_imgs, dim=3))
 
@@ -647,11 +559,11 @@ def save_transition_grid_4th_pair_with_labels(args):
 
     save_dir = os.path.join(base_dir, "samples", "eval")
     os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "transition_grid_4th_pair_labels.jpg")
+    save_path = os.path.join(save_dir, "transition_grid_4th_pair_clean.jpg")
 
     save_image(full_grid, save_path)
     if accelerator.is_main_process:
-        print(f"\nSaved step-by-step transition grid (with labels) to: {save_path}")
+        print(f"\nSaved clean step-by-step transition grid to: {save_path}")
 
 def eval_grid_only(args):
     accelerator = Accelerator()
@@ -851,7 +763,7 @@ def launch():
     #one_shot_eval(args)
 
     #eval_grid_only(args)
-    save_transition_grid_4th_pair_with_labels(args)
+    save_transition_grid(args)
 
 if __name__ == '__main__':
     launch()
