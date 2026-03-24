@@ -442,14 +442,6 @@ def save_transition_grid_4th_pair_with_labels(args):
     diffusion = ColdDiffusion(img_size=args.image_size, device=device)
     lpips_model = lpips.LPIPS(net='alex').to(device).eval()
 
-    # NIQE metric
-    try:
-        import pyiqa
-        niqe_metric = pyiqa.create_metric("niqe", device=device)
-    except ImportError:
-        niqe_metric = None
-        print("Warning: pyiqa not installed. NIQE labels will show as N/A.")
-
     # 1. Fetch exactly the 4th pair
     all_images = []
     all_images_add = []
@@ -486,27 +478,27 @@ def save_transition_grid_4th_pair_with_labels(args):
         oob_mask = ((img_tensor < -1) | (img_tensor > 1)).any(dim=1)  # [B, H, W]
         return int(oob_mask[0].sum().item())
 
-    def compute_niqe_label(img_tensor):
+    def compute_oob_mse(img_tensor):
         """
-        Computes NIQE on the clamped [0,1] image used for display.
-        Returns N/A if the image is too small for NIQE.
+        Mean squared overshoot beyond [-1, 1], averaged over OOB spatial pixels only.
+        For each channel:
+          if x > 1  -> error = (x - 1)^2
+          if x < -1 -> error = (x + 1)^2
+          else      -> error = 0
+        Then sum channel errors per spatial pixel and average over OOB pixels.
+        Returns 0.0 if there are no OOB pixels.
         """
-        if niqe_metric is None:
-            return "NIQE: N/A"
+        above = torch.relu(img_tensor - 1.0)
+        below = torch.relu(-1.0 - img_tensor)
+        sq_err = above.pow(2) + below.pow(2)          # [B, C, H, W]
+        per_pixel_err = sq_err.sum(dim=1)             # [B, H, W]
+        oob_mask = ((img_tensor < -1) | (img_tensor > 1)).any(dim=1)  # [B, H, W]
 
-        img_01 = process_img(img_tensor).clamp(0, 1)
-        _, _, h, w = img_01.shape
+        num_oob = oob_mask[0].sum().item()
+        if num_oob == 0:
+            return 0.0
 
-        # pyiqa NIQE uses 96x96 blocks internally
-        if h < 96 or w < 96:
-            return "NIQE: N/A"
-
-        try:
-            with torch.no_grad():
-                score = niqe_metric(img_01).item()
-            return f"NIQE: {score:.2f}"
-        except RuntimeError:
-            return "NIQE: N/A"
+        return float(per_pixel_err[0][oob_mask[0]].mean().item())
 
     def add_label_to_image(img_tensor, lines=None):
         """
@@ -589,19 +581,19 @@ def save_transition_grid_4th_pair_with_labels(args):
         o2_oob = f"OOB: {count_oob_pixels(o_2)}"
         p2_oob = f"OOB: {count_oob_pixels(p_2)}"
 
-        p1_niqe = compute_niqe_label(p_1)
-        o1_niqe = compute_niqe_label(o_1)
-        o2_niqe = compute_niqe_label(o_2)
-        p2_niqe = compute_niqe_label(p_2)
+        p1_oob_mse = f"OOB MSE: {compute_oob_mse(p_1):.4f}"
+        o1_oob_mse = f"OOB MSE: {compute_oob_mse(o_1):.4f}"
+        o2_oob_mse = f"OOB MSE: {compute_oob_mse(o_2):.4f}"
+        p2_oob_mse = f"OOB MSE: {compute_oob_mse(p_2):.4f}"
 
         row_imgs = [
-            add_label_to_image(process_img(p_1), [lbl1, p1_oob, p1_niqe]),
+            add_label_to_image(process_img(p_1), [lbl1, p1_oob, p1_oob_mse]),
             add_label_to_image(process_img(x_t_1), ["Mix"]),
-            add_label_to_image(process_img(o_1), [lbl2, o1_oob, o1_niqe]),
+            add_label_to_image(process_img(o_1), [lbl2, o1_oob, o1_oob_mse]),
             separator,
-            add_label_to_image(process_img(o_2), [lbl2, o2_oob, o2_niqe]),
+            add_label_to_image(process_img(o_2), [lbl2, o2_oob, o2_oob_mse]),
             add_label_to_image(process_img(x_t_2), ["Mix"]),
-            add_label_to_image(process_img(p_2), [lbl1, p2_oob, p2_niqe]),
+            add_label_to_image(process_img(p_2), [lbl1, p2_oob, p2_oob_mse]),
         ]
         rows.append(torch.cat(row_imgs, dim=3))
 
@@ -635,19 +627,19 @@ def save_transition_grid_4th_pair_with_labels(args):
             o2_oob = f"OOB: {count_oob_pixels(o_2)}"
             p2_oob = f"OOB: {count_oob_pixels(p_2)}"
 
-            p1_niqe = compute_niqe_label(p_1)
-            o1_niqe = compute_niqe_label(o_1)
-            o2_niqe = compute_niqe_label(o_2)
-            p2_niqe = compute_niqe_label(p_2)
+            p1_oob_mse = f"OOB MSE: {compute_oob_mse(p_1):.4f}"
+            o1_oob_mse = f"OOB MSE: {compute_oob_mse(o_1):.4f}"
+            o2_oob_mse = f"OOB MSE: {compute_oob_mse(o_2):.4f}"
+            p2_oob_mse = f"OOB MSE: {compute_oob_mse(p_2):.4f}"
 
             row_imgs = [
-                add_label_to_image(process_img(p_1), [lbl1, p1_oob, p1_niqe]),
+                add_label_to_image(process_img(p_1), [lbl1, p1_oob, p1_oob_mse]),
                 add_label_to_image(process_img(x_t_1), ["Mix"]),
-                add_label_to_image(process_img(o_1), [lbl2, o1_oob, o1_niqe]),
+                add_label_to_image(process_img(o_1), [lbl2, o1_oob, o1_oob_mse]),
                 separator,
-                add_label_to_image(process_img(o_2), [lbl2, o2_oob, o2_niqe]),
+                add_label_to_image(process_img(o_2), [lbl2, o2_oob, o2_oob_mse]),
                 add_label_to_image(process_img(x_t_2), ["Mix"]),
-                add_label_to_image(process_img(p_2), [lbl1, p2_oob, p2_niqe]),
+                add_label_to_image(process_img(p_2), [lbl1, p2_oob, p2_oob_mse]),
             ]
             rows.append(torch.cat(row_imgs, dim=3))
 
