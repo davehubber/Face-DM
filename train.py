@@ -530,11 +530,11 @@ def save_transition_grid_4th_pair_with_labels(args):
             x_t_1 = x_t_1 - diffusion.mix_images(p_1, o_1, t) + diffusion.mix_images(p_1, o_1, t - 1)
 
             preds_2 = model(x_t_2, t).sample
-            unresolved = ~has_flipped
-            if unresolved.any():
-                dist_no_flip = ((preds_2[unresolved, 3:] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
-                dist_flip = ((preds_2[unresolved, :3] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
-                has_flipped[unresolved] = dist_flip < dist_no_flip
+            #unresolved = ~has_flipped
+            #if unresolved.any():
+            #    dist_no_flip = ((preds_2[unresolved, 3:] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
+            #    dist_flip = ((preds_2[unresolved, :3] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
+            #    has_flipped[unresolved] = dist_flip < dist_no_flip
 
             curr_p_2 = preds_2[:, 3:].clone()
             curr_p_2[has_flipped] = preds_2[has_flipped, :3]
