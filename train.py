@@ -97,11 +97,16 @@ class ColdDiffusion:
             p_1, o_1 = a0.clone(), b0.clone()
             p_2, o_2 = b0.clone(), a0.clone()
 
-            # First reverse step for each trajectory
-            x_t_1 = x_init - self.mix_images(p_1, o_1, t_init) + self.mix_images(p_1, o_1, t_init - 1)
-            x_t_2 = x_init - self.mix_images(p_2, o_2, t_init) + self.mix_images(p_2, o_2, t_init - 1)
+            # Mathematically extract the estimates for the "other" images
+            # given the aligned prediction, the initial mixture (x_init), and alpha_init
+            o_1_ext = (x_init - p_1 * (1. - alpha_init)) / alpha_init
+            o_2_ext = (x_init - p_2 * alpha_init) / (1. - alpha_init)
 
-            # Track the full pair for continuity, not only one image
+            # First reverse step for each trajectory using the extracted mathematical estimates
+            x_t_1 = x_init - self.mix_images(p_1, o_1_ext, t_init) + self.mix_images(p_1, o_1_ext, t_init - 1)
+            x_t_2 = x_init - self.mix_images(p_2, o_2_ext, t_init) + self.mix_images(p_2, o_2_ext, t_init - 1)
+
+            # Track the full network-predicted pair for continuity logic
             prev_p_1, prev_o_1 = p_1.detach().clone(), o_1.detach().clone()
             prev_p_2, prev_o_2 = p_2.detach().clone(), o_2.detach().clone()
 
@@ -112,13 +117,21 @@ class ColdDiffusion:
                 # Trajectory 1
                 preds_1 = model(x_t_1, t).sample
                 p_1, o_1 = self._assign_pair_by_continuity(preds_1, prev_p_1, prev_o_1)
-                x_t_1 = x_t_1 - self.mix_images(p_1, o_1, t) + self.mix_images(p_1, o_1, t_next)
+                
+                # Re-extract mathematically for the reverse step
+                o_1_ext = (x_init - p_1 * (1. - alpha_init)) / alpha_init
+                x_t_1 = x_t_1 - self.mix_images(p_1, o_1_ext, t) + self.mix_images(p_1, o_1_ext, t_next)
+                
                 prev_p_1, prev_o_1 = p_1.detach().clone(), o_1.detach().clone()
 
                 # Trajectory 2
                 preds_2 = model(x_t_2, t).sample
                 p_2, o_2 = self._assign_pair_by_continuity(preds_2, prev_p_2, prev_o_2)
-                x_t_2 = x_t_2 - self.mix_images(p_2, o_2, t) + self.mix_images(p_2, o_2, t_next)
+                
+                # Re-extract mathematically for the reverse step
+                o_2_ext = (x_init - p_2 * alpha_init) / (1. - alpha_init)
+                x_t_2 = x_t_2 - self.mix_images(p_2, o_2_ext, t) + self.mix_images(p_2, o_2_ext, t_next)
+                
                 prev_p_2, prev_o_2 = p_2.detach().clone(), o_2.detach().clone()
 
         if was_training:
