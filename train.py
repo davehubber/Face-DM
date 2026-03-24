@@ -1,11 +1,8 @@
 import os, torch, numpy as np, math
-import torchvision.transforms.functional as TF
 import wandb
 import lpips
-from torchvision.utils import save_image
 from torch import optim
 from utils import *
-from PIL import Image, ImageDraw
 
 from accelerate import Accelerator
 from diffusers import UNet2DModel
@@ -19,6 +16,7 @@ class ColdDiffusion:
         self.img_size = img_size
         self.device = device
         self.alteration_per_t = (alpha_max - alpha_start) / max_timesteps
+        self.lpips_model = None
 
     def mix_images(self, image_1, image_2, t):
         return image_1 * (1. - self.alteration_per_t * t)[:, None, None, None] + image_2 * (self.alteration_per_t * t)[:, None, None, None]
@@ -26,65 +24,83 @@ class ColdDiffusion:
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
 
+    def _get_lpips_model(self):
+        if self.lpips_model is None:
+            self.lpips_model = lpips.LPIPS(net='alex').to(self.device).eval()
+            for p in self.lpips_model.parameters():
+                p.requires_grad = False
+        return self.lpips_model
+
+    def _lpips_dist_batch(self, ref, cand):
+        lpips_model = self._get_lpips_model()
+        return lpips_model(
+            ref.float().clamp(-1, 1),
+            cand.float().clamp(-1, 1)
+        ).view(-1)
+
+    def _choose_target_by_continuity(self, preds, prev_target):
+        cand_a = preds[:, :3]
+        cand_b = preds[:, 3:]
+
+        dist_a = self._lpips_dist_batch(prev_target, cand_a)
+        dist_b = self._lpips_dist_batch(prev_target, cand_b)
+
+        choose_a = dist_a <= dist_b
+
+        curr_target = cand_b.clone()
+        curr_target[choose_a] = cand_a[choose_a]
+
+        curr_other = cand_a.clone()
+        curr_other[choose_a] = cand_b[choose_a]
+
+        return curr_target, curr_other
+
     def sample(self, model, superimposed_image, alpha_init=0.5):
         n = len(superimposed_image)
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
+
+        was_training = model.training
         model.eval()
-        
+
         with torch.no_grad():
+            self._get_lpips_model()
+
             x_t = superimposed_image.to(self.device)
+            superimposed = x_t
 
-            # --- Initial Model Prediction ---
-            t_init = (torch.ones(n) * init_timestep).long().to(self.device)
+            t_init = (torch.ones(n, device=self.device) * init_timestep).long()
             init_preds = model(x_t, t_init).sample
-            
-            # Setup Path 1 (Targeting image_1)
-            p_1 = init_preds[:, :3]
-            o_1 = (superimposed_image - (1. - alpha_init) * p_1) / alpha_init
-            x_t_1 = x_t - self.mix_images(p_1, o_1, t_init) + self.mix_images(p_1, o_1, t_init - 1)
 
-            # Setup Path 2 (Targeting image_add / image_2)
+            p_1 = init_preds[:, :3]
             p_2 = init_preds[:, 3:]
-            o_2 = (superimposed_image - alpha_init * p_2) / (1. - alpha_init)
+
+            o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
+            o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
+
+            x_t_1 = x_t - self.mix_images(p_1, o_1, t_init) + self.mix_images(p_1, o_1, t_init - 1)
             x_t_2 = x_t - self.mix_images(p_2, o_2, t_init) + self.mix_images(p_2, o_2, t_init - 1)
 
-            # Fixed reference: initial prediction for branch 2
-            ref_p_2 = p_2.clone()
+            prev_target_1 = p_1.detach().clone()
+            prev_target_2 = p_2.detach().clone()
 
-            # Per-sample flag: once True, always use the first 3 channels
-            has_flipped = torch.zeros(n, dtype=torch.bool, device=self.device)
-
-            # --- 2 Different Reverse Sampling Paths ---
             for i in reversed(range(1, init_timestep)):
-                t = (torch.ones(n) * i).long().to(self.device)
+                t = (torch.ones(n, device=self.device) * i).long()
+                t_next = (torch.ones(n, device=self.device) * (i - 1)).long()
 
-                # Path 1 Update
                 preds_1 = model(x_t_1, t).sample
-                p_1 = preds_1[:, :3]
-                o_1 = (superimposed_image - (1. - alpha_init) * p_1) / alpha_init
-                x_t_1 = x_t_1 - self.mix_images(p_1, o_1, t) + self.mix_images(p_1, o_1, t - 1)
+                p_1, _ = self._choose_target_by_continuity(preds_1, prev_target_1)
+                o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
+                x_t_1 = x_t_1 - self.mix_images(p_1, o_1, t) + self.mix_images(p_1, o_1, t_next)
+                prev_target_1 = p_1.detach().clone()
 
-                # Path 2 Update
                 preds_2 = model(x_t_2, t).sample
+                p_2, _ = self._choose_target_by_continuity(preds_2, prev_target_2)
+                o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
+                x_t_2 = x_t_2 - self.mix_images(p_2, o_2, t) + self.mix_images(p_2, o_2, t_next)
+                prev_target_2 = p_2.detach().clone()
 
-                # For samples that have not flipped yet, compare against the initial branch-2 prediction
-                unresolved = ~has_flipped
-                if unresolved.any():
-                    dist_no_flip = ((preds_2[unresolved, 3:] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
-                    dist_flip = ((preds_2[unresolved, :3] - ref_p_2[unresolved]) ** 2).mean(dim=(1, 2, 3))
-
-                    newly_flipped = dist_flip < dist_no_flip
-                    has_flipped[unresolved] = newly_flipped
-
-                # Before flip: use last 3 channels
-                # After flip: always use first 3 channels
-                curr_p_2 = preds_2[:, 3:].clone()
-                curr_p_2[has_flipped] = preds_2[has_flipped, :3]
-
-                curr_o_2 = (superimposed_image - alpha_init * curr_p_2) / (1. - alpha_init)
-                x_t_2 = x_t_2 - self.mix_images(curr_p_2, curr_o_2, t) + self.mix_images(curr_p_2, curr_o_2, t - 1)
-
-        model.train()
+        if was_training:
+            model.train()
 
         out_img_1 = (x_t_1.clamp(-1, 1) + 1) / 2
         out_img_1 = (out_img_1 * 255).type(torch.uint8)
@@ -426,196 +442,6 @@ def eval(args):
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
-def save_transition_grid(args, num_steps=10):
-    accelerator = Accelerator()
-    device = accelerator.device
-    base_dir = os.path.join("experiments", args.run_name)
-
-    test_dataloader = get_data(args, 'test')
-    model = get_unet(args.image_size)
-    model, test_dataloader = accelerator.prepare(model, test_dataloader)
-
-    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
-    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-
-    diffusion = ColdDiffusion(img_size=args.image_size, device=device)
-    lpips_model = lpips.LPIPS(net='alex').to(device).eval()
-
-    # 1. Fetch exactly the 4th pair
-    all_images = []
-    all_images_add = []
-    for images, images_add in test_dataloader:
-        all_images.append(images)
-        all_images_add.append(images_add)
-        if sum(x.shape[0] for x in all_images) >= 4:
-            break
-
-    images = torch.cat(all_images)[:4]
-    images_add = torch.cat(all_images_add)[:4]
-
-    image = images[3:4].to(device)
-    image_add = images_add[3:4].to(device)
-    superimposed = image * (1 - args.alpha_init) + image_add * args.alpha_init
-
-    # 2. Setup Variables and Stepping Schedule
-    n = len(superimposed)
-    alpha_init = args.alpha_init
-    init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
-
-    # Calculate timestep jumps for the remix update step
-    step_size = max(1, init_timestep // num_steps)
-    timesteps = list(range(init_timestep, 0, -step_size))
-    if timesteps[-1] != 0:
-        timesteps.append(0)
-
-    _, _, H, W = image.shape
-    separator = torch.zeros((1, 3, H, 5), device=device)
-
-    def process_img(img_tensor):
-        return (img_tensor.clamp(-1, 1) + 1) / 2
-
-    def lpips_dist_batch(ref, cand):
-        return lpips_model(ref.clamp(-1, 1), cand.clamp(-1, 1)).view(-1)
-
-    def choose_target_by_continuity(preds, prev_target):
-        cand_a = preds[:, :3]
-        cand_b = preds[:, 3:]
-
-        dist_a = lpips_dist_batch(prev_target, cand_a)
-        dist_b = lpips_dist_batch(prev_target, cand_b)
-
-        choose_a = dist_a <= dist_b
-
-        curr_target = cand_b.clone()
-        curr_target[choose_a] = cand_a[choose_a]
-
-        curr_other_raw = cand_a.clone()
-        curr_other_raw[choose_a] = cand_b[choose_a]
-
-        return curr_target, curr_other_raw
-
-    rows = []
-
-    with torch.no_grad():
-        x_t = superimposed.clone()
-
-        # --- Initial Step ---
-        t_init = (torch.ones(n) * timesteps[0]).long().to(device)
-        t_next = (torch.ones(n) * timesteps[0]).long().to(device)
-        
-        init_preds = model(x_t, t_init).sample
-
-        # Seed both branches from opposite channel choices
-        p_1 = init_preds[:, :3]
-        p_2 = init_preds[:, 3:]
-
-        # Actual companions used to form the next mixtures
-        o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
-        o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
-
-        # Remix update step using jump sequence
-        x_t_1 = x_t - diffusion.mix_images(p_1, o_1, t_init) + diffusion.mix_images(p_1, o_1, t_next)
-        x_t_2 = x_t - diffusion.mix_images(p_2, o_2, t_init) + diffusion.mix_images(p_2, o_2, t_next)
-
-        # Track previous chosen target per branch
-        prev_target_1 = p_1.detach().clone()
-        prev_target_2 = p_2.detach().clone()
-
-        row_imgs = [
-            process_img(p_1), process_img(x_t_1), process_img(o_1),
-            separator,
-            process_img(o_2), process_img(x_t_2), process_img(p_2)
-        ]
-        rows.append(torch.cat(row_imgs, dim=3))
-
-        # --- Reverse Sampling Loop (Jumping by step_size) ---
-        for i in range(1, len(timesteps) - 1):
-            t = (torch.ones(n) * timesteps[i]).long().to(device)
-            t_next = (torch.ones(n) * timesteps[i+1]).long().to(device)
-
-            # -------- Branch 1 --------
-            preds_1 = model(x_t_1, t).sample
-            p_1, _ = choose_target_by_continuity(preds_1, prev_target_1)
-            o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
-            x_t_1 = x_t_1 - diffusion.mix_images(p_1, o_1, t) + diffusion.mix_images(p_1, o_1, t_next)
-            prev_target_1 = p_1.detach().clone()
-
-            # -------- Branch 2 --------
-            preds_2 = model(x_t_2, t).sample
-            p_2, _ = choose_target_by_continuity(preds_2, prev_target_2)
-            o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
-            x_t_2 = x_t_2 - diffusion.mix_images(p_2, o_2, t) + diffusion.mix_images(p_2, o_2, t_next)
-            prev_target_2 = p_2.detach().clone()
-
-            row_imgs = [
-                process_img(p_1), process_img(x_t_1), process_img(o_1),
-                separator,
-                process_img(o_2), process_img(x_t_2), process_img(p_2)
-            ]
-            rows.append(torch.cat(row_imgs, dim=3))
-
-    full_grid = torch.cat(rows, dim=2)
-
-    save_dir = os.path.join(base_dir, "samples", "eval")
-    os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "transition_grid_4th_pair_clean.jpg")
-
-    save_image(full_grid, save_path)
-    if accelerator.is_main_process:
-        print(f"\nSaved clean step-by-step transition grid to: {save_path}")
-
-def eval_grid_only(args):
-    accelerator = Accelerator()
-    device = accelerator.device
-    base_dir = os.path.join("experiments", args.run_name)
-
-    test_dataloader = get_data(args, 'test')
-    model = get_unet(args.image_size)
-
-    model, test_dataloader = accelerator.prepare(model, test_dataloader)
-
-    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
-    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-
-    diffusion = ColdDiffusion(img_size=args.image_size, device=device)
-
-    grid_si, grid_soi, grid_i, grid_ia = [], [], [], []
-    collected_for_grid = 0
-
-    with torch.no_grad():
-        for images, images_add in test_dataloader:
-            superimposed = images * (1 - args.alpha_init) + images_add * args.alpha_init
-            sampled_images, sampled_other_image = diffusion.sample(model, superimposed, args.alpha_init)
-
-            images = (images.clamp(-1, 1) + 1) / 2
-            images = (images * 255).type(torch.uint8)
-
-            images_add = (images_add.clamp(-1, 1) + 1) / 2
-            images_add = (images_add * 255).type(torch.uint8)
-
-            grid_si.append(sampled_images.cpu())
-            grid_soi.append(sampled_other_image.cpu())
-            grid_i.append(images.cpu())
-            grid_ia.append(images_add.cpu())
-
-            collected_for_grid += len(images)
-
-            if collected_for_grid >= 50:
-                break
-
-    if collected_for_grid > 0 and accelerator.is_main_process:
-        grid_si = torch.cat(grid_si)[:50]
-        grid_soi = torch.cat(grid_soi)[:50]
-        grid_i = torch.cat(grid_i)[:50]
-        grid_ia = torch.cat(grid_ia)[:50]
-
-        save_path = os.path.join(base_dir, "samples", "eval", "eval_grid_50.jpg")
-        save_images(grid_si, grid_soi, grid_i, grid_ia, save_path)
-
-        print(f"Saved eval grid to: {save_path}")
-
 def one_shot_eval(args):
     accelerator = Accelerator()
     device = accelerator.device
@@ -759,11 +585,8 @@ def launch():
     args.image_size = (args.image_size, args.image_size)
 
     #train(args)
-    #eval(args)
+    eval(args)
     #one_shot_eval(args)
-
-    #eval_grid_only(args)
-    save_transition_grid(args)
 
 if __name__ == '__main__':
     launch()
