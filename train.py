@@ -464,25 +464,36 @@ def save_transition_grid_4th_pair_with_labels(args):
     init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
 
     _, _, H, W = image.shape
-    new_H = H + 20
+    new_H = H + 34  # more space for two label lines
     separator = torch.zeros((1, 3, new_H, 5), device=device)
 
     def process_img(img_tensor):
         return (img_tensor.clamp(-1, 1) + 1) / 2
 
-    def add_label_to_image(img_tensor, text):
+    def count_oob_pixels(img_tensor):
+        """
+        Counts spatial pixels that have at least one channel outside [-1, 1].
+        Expects shape [B, C, H, W]. Returns a Python int for B=1.
+        """
+        oob_mask = ((img_tensor < -1) | (img_tensor > 1)).any(dim=1)  # [B, H, W]
+        return int(oob_mask[0].sum().item())
+
+    def add_label_to_image(img_tensor, text_top="", text_bottom=""):
         img_pil = TF.to_pil_image(img_tensor.cpu()[0])
         new_img = Image.new("RGB", (img_pil.width, new_H), (255, 255, 255))
         new_img.paste(img_pil, (0, 0))
 
-        if text:
-            draw = ImageDraw.Draw(new_img)
-            draw.text((4, img_pil.height + 2), text, fill=(0, 0, 0))
+        draw = ImageDraw.Draw(new_img)
+        y0 = img_pil.height + 1
+
+        if text_top:
+            draw.text((4, y0), text_top, fill=(0, 0, 0))
+        if text_bottom:
+            draw.text((4, y0 + 12), text_bottom, fill=(0, 0, 0))
 
         return TF.to_tensor(new_img).unsqueeze(0).to(img_tensor.device)
 
     def lpips_dist_batch(ref, cand):
-        # Both tensors expected in [-1, 1]
         return lpips_model(ref.clamp(-1, 1), cand.clamp(-1, 1)).view(-1)
 
     def choose_target_by_continuity(preds, prev_target):
@@ -537,16 +548,15 @@ def save_transition_grid_4th_pair_with_labels(args):
         lbl1 = f"{w1_next * 100:.1f}%"
         lbl2 = f"{w2_next * 100:.1f}%"
 
-        # Left branch: mix_images(p_1, o_1, ...)
-        #   left p_1 gets lbl1, right o_1 gets lbl2
-        # Right branch: mix_images(p_2, o_2, ...)
-        #   left o_2 gets lbl2, right p_2 gets lbl1
+        oob_o1 = f"OOB: {count_oob_pixels(o_1)}"
+        oob_o2 = f"OOB: {count_oob_pixels(o_2)}"
+
         row_imgs = [
             add_label_to_image(process_img(p_1), lbl1),
             add_label_to_image(process_img(x_t_1), "Mix"),
-            add_label_to_image(process_img(o_1), lbl2),
+            add_label_to_image(process_img(o_1), lbl2, oob_o1),
             separator,
-            add_label_to_image(process_img(o_2), lbl2),
+            add_label_to_image(process_img(o_2), lbl2, oob_o2),
             add_label_to_image(process_img(x_t_2), "Mix"),
             add_label_to_image(process_img(p_2), lbl1),
         ]
@@ -556,14 +566,14 @@ def save_transition_grid_4th_pair_with_labels(args):
         for i in reversed(range(1, init_timestep)):
             t = (torch.ones(n) * i).long().to(device)
 
-            # -------- Branch 1: continuity-based channel assignment --------
+            # -------- Branch 1 --------
             preds_1 = model(x_t_1, t).sample
             p_1, _ = choose_target_by_continuity(preds_1, prev_target_1)
             o_1 = (superimposed - (1. - alpha_init) * p_1) / alpha_init
             x_t_1 = x_t_1 - diffusion.mix_images(p_1, o_1, t) + diffusion.mix_images(p_1, o_1, t - 1)
             prev_target_1 = p_1.detach().clone()
 
-            # -------- Branch 2: continuity-based channel assignment --------
+            # -------- Branch 2 --------
             preds_2 = model(x_t_2, t).sample
             p_2, _ = choose_target_by_continuity(preds_2, prev_target_2)
             o_2 = (superimposed - alpha_init * p_2) / (1. - alpha_init)
@@ -577,12 +587,15 @@ def save_transition_grid_4th_pair_with_labels(args):
             lbl1 = f"{w1_next * 100:.1f}%"
             lbl2 = f"{w2_next * 100:.1f}%"
 
+            oob_o1 = f"OOB: {count_oob_pixels(o_1)}"
+            oob_o2 = f"OOB: {count_oob_pixels(o_2)}"
+
             row_imgs = [
                 add_label_to_image(process_img(p_1), lbl1),
                 add_label_to_image(process_img(x_t_1), "Mix"),
-                add_label_to_image(process_img(o_1), lbl2),
+                add_label_to_image(process_img(o_1), lbl2, oob_o1),
                 separator,
-                add_label_to_image(process_img(o_2), lbl2),
+                add_label_to_image(process_img(o_2), lbl2, oob_o2),
                 add_label_to_image(process_img(x_t_2), "Mix"),
                 add_label_to_image(process_img(p_2), lbl1),
             ]
