@@ -1,9 +1,9 @@
 --- Iterative Evaluation Metrics (Permutation-Invariant Matching) ---
-SSIM Image 1: 0.6618
-SSIM Image 2: 0.6605
-PSNR Image 1: 19.4097
-PSNR Image 2: 19.3452
-LPIPS Image 1: 0.1510
-LPIPS Image 2: 0.1536
-Success Rate Image 1 (%S): 74.70%
-Success Rate Image 2 (%S): 73.94%
+SSIM Image 1: 0.6658
+SSIM Image 2: 0.6652
+PSNR Image 1: 19.1224
+PSNR Image 2: 19.0826
+LPIPS Image 1: 0.1450
+LPIPS Image 2: 0.1465
+Success Rate Image 1 (%S): 82.12%
+Success Rate Image 2 (%S): 81.34%
