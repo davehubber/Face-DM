@@ -479,6 +479,123 @@ def eval(args):
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
+def visualize_trajectory_swap_only(args):
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
+
+    test_dataloader = get_data(args, 'test')
+    model = get_unet(args.image_size)
+    model, test_dataloader = accelerator.prepare(model, test_dataloader)
+
+    # Load checkpoint
+    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
+    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+
+    diffusion = ColdDiffusion(img_size=args.image_size, device=device)
+
+    # 1. Isolate the 3rd pair (index 2) from the dataloader
+    target_img, target_add = None, None
+    current_idx = 0
+    for images, images_add in test_dataloader:
+        batch_len = len(images)
+        if current_idx + batch_len > 2:
+            target_img = images[2 - current_idx].unsqueeze(0)
+            target_add = images_add[2 - current_idx].unsqueeze(0)
+            break
+        current_idx += batch_len
+
+    if target_img is None:
+        print("Dataset has fewer than 3 images!")
+        return
+
+    # 2. Setup the diffusion parameters
+    superimposed = target_img * (1 - args.alpha_init) + target_add * args.alpha_init
+    x_init = superimposed.to(device)
+    n = 1
+    
+    init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
+    init_timestep = max(1, min(diffusion.max_timesteps, init_timestep))
+
+    trajectory_frames = []
+
+    def store_frame(p1, xt1, o1, p2, xt2, o2):
+        # Clamp and map from [-1, 1] to [0, 1] for torchvision grid
+        frame_tensors = [p1, xt1, o1, p2, xt2, o2]
+        for t in frame_tensors:
+            trajectory_frames.append((t.detach().cpu().clamp(-1, 1) + 1) / 2.0)
+
+    # 3. Run the sampled loop and record states
+    with torch.no_grad():
+        diffusion._get_lpips_model()
+
+        t_init = torch.full((n,), init_timestep, device=device, dtype=torch.long)
+        
+        init_preds = model(x_init, t_init).sample
+        a0 = init_preds[:, :3]
+        b0 = init_preds[:, 3:]
+
+        p_1, o_1 = a0.clone(), b0.clone()
+        p_2, o_2 = b0.clone(), a0.clone()
+
+        # Purely mathematical extraction based on the mixture equation
+        o_1_ext = (x_init - p_1 * (1. - args.alpha_init)) / args.alpha_init
+        o_2_ext = (x_init - p_2 * args.alpha_init) / (1. - args.alpha_init)
+
+        # Record Initial State (Row 1)
+        store_frame(p_1, x_init, o_1_ext, p_2, x_init, o_2_ext)
+
+        x_t_1 = x_init - diffusion.mix_images(p_1, o_1_ext, t_init) + diffusion.mix_images(p_1, o_1_ext, t_init - 1)
+        x_t_2 = x_init - diffusion.mix_images(p_2, o_2_ext, t_init) + diffusion.mix_images(p_2, o_2_ext, t_init - 1)
+
+        # Initialize continuity anchors
+        prev_p_1, prev_o_1 = p_1.detach().clone(), o_1.detach().clone()
+        prev_p_2, prev_o_2 = p_2.detach().clone(), o_2.detach().clone()
+
+        for i in reversed(range(1, init_timestep)):
+            t = torch.full((n,), i, device=device, dtype=torch.long)
+            t_next = torch.full((n,), i - 1, device=device, dtype=torch.long)
+
+            # ---------------- Trajectory 1 ----------------
+            preds_1 = model(x_t_1, t).sample
+            p_1, o_1, swap_mask_1 = diffusion._assign_pair_by_continuity(preds_1, prev_p_1, prev_o_1)
+            
+            # Conditionally update anchors ONLY if a swap occurred
+            if swap_mask_1.any():
+                prev_p_1[swap_mask_1] = p_1.detach()[swap_mask_1].clone()
+                prev_o_1[swap_mask_1] = o_1.detach()[swap_mask_1].clone()
+
+            o_1_ext = (x_init - p_1 * (1. - args.alpha_init)) / args.alpha_init
+            
+            # ---------------- Trajectory 2 ----------------
+            preds_2 = model(x_t_2, t).sample
+            p_2, o_2, swap_mask_2 = diffusion._assign_pair_by_continuity(preds_2, prev_p_2, prev_o_2)
+            
+            # Conditionally update anchors ONLY if a swap occurred
+            if swap_mask_2.any():
+                prev_p_2[swap_mask_2] = p_2.detach()[swap_mask_2].clone()
+                prev_o_2[swap_mask_2] = o_2.detach()[swap_mask_2].clone()
+
+            o_2_ext = (x_init - p_2 * args.alpha_init) / (1. - args.alpha_init)
+
+            # Record state for the current timestep (Row i)
+            store_frame(p_1, x_t_1, o_1_ext, p_2, x_t_2, o_2_ext)
+
+            # Reverse steps
+            x_t_1 = x_t_1 - diffusion.mix_images(p_1, o_1_ext, t) + diffusion.mix_images(p_1, o_1_ext, t_next)
+            x_t_2 = x_t_2 - diffusion.mix_images(p_2, o_2_ext, t) + diffusion.mix_images(p_2, o_2_ext, t_next)
+
+    # 4. Save the compiled grid
+    grid_tensor = torch.cat(trajectory_frames, dim=0)
+    save_dir = os.path.join(base_dir, "samples", "trajectory")
+    os.makedirs(save_dir, exist_ok=True)
+    
+    save_path = os.path.join(save_dir, "third_pair_trajectory_swap_only.jpg")
+    torchvision.utils.save_image(grid_tensor, save_path, nrow=6)
+    
+    print(f"\nSaved trajectory grid successfully to: {save_path}")
+
 def eval_grid_only(args):
     accelerator = Accelerator()
     device = accelerator.device
@@ -690,7 +807,8 @@ def launch():
 
     #train(args)
     #eval(args)
-    eval_grid_only(args)
+    #eval_grid_only(args)
+    visualize_trajectory_swap_only(args)
     #one_shot_eval(args)
 
 if __name__ == '__main__':
