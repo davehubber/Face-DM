@@ -6,7 +6,7 @@ import numpy as np
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 from torchvision.utils import save_image
-from diffusers import DiffusionPipeline
+from diffusers import StableUnCLIPImg2ImgPipeline
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
 from diffusers.optimization import get_cosine_schedule_with_warmup
@@ -280,10 +280,12 @@ def test_decoder(args):
 
     # 4. Load the UnCLIP Decoder Pipeline
     print("Loading UnCLIP decoder pipeline...")
-    pipeline = DiffusionPipeline.from_pretrained(
-        "stabilityai/stable-diffusion-2-1-unclip-small", 
-        torch_dtype=torch.float16
-    ).to(device)
+    pipeline = StableUnCLIPImg2ImgPipeline.from_pretrained(
+        "sd2-community/stable-diffusion-2-1-unclip-small",
+        torch_dtype=torch.float16,
+        use_safetensors=True,
+    )
+    pipeline = pipeline.to(device)
     pipeline.set_progress_bar_config(disable=True)
 
     # 5. Calculate the Normalized Average Embedding
