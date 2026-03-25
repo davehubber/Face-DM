@@ -42,7 +42,7 @@ def train(args):
 
     for epoch in range(args.epochs):
         model.train()
-        for e1, e2 in train_dataloader:
+        for e1, e2, _, _ in train_dataloader:
             t = diffusion.sample_timesteps(e1.shape[0]).to(device)
 
             with accelerator.accumulate(model):
@@ -71,7 +71,7 @@ def train(args):
                 val_steps = 0
 
                 with torch.no_grad():
-                    for v_e1, v_e2 in test_dataloader:
+                    for v_e1, v_e2, _, _ in test_dataloader:
                         val_t = diffusion.sample_timesteps(v_e1.shape[0]).to(device)
                         val_x_t = diffusion.mix_embeds(v_e1, v_e2, val_t)
                         val_sup = (v_e1 + v_e2) / 2.0
@@ -120,7 +120,7 @@ def eval(args):
     cos_sim_t_list, cos_sim_d_list = [], []
     top1_acc_t_list, top1_acc_d_list = [], []
 
-    for e1, e2 in test_dataloader:
+    for e1, e2, _, _ in test_dataloader:
         superimposed = e1 * (1 - args.alpha_init) + e2 * args.alpha_init
         pred_e1, pred_e2 = diffusion.sample(model, superimposed, args.alpha_init)
 
@@ -171,7 +171,7 @@ def one_shot_eval(args):
     cos_sim_t_list, cos_sim_d_list = [], []
     top1_acc_t_list, top1_acc_d_list = [], []
 
-    for e1, e2 in test_dataloader:
+    for e1, e2, _, _ in test_dataloader:
         n = len(e1)
         S = e1 * (1 - args.alpha_init) + e2 * args.alpha_init
         init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)

@@ -3,6 +3,10 @@ import torch
 import math
 import numpy as np
 import torchvision
+import pandas as pd
+import torch.nn.functional as F
+import torchvision.transforms.functional as TF
+from PIL import Image
 from torch.utils.data import Dataset
 from diffusers import PriorTransformer, StableUnCLIPImg2ImgPipeline
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
@@ -22,9 +26,16 @@ class EmbeddingDataset(Dataset):
 
         self.embeds1 = self.embeds1 * self.scale_factor
         self.embeds2 = self.embeds2 * self.scale_factor
+        
+        # Load partition.csv to retrieve the original image paths
+        self.df = pd.read_csv(os.path.join(data_dir, "partition.csv"))
+        self.df = self.df[self.df["Partition"] == partition].reset_index(drop=True)
 
     def __getitem__(self, index):
-        return self.embeds1[index], self.embeds2[index]
+        # Return paths alongside the embeddings
+        path1 = self.df.iloc[index]["Image1_Path"]
+        path2 = self.df.iloc[index]["Image2_Path"]
+        return self.embeds1[index], self.embeds2[index], path1, path2
 
     def __len__(self):
         return len(self.embeds1)
@@ -130,7 +141,8 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
     success_count = 0
     grid_images = []
 
-    for e1, e2 in test_dataloader:
+    # Unpack paths alongside the embeddings
+    for e1, e2, p1, p2 in test_dataloader:
         e1, e2 = e1.to(device), e2.to(device)
         n = len(e1)
         S = e1 * (1 - args.alpha_init) + e2 * args.alpha_init
@@ -148,21 +160,34 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
             if evaluated_count >= num_eval_images:
                 break
                 
-            u_e1, u_e2, u_S = e1[i:i+1] / scale_factor, e2[i:i+1] / scale_factor, S[i:i+1] / scale_factor
             u_p1, u_p2 = pred_e1[i:i+1] / scale_factor, pred_e2[i:i+1] / scale_factor
+            u_S = S[i:i+1] / scale_factor
 
-            gt1_img = decode_embeddings_to_images(u_e1, decoder_pipeline, device)
-            gt2_img = decode_embeddings_to_images(u_e2, decoder_pipeline, device)
-            avg_img = decode_embeddings_to_images(u_S, decoder_pipeline, device)
-            pred1_img = decode_embeddings_to_images(u_p1, decoder_pipeline, device)
-            pred2_img = decode_embeddings_to_images(u_p2, decoder_pipeline, device)
+            # 1. Load actual original images and scale them to 64x64
+            real_img1 = Image.open(p1[i]).convert("RGB")
+            real_img2 = Image.open(p2[i]).convert("RGB")
+            
+            gt1_img = TF.to_tensor(TF.resize(real_img1, (64, 64))).unsqueeze(0).to(device)
+            gt2_img = TF.to_tensor(TF.resize(real_img2, (64, 64))).unsqueeze(0).to(device)
 
+            # 2. Decode the average and predictions (outputs 768x768)
+            avg_img_large = decode_embeddings_to_images(u_S, decoder_pipeline, device)
+            pred1_img_large = decode_embeddings_to_images(u_p1, decoder_pipeline, device)
+            pred2_img_large = decode_embeddings_to_images(u_p2, decoder_pipeline, device)
+
+            # 3. Resize the decoded images down to 64x64 for accurate metrics
+            avg_img = F.interpolate(avg_img_large, size=(64, 64), mode='area')
+            pred1_img = F.interpolate(pred1_img_large, size=(64, 64), mode='area')
+            pred2_img = F.interpolate(pred2_img_large, size=(64, 64), mode='area')
+
+            # Calculate metrics using true original images vs downscaled predicted images
             p, s, l, succ = compute_image_metrics(gt1_img, pred1_img, avg_img, psnr_metric, ssim_metric, lpips_metric)
             psnr_list.append(p); ssim_list.append(s); lpips_list.append(l); success_count += succ
             
             p, s, l, succ = compute_image_metrics(gt2_img, pred2_img, avg_img, psnr_metric, ssim_metric, lpips_metric)
             psnr_list.append(p); ssim_list.append(s); lpips_list.append(l); success_count += succ
             
+            # 4. Save grid with requested images: Original 1, Original 2, Decoded Avg, Decoded Pred 1, Decoded Pred 2
             grid_images.extend([
                 gt1_img.squeeze(0),
                 gt2_img.squeeze(0),
@@ -181,12 +206,12 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
     if len(grid_images) > 0:
         grid_tensor = torch.stack(grid_images)
         grid_path = os.path.join(base_dir, "results", f"{mode.lower()}_50_pairs_grid.png")
-        torchvision.utils.save_image(grid_tensor, grid_path, nrow=5)
+        torchvision.utils.save_image(grid_tensor, grid_path, nrow=5) # 5 images per row
 
     success_rate = (success_count / (num_eval_images * 2)) * 100 
     
     img_metrics_report = (
-        f"\n--- {mode} Image Evaluation Metrics (Calculated on 50 Pairs) ---\n"
+        f"\n--- {mode} Image Evaluation Metrics (Calculated on 50 Pairs at 64x64) ---\n"
         f"PSNR: {np.mean(psnr_list):.4f}\n"
         f"SSIM: {np.mean(ssim_list):.4f}\n"
         f"LPIPS: {np.mean(lpips_list):.4f}\n"
