@@ -62,6 +62,8 @@ def train(args):
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_embeds(e1, e2, t)
                 superimposed = (e1 + e2) / 2.0
+                scale = torch.norm(e1, p=2, dim=-1, keepdim=True)
+                superimposed = torch.nn.functional.normalize(superimposed, p=2, dim=-1) * scale
                 predicted_emb = model(hidden_states=x_t, timestep=t, proj_embedding=superimposed).predicted_image_embedding.squeeze(1)
 
                 loss = F.mse_loss(predicted_emb, e1)
@@ -89,6 +91,8 @@ def train(args):
                         val_t = diffusion.sample_timesteps(v_e1.shape[0]).to(device)
                         val_x_t = diffusion.mix_embeds(v_e1, v_e2, val_t)
                         val_sup = (v_e1 + v_e2) / 2.0
+                        scale = torch.norm(v_e1, p=2, dim=-1, keepdim=True)
+                        val_sup = torch.nn.functional.normalize(val_sup, p=2, dim=-1) * scale
 
                         val_pred = model(hidden_states=val_x_t, timestep=val_t, proj_embedding=val_sup).predicted_image_embedding.squeeze(1)
                         v_loss = F.mse_loss(val_pred, v_e1)
@@ -141,6 +145,8 @@ def eval(args):
 
     for e1, e2, _, _ in test_dataloader:
         superimposed = e1 * (1 - args.alpha_init) + e2 * args.alpha_init
+        scale = torch.norm(e1, p=2, dim=-1, keepdim=True)
+        superimposed = torch.nn.functional.normalize(superimposed, p=2, dim=-1) * scale
         pred_e1, pred_e2 = diffusion.sample(model, superimposed, args.alpha_init)
 
         cos_sim_t_list.append(F.cosine_similarity(pred_e1, e1, dim=-1).mean().item())
@@ -198,6 +204,8 @@ def one_shot_eval(args):
     for e1, e2, _, _ in test_dataloader:
         n = len(e1)
         S = e1 * (1 - args.alpha_init) + e2 * args.alpha_init
+        scale = torch.norm(e1, p=2, dim=-1, keepdim=True)
+        superimposed = torch.nn.functional.normalize(superimposed, p=2, dim=-1) * scale
         init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
         t = (torch.ones(n) * init_timestep).long().to(device)
 
@@ -249,7 +257,7 @@ def launch():
     parser.add_argument('--lr', default=1e-4, help='Learning rate', type=float, required=False)
 
     args = parser.parse_args()
-    #train(args)
+    train(args)
     eval(args)
     one_shot_eval(args)
 

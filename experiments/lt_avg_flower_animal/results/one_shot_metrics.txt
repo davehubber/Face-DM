@@ -1,5 +1,0 @@
---- One-Shot Evaluation Metrics ---
-Cosine Sim Target: 0.9881
-Cosine Sim Deduced: 0.9880
-Top-1 Acc Target: 0.6139
-Top-1 Acc Deduced: 0.4115

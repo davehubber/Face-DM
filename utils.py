@@ -56,7 +56,12 @@ class ColdDiffusionEmbeds:
     def mix_embeds(self, emb_1, emb_2, t):
         w1 = (1. - self.alteration_per_t * t).unsqueeze(1)
         w2 = (self.alteration_per_t * t).unsqueeze(1)
-        return emb_1 * w1 + emb_2 * w2
+        mixed = emb_1 * w1 + emb_2 * w2
+        
+        scale = torch.norm(emb_1, p=2, dim=-1, keepdim=True) 
+        mixed = torch.nn.functional.normalize(mixed, p=2, dim=-1) * scale
+        
+        return mixed
 
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
@@ -141,7 +146,7 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
     decoder_pipeline = get_decoder_pipeline(device)
     
     scale_factor = test_dataloader.dataset.scale_factor
-    num_eval_images = 50
+    num_eval_images = 1
     evaluated_count = 0
     
     psnr_list, ssim_list, lpips_list = [], [], []
@@ -153,6 +158,9 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
         e1, e2 = e1.to(device), e2.to(device)
         n = len(e1)
         S = e1 * (1 - args.alpha_init) + e2 * args.alpha_init
+
+        scale = torch.norm(e1, p=2, dim=-1, keepdim=True)
+        S = torch.nn.functional.normalize(S, p=2, dim=-1) * scale
         
         with torch.no_grad():
             if mode == "Regular":
@@ -212,13 +220,13 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
 
     if len(grid_images) > 0:
         grid_tensor = torch.stack(grid_images)
-        grid_path = os.path.join(base_dir, "results", f"{mode.lower()}_50_pairs_grid.png")
+        grid_path = os.path.join(base_dir, "results", f"{mode.lower()}_1_pairs_grid.png")
         torchvision.utils.save_image(grid_tensor, grid_path, nrow=5) # 5 images per row
 
     success_rate = (success_count / (num_eval_images * 2)) * 100 
     
     img_metrics_report = (
-        f"\n--- {mode} Image Evaluation Metrics (Calculated on 50 Pairs at 64x64) ---\n"
+        f"\n--- {mode} Image Evaluation Metrics (Calculated on 1 Pairs at 64x64) ---\n"
         f"PSNR: {np.mean(psnr_list):.4f}\n"
         f"SSIM: {np.mean(ssim_list):.4f}\n"
         f"LPIPS: {np.mean(lpips_list):.4f}\n"
