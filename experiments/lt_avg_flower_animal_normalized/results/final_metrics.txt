@@ -1,0 +1,11 @@
+--- Regular Evaluation Metrics ---
+Cosine Sim Target: 0.9845
+Cosine Sim Deduced: 0.9838
+Top-1 Acc Target: 0.7832
+Top-1 Acc Deduced: 0.6183
+
+--- Regular Image Evaluation Metrics (Calculated on 1 Pairs at 64x64) ---
+PSNR: 10.0653
+SSIM: 0.0556
+LPIPS: 0.7633
+Success Rate of Reversal (%S): 0.00%

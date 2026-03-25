@@ -1,0 +1,49 @@
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /nas-ctm01/homes/dacordeiro/.netrc.
+wandb: Currently logged in as: davcordeiro03 (davcordeiro03-inesc-tec) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run b82du9qi
+wandb: Tracking run with wandb version 0.25.0
+wandb: Run data is saved locally in /nas-ctm01/homes/dacordeiro/Face-DM/wandb/run-20260325_111139-b82du9qi
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run lt_avg_flower_animal_normalized
+wandb: ⭐️ View project at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM
+wandb: 🚀 View run at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/b82du9qi
+/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/torchmetrics/functional/image/lpips.py:332: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  self.load_state_dict(torch.load(model_path, map_location="cpu"), strict=False)
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading pipeline components...:   0%|          | 0/9 [00:00<?, ?it/s]
+Loading weights:   0%|          | 0/392 [00:00<?, ?it/s][A
+Loading weights:  80%|███████▉  | 313/392 [00:00<00:00, 3099.42it/s][ALoading weights: 100%|██████████| 392/392 [00:00<00:00, 3141.39it/s]
+[1mCLIPVisionModelWithProjection LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/image_encoder
+Key                                  | Status     |  | 
+-------------------------------------+------------+--+-
+vision_model.embeddings.position_ids | UNEXPECTED |  | 
+
+[3mNotes:
+- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
+Loading pipeline components...:  33%|███▎      | 3/9 [00:00<00:00,  8.41it/s]Loading pipeline components...:  67%|██████▋   | 6/9 [00:00<00:00, 11.83it/s]
+Loading weights:   0%|          | 0/372 [00:00<?, ?it/s][A
+Loading weights:  83%|████████▎ | 309/372 [00:00<00:00, 3072.41it/s][ALoading weights: 100%|██████████| 372/372 [00:00<00:00, 3092.93it/s]
+[1mCLIPTextModel LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/text_encoder
+Key                                | Status     |  | 
+-----------------------------------+------------+--+-
+text_model.embeddings.position_ids | UNEXPECTED |  | 
+
+[3mNotes:
+- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
+Loading pipeline components...:  89%|████████▉ | 8/9 [00:00<00:00,  9.37it/s]Loading pipeline components...: 100%|██████████| 9/9 [00:01<00:00,  6.63it/s]
+Traceback (most recent call last):
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train.py", line 266, in <module>
+    launch()
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train.py", line 262, in launch
+    one_shot_eval(args)
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train.py", line 208, in one_shot_eval
+    superimposed = torch.nn.functional.normalize(superimposed, p=2, dim=-1) * scale
+UnboundLocalError: local variable 'superimposed' referenced before assignment
+Traceback (most recent call last):
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train.py", line 266, in <module>
+    launch()
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train.py", line 262, in launch
+    one_shot_eval(args)
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train.py", line 208, in one_shot_eval
+    superimposed = torch.nn.functional.normalize(superimposed, p=2, dim=-1) * scale
+UnboundLocalError: local variable 'superimposed' referenced before assignment
