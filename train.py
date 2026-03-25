@@ -81,7 +81,7 @@ def train(args):
 
             global_step += 1
 
-            if global_step % 100 == 0: 
+            if global_step % 1000 == 0: 
                 model.eval()
                 val_loss = 0.0
                 val_steps = 0
