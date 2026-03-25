@@ -11,7 +11,15 @@ from torch.utils.data import DataLoader
 from accelerate import Accelerator
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from diffusers.training_utils import EMAModel
-from utils import setup_logging, EmbeddingDataset, ColdDiffusionEmbeds, get_prior_model, run_image_evaluation
+from utils import (
+    setup_logging,
+    EmbeddingDataset,
+    ColdDiffusionEmbeds,
+    get_prior_model,
+    run_image_evaluation,
+    get_decoder_pipeline,
+    encode_pil_images_to_embeddings,
+)
 
 def train(args):
     base_dir = setup_logging(args.run_name)
@@ -248,93 +256,71 @@ def one_shot_eval(args):
 
 def test_decoder(args):
     """
-    Independent testing function to validate the UnCLIP decoder and embedding math.
-    Takes `args` just like train() and eval().
+    Sanity-check the matched UnCLIP image encoder + decoder on real images only.
+    This should be run before trusting any averaged/predicted embeddings.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Starting decoder sanity check on {device}...")
 
-    # 1. Load the dataset using the proper arguments
     from PIL import Image
-    dataset = EmbeddingDataset(
-        data_dir=args.data_dir, 
-        image_dir1=args.image_dir1, 
-        image_dir2=args.image_dir2, 
-        partition='test'
-    )
-    scale_factor = dataset.scale_factor
-    
-    # 2. Grab the first pair from the dataset
-    # __getitem__ returns (embeds1, embeds2, path1, path2)
-    emb_1, emb_2, path_1, path_2 = dataset[0]
-    
-    emb_1 = emb_1.to(device)
-    emb_2 = emb_2.to(device)
 
-    # 3. Load the real images from the paths returned by the dataset
+    dataset = EmbeddingDataset(
+        data_dir=args.data_dir,
+        image_dir1=args.image_dir1,
+        image_dir2=args.image_dir2,
+        partition="test",
+    )
+
+    _, _, path_1, path_2 = dataset[0]
+
     real_img1 = Image.open(path_1).convert("RGB")
     real_img2 = Image.open(path_2).convert("RGB")
-    
-    img_1 = TF.to_tensor(real_img1).to(device)
-    img_2 = TF.to_tensor(real_img2).to(device)
 
-    # 4. Load the UnCLIP Decoder Pipeline
-    print("Loading UnCLIP decoder pipeline...")
-    pipeline = StableUnCLIPImg2ImgPipeline.from_pretrained(
-        "sd2-community/stable-diffusion-2-1-unclip-small",
-        torch_dtype=torch.float16,
-        use_safetensors=True,
-    )
-    pipeline = pipeline.to(device)
-    pipeline.set_progress_bar_config(disable=True)
+    print("Loading matched UnCLIP pipeline...")
+    pipeline = get_decoder_pipeline(device)
 
-    # 5. Calculate the Normalized Average Embedding
-    emb_avg = (emb_1 + emb_2) / 2.0
-    
-    # Apply the spherical normalization fix to maintain the scale
-    scale = torch.norm(emb_1, p=2, dim=-1, keepdim=True)
-    emb_avg = torch.nn.functional.normalize(emb_avg, p=2, dim=-1) * scale
-
-    # 6. Prepare for UnCLIP (divide by scale_factor to return to exactly ~1.0 magnitude)
-    u_emb_1 = (emb_1 / scale_factor).unsqueeze(0).to(torch.float16)
-    u_emb_2 = (emb_2 / scale_factor).unsqueeze(0).to(torch.float16)
-    u_emb_avg = (emb_avg / scale_factor).unsqueeze(0).to(torch.float16)
-
-    # 7. Decode the embeddings
-    print("Decoding images...")
+    print("Encoding the real images with the pipeline's own encoder...")
     with torch.no_grad():
-        dec_img_1 = pipeline(image_embeds=u_emb_1).images[0]
-        dec_img_2 = pipeline(image_embeds=u_emb_2).images[0]
-        dec_avg   = pipeline(image_embeds=u_emb_avg).images[0]
+        reencoded = encode_pil_images_to_embeddings([real_img1, real_img2], pipeline, device)
+        emb_1 = reencoded[0:1]
+        emb_2 = reencoded[1:2]
 
-    # 8. Helper function to format everything to 64x64 tensors
+    print("Decoding the re-encoded embeddings...")
+    with torch.no_grad():
+        dec_img_1 = pipeline(
+            prompt=[""],
+            image_embeds=emb_1.to(dtype=pipeline.unet.dtype),
+            noise_level=0,
+            num_inference_steps=20,
+        ).images[0]
+
+        dec_img_2 = pipeline(
+            prompt=[""],
+            image_embeds=emb_2.to(dtype=pipeline.unet.dtype),
+            noise_level=0,
+            num_inference_steps=20,
+        ).images[0]
+
     def process_to_64(img):
-        # Convert PIL images from the decoder to tensors
         if not isinstance(img, torch.Tensor):
             img = TF.to_tensor(img)
-            
         img = img.to(device)
         return TF.resize(img, [64, 64], antialias=True)
 
-    # 9. Process all 5 images
-    img_1_t = process_to_64(img_1)
-    img_2_t = process_to_64(img_2)
+    real_1_t = process_to_64(real_img1)
     dec_1_t = process_to_64(dec_img_1)
+    real_2_t = process_to_64(real_img2)
     dec_2_t = process_to_64(dec_img_2)
-    dec_avg_t = process_to_64(dec_avg)
 
-    # 10. Concatenate horizontally and save
-    # Order: [Real 1] [Real 2] [Dec Avg] [Dec 1] [Dec 2]
-    row_grid = torch.cat([img_1_t, img_2_t, dec_avg_t, dec_1_t, dec_2_t], dim=2)
-    
-    # Set up the save directory inside the experiments folder
+    # Order: [Real 1] [Decoded 1] [Real 2] [Decoded 2]
+    row_grid = torch.cat([real_1_t, dec_1_t, real_2_t, dec_2_t], dim=2)
+
     base_dir = os.path.join("experiments", args.run_name, "results")
     os.makedirs(base_dir, exist_ok=True)
-    save_path = os.path.join(base_dir, "decoder_sanity_check_64x64.png")
-    
+    save_path = os.path.join(base_dir, "decoder_single_image_sanity_check_64x64.png")
+
     save_image(row_grid, save_path)
-    
-    print(f"Success! Saved decoder test row to: {save_path}")
+    print(f"Saved sanity-check row to: {save_path}")
 
 def launch():
     import argparse
