@@ -15,8 +15,22 @@ def train(args):
     accelerator = Accelerator(mixed_precision="fp16", gradient_accumulation_steps=1)
     device = accelerator.device
 
-    train_dataloader = DataLoader(EmbeddingDataset(args.data_dir, 'train'), batch_size=args.batch_size, shuffle=True, num_workers=4)
-    test_dataloader = DataLoader(EmbeddingDataset(args.data_dir, 'test'), batch_size=args.batch_size, num_workers=4)
+    train_dataset = EmbeddingDataset(
+        data_dir=args.data_dir, 
+        image_dir1=args.image_dir1, 
+        image_dir2=args.image_dir2, 
+        partition='train'
+    )
+    
+    test_dataset = EmbeddingDataset(
+        data_dir=args.data_dir, 
+        image_dir1=args.image_dir1, 
+        image_dir2=args.image_dir2, 
+        partition='test'
+    )
+
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, num_workers=4)
 
     model = get_prior_model()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -108,7 +122,12 @@ def eval(args):
     device = accelerator.device
     base_dir = os.path.join("experiments", args.run_name)
 
-    dataset = EmbeddingDataset(args.data_dir, 'test')
+    dataset = EmbeddingDataset(
+        data_dir=args.data_dir, 
+        image_dir1=args.image_dir1, 
+        image_dir2=args.image_dir2, 
+        partition='test'
+    )
     test_dataloader = DataLoader(dataset, batch_size=args.batch_size)
 
     model = get_prior_model()
@@ -159,7 +178,12 @@ def one_shot_eval(args):
     device = accelerator.device
     base_dir = os.path.join("experiments", args.run_name)
 
-    dataset = EmbeddingDataset(args.data_dir, 'test')
+    dataset = EmbeddingDataset(
+        data_dir=args.data_dir, 
+        image_dir1=args.image_dir1, 
+        image_dir2=args.image_dir2, 
+        partition='test'
+    )
     test_dataloader = DataLoader(dataset, batch_size=args.batch_size)
 
     model = get_prior_model()
@@ -215,6 +239,8 @@ def launch():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', help='Path to precomputed embeddings directory', required=True)
+    parser.add_argument("--image_dir1", type=str, required=True, help="Path to the folder containing the first dataset's original images")
+    parser.add_argument("--image_dir2", type=str, required=True, help="Path to the folder containing the second dataset's original images")
     parser.add_argument('--run_name', help='Name of the experiment', required=True)
     parser.add_argument('--alpha_max', default=0.5, type=float, help='Max alpha weight', required=False)
     parser.add_argument('--alpha_init', default=0.5, type=float, help='Init alpha weight', required=False)

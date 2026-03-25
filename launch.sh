@@ -8,4 +8,4 @@
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train.py --data_dir "data_embeddings" --run_name "lt_avg_flower_animal" --batch_size 512 --epochs 150
+python train.py --data_dir "data_embeddings" --image_dir1 "/nas-ctm01/datasets/public/Oxford102Flowers/jpg/" --image_dir2 "/nas-ctm01/datasets/public/AFHQ/resized/train/wild/" --run_name "lt_avg_flower_animal" --batch_size 512 --epochs 150

@@ -19,22 +19,29 @@ def setup_logging(run_name):
     return base_dir
 
 class EmbeddingDataset(Dataset):
-    def __init__(self, data_dir, partition='train', scale_factor=27.7191):
+    def __init__(self, data_dir, image_dir1, image_dir2, partition='train', scale_factor=27.7191):
         self.scale_factor = scale_factor
+        self.image_dir1 = image_dir1
+        self.image_dir2 = image_dir2
+        
         self.embeds1 = torch.load(os.path.join(data_dir, f"{partition}_dataset1_embeds.pt"), weights_only=True)
         self.embeds2 = torch.load(os.path.join(data_dir, f"{partition}_dataset2_embeds.pt"), weights_only=True)
 
         self.embeds1 = self.embeds1 * self.scale_factor
         self.embeds2 = self.embeds2 * self.scale_factor
         
-        # Load partition.csv to retrieve the original image paths
         self.df = pd.read_csv(os.path.join(data_dir, "partition.csv"))
         self.df = self.df[self.df["Partition"] == partition].reset_index(drop=True)
 
     def __getitem__(self, index):
-        # Return paths alongside the embeddings
-        path1 = self.df.iloc[index]["Image1_Path"]
-        path2 = self.df.iloc[index]["Image2_Path"]
+        # Fetch the filenames from the CSV
+        name1 = self.df.iloc[index]["Image1_Path"] 
+        name2 = self.df.iloc[index]["Image2_Path"]
+        
+        # Construct the absolute paths
+        path1 = os.path.join(self.image_dir1, name1)
+        path2 = os.path.join(self.image_dir2, name2)
+        
         return self.embeds1[index], self.embeds2[index], path1, path2
 
     def __len__(self):
