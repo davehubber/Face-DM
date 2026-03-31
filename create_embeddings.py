@@ -2,52 +2,79 @@ import os
 import torch
 import pandas as pd
 from PIL import Image
-from diffusers import StableUnCLIPImg2ImgPipeline
 import argparse
 from tqdm import tqdm
 import random
-
+from torch.utils.data import Dataset, DataLoader
+from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 
 UNCLIP_MODEL_ID = "sd2-community/stable-diffusion-2-1-unclip-small"
 
+class ImageFolderDataset(Dataset):
+    """Custom Dataset for fast multi-threaded image loading."""
+    def __init__(self, folder_path, file_names):
+        self.folder_path = folder_path
+        self.file_names = file_names
+
+    def __len__(self):
+        return len(self.file_names)
+
+    def __getitem__(self, idx):
+        file_path = os.path.join(self.folder_path, self.file_names[idx])
+        # Open and ensure it is RGB
+        with Image.open(file_path) as img:
+            return img.convert("RGB")
 
 def load_unclip_encoder_components(device):
+    """Loads ONLY the required image encoder and processor to save VRAM and time."""
     dtype = torch.float16 if str(device).startswith("cuda") else torch.float32
 
-    pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(
+    processor = CLIPImageProcessor.from_pretrained(
+        UNCLIP_MODEL_ID, 
+        subfolder="feature_extractor"
+    )
+    
+    image_encoder = CLIPVisionModelWithProjection.from_pretrained(
         UNCLIP_MODEL_ID,
+        subfolder="image_encoder",
         torch_dtype=dtype,
         use_safetensors=True,
-    )
-    pipe = pipe.to(device)
-    pipe.set_progress_bar_config(disable=True)
-
-    feature_extractor = pipe.feature_extractor
-    image_encoder = pipe.image_encoder
+    ).to(device)
     image_encoder.eval()
 
-    return feature_extractor, image_encoder
+    return processor, image_encoder
 
 
-def process_dataset(folder_path, processor, model, device):
-    embeddings = []
+def process_dataset(folder_path, processor, model, device, batch_size=32, num_workers=4):
+    """Processes images in parallel batches rather than one by one."""
     file_names = sorted(
         [f for f in os.listdir(folder_path) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
     )
 
+    dataset = ImageFolderDataset(folder_path, file_names)
     model_dtype = next(model.parameters()).dtype
 
+    def collate_fn(images):
+        return processor(images=images, return_tensors="pt")["pixel_values"]
+
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=batch_size, 
+        num_workers=num_workers, 
+        collate_fn=collate_fn,
+        pin_memory=True if str(device).startswith("cuda") else False
+    )
+
+    embeddings = []
+
     with torch.no_grad():
-        for f in tqdm(file_names, desc=f"Processing {folder_path}"):
-            img = Image.open(os.path.join(folder_path, f)).convert("RGB")
-
-            inputs = processor(images=img, return_tensors="pt")
-            pixel_values = inputs["pixel_values"].to(device=device, dtype=model_dtype)
-
+        for pixel_values in tqdm(dataloader, desc=f"Processing {folder_path}"):
+            pixel_values = pixel_values.to(device=device, dtype=model_dtype)
             embeds = model(pixel_values=pixel_values).image_embeds
-            embeddings.append(embeds.squeeze(0).cpu().to(torch.float32))
+            embeddings.append(embeds.cpu().to(torch.float32))
 
-    return torch.stack(embeddings), file_names
+    # Concat once at the end instead of appending individual tensors
+    return torch.cat(embeddings, dim=0), file_names
 
 
 def split_embeddings_and_files(embeddings, file_names, split_ratio):
@@ -67,75 +94,78 @@ def split_embeddings_and_files(embeddings, file_names, split_ratio):
 
 
 def build_pairs_two_datasets(embeds1, files1, embeds2, files2, pairs_per_image=10):
-    paired_embeds1 = []
-    paired_embeds2 = []
-    paired_files1 = []
-    paired_files2 = []
+    """Vectorized pairing for two datasets."""
+    idx1, idx2 = [], []
+    num_embeds2 = len(embeds2)
 
-    for i, e1 in enumerate(embeds1):
-        num_samples = min(pairs_per_image, len(embeds2))
-        sampled_indices = random.sample(range(len(embeds2)), num_samples)
+    for i in range(len(embeds1)):
+        num_samples = min(pairs_per_image, num_embeds2)
+        sampled_indices = random.sample(range(num_embeds2), num_samples)
+        
+        idx1.extend([i] * num_samples)
+        idx2.extend(sampled_indices)
 
-        for j in sampled_indices:
-            paired_embeds1.append(e1)
-            paired_embeds2.append(embeds2[j])
-            paired_files1.append(files1[i])
-            paired_files2.append(files2[j])
+    # Fast vectorized indexing
+    idx1_tensor = torch.tensor(idx1)
+    idx2_tensor = torch.tensor(idx2)
 
-    paired_embeds1 = torch.stack(paired_embeds1)
-    paired_embeds2 = torch.stack(paired_embeds2)
+    paired_embeds1 = embeds1[idx1_tensor]
+    paired_embeds2 = embeds2[idx2_tensor]
+    paired_files1 = [files1[i] for i in idx1]
+    paired_files2 = [files2[i] for i in idx2]
 
-    total_pairs = len(paired_embeds1)
-    shuffle_idx = torch.randperm(total_pairs)
-
-    paired_embeds1 = paired_embeds1[shuffle_idx]
-    paired_embeds2 = paired_embeds2[shuffle_idx]
-    paired_files1 = [paired_files1[i] for i in shuffle_idx.tolist()]
-    paired_files2 = [paired_files2[i] for i in shuffle_idx.tolist()]
-
-    return paired_embeds1, paired_embeds2, paired_files1, paired_files2
+    # Shuffle
+    shuffle_idx = torch.randperm(len(idx1_tensor))
+    
+    return (
+        paired_embeds1[shuffle_idx], 
+        paired_embeds2[shuffle_idx], 
+        [paired_files1[i] for i in shuffle_idx.tolist()], 
+        [paired_files2[i] for i in shuffle_idx.tolist()]
+    )
 
 
 def build_pairs_single_dataset(embeds, files, pairs_per_image=10, avoid_self_pairs=True):
-    paired_embeds1 = []
-    paired_embeds2 = []
-    paired_files1 = []
-    paired_files2 = []
-
+    """Vectorized pairing for a single dataset."""
     n = len(embeds)
     if n < 2 and avoid_self_pairs:
         raise ValueError("Single-dataset mode with avoid_self_pairs=True requires at least 2 images.")
 
-    for i, e1 in enumerate(embeds):
+    idx1, idx2 = [], []
+
+    for i in range(n):
         if avoid_self_pairs:
             candidate_indices = [j for j in range(n) if j != i]
         else:
             candidate_indices = list(range(n))
 
-        if len(candidate_indices) == 0:
+        if not candidate_indices:
             continue
 
         num_samples = min(pairs_per_image, len(candidate_indices))
         sampled_indices = random.sample(candidate_indices, num_samples)
 
-        for j in sampled_indices:
-            paired_embeds1.append(e1)
-            paired_embeds2.append(embeds[j])
-            paired_files1.append(files[i])
-            paired_files2.append(files[j])
+        idx1.extend([i] * num_samples)
+        idx2.extend(sampled_indices)
 
-    paired_embeds1 = torch.stack(paired_embeds1)
-    paired_embeds2 = torch.stack(paired_embeds2)
+    # Fast vectorized indexing
+    idx1_tensor = torch.tensor(idx1)
+    idx2_tensor = torch.tensor(idx2)
 
-    total_pairs = len(paired_embeds1)
-    shuffle_idx = torch.randperm(total_pairs)
+    paired_embeds1 = embeds[idx1_tensor]
+    paired_embeds2 = embeds[idx2_tensor]
+    paired_files1 = [files[i] for i in idx1]
+    paired_files2 = [files[i] for i in idx2]
 
-    paired_embeds1 = paired_embeds1[shuffle_idx]
-    paired_embeds2 = paired_embeds2[shuffle_idx]
-    paired_files1 = [paired_files1[i] for i in shuffle_idx.tolist()]
-    paired_files2 = [paired_files2[i] for i in shuffle_idx.tolist()]
-
-    return paired_embeds1, paired_embeds2, paired_files1, paired_files2
+    # Shuffle
+    shuffle_idx = torch.randperm(len(idx1_tensor))
+    
+    return (
+        paired_embeds1[shuffle_idx], 
+        paired_embeds2[shuffle_idx], 
+        [paired_files1[i] for i in shuffle_idx.tolist()], 
+        [paired_files2[i] for i in shuffle_idx.tolist()]
+    )
 
 
 def generate_embedding_dataset(
@@ -147,6 +177,8 @@ def generate_embedding_dataset(
     pairs_per_image=10,
     single_dataset=False,
     avoid_self_pairs=True,
+    batch_size=32,
+    num_workers=4
 ):
     os.makedirs(output_dir, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -156,8 +188,8 @@ def generate_embedding_dataset(
 
     processor, model = load_unclip_encoder_components(device)
 
-    # Encode dataset 1
-    embeds1, files1 = process_dataset(folder1, processor, model, device)
+    # Encode dataset 1 using Batched Processing
+    embeds1, files1 = process_dataset(folder1, processor, model, device, batch_size, num_workers)
 
     if single_dataset:
         print("Running in single-dataset mode.")
@@ -186,7 +218,7 @@ def generate_embedding_dataset(
             raise ValueError("folder2 must be provided unless --single_dataset is used.")
 
         print("Running in two-dataset mode.")
-        embeds2, files2 = process_dataset(folder2, processor, model, device)
+        embeds2, files2 = process_dataset(folder2, processor, model, device, batch_size, num_workers)
 
         train_embeds1, train_files1, test_embeds1, test_files1 = split_embeddings_and_files(
             embeds1, files1, split_ratio
@@ -228,11 +260,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--folder1", required=True, help="Path to Dataset 1")
-    parser.add_argument("--folder2", default=None, help="Path to Dataset 2 (not needed in single-dataset mode)")
+    parser.add_argument("--folder2", default=None, help="Path to Dataset 2")
     parser.add_argument("--output_dir", default="data_embeddings", help="Where to save the embedding dataset")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for shuffling and pairing")
     parser.add_argument("--split_ratio", type=float, default=0.9, help="Train/test split ratio")
     parser.add_argument("--pairs_per_image", type=int, default=10, help="How many pairs to sample per image")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for model inference")
+    parser.add_argument("--num_workers", type=int, default=4, help="Number of CPU workers for dataloader")
     parser.add_argument(
         "--single_dataset",
         action="store_true",
@@ -255,4 +289,6 @@ if __name__ == "__main__":
         pairs_per_image=args.pairs_per_image,
         single_dataset=args.single_dataset,
         avoid_self_pairs=not args.allow_self_pairs,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers
     )
