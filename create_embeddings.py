@@ -66,7 +66,7 @@ def split_embeddings_and_files(embeddings, file_names, split_ratio):
     return train_embeds, train_files, test_embeds, test_files
 
 
-def build_pairs_two_datasets(embeds1, files1, embeds2, files2, pairs_per_image=5):
+def build_pairs_two_datasets(embeds1, files1, embeds2, files2, pairs_per_image=10):
     paired_embeds1 = []
     paired_embeds2 = []
     paired_files1 = []
@@ -96,7 +96,7 @@ def build_pairs_two_datasets(embeds1, files1, embeds2, files2, pairs_per_image=5
     return paired_embeds1, paired_embeds2, paired_files1, paired_files2
 
 
-def build_pairs_single_dataset(embeds, files, pairs_per_image=5, avoid_self_pairs=True):
+def build_pairs_single_dataset(embeds, files, pairs_per_image=10, avoid_self_pairs=True):
     paired_embeds1 = []
     paired_embeds2 = []
     paired_files1 = []
@@ -144,7 +144,7 @@ def generate_embedding_dataset(
     output_dir="data_embeddings",
     seed=42,
     split_ratio=0.9,
-    pairs_per_image=5,
+    pairs_per_image=10,
     single_dataset=False,
     avoid_self_pairs=True,
 ):
@@ -232,7 +232,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", default="data_embeddings", help="Where to save the embedding dataset")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for shuffling and pairing")
     parser.add_argument("--split_ratio", type=float, default=0.9, help="Train/test split ratio")
-    parser.add_argument("--pairs_per_image", type=int, default=5, help="How many pairs to sample per image")
+    parser.add_argument("--pairs_per_image", type=int, default=10, help="How many pairs to sample per image")
     parser.add_argument(
         "--single_dataset",
         action="store_true",
