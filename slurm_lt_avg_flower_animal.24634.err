@@ -1,96 +1,0 @@
-wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /nas-ctm01/homes/dacordeiro/.netrc.
-wandb: Currently logged in as: davcordeiro03 (davcordeiro03-inesc-tec) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
-wandb: Tracking run with wandb version 0.25.0
-wandb: Run data is saved locally in /nas-ctm01/homes/dacordeiro/Face-DM/wandb/run-20260331_103710-o6uf1me3
-wandb: Run `wandb offline` to turn off syncing.
-wandb: Syncing run lt_avg_flower_animal
-wandb: ⭐️ View project at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM
-wandb: 🚀 View run at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/o6uf1me3
-Loading pipeline components...:   0%|          | 0/9 [00:00<?, ?it/s]Loading pipeline components...:  11%|█         | 1/9 [00:06<00:55,  6.88s/it]Loading pipeline components...:  22%|██▏       | 2/9 [00:07<00:23,  3.33s/it]
-Loading weights:   0%|          | 0/392 [00:00<?, ?it/s][A
-Loading weights:  11%|█         | 43/392 [00:00<00:00, 362.90it/s][A
-Loading weights:  20%|██        | 80/392 [00:00<00:01, 271.70it/s][A
-Loading weights:  28%|██▊       | 109/392 [00:00<00:01, 235.55it/s][A
-Loading weights:  35%|███▍      | 137/392 [00:00<00:01, 235.74it/s][A
-Loading weights:  42%|████▏     | 163/392 [00:00<00:00, 236.37it/s][A
-Loading weights:  48%|████▊     | 187/392 [00:00<00:00, 235.00it/s][A
-Loading weights:  55%|█████▌    | 217/392 [00:00<00:00, 242.61it/s][A
-Loading weights:  64%|██████▎   | 249/392 [00:01<00:00, 240.96it/s][A
-Loading weights:  72%|███████▏  | 281/392 [00:01<00:00, 254.09it/s][A
-Loading weights:  78%|███████▊  | 307/392 [00:01<00:00, 254.16it/s][A
-Loading weights:  85%|████████▌ | 335/392 [00:01<00:00, 257.33it/s][A
-Loading weights:  92%|█████████▏| 361/392 [00:01<00:00, 256.49it/s][A
-Loading weights:  99%|█████████▊| 387/392 [00:01<00:00, 255.02it/s][ALoading weights: 100%|██████████| 392/392 [00:01<00:00, 253.97it/s]
-[1mCLIPVisionModelWithProjection LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/image_encoder
-Key                                  | Status     |  | 
--------------------------------------+------------+--+-
-vision_model.embeddings.position_ids | UNEXPECTED |  | 
-
-[3mNotes:
-- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
-Loading pipeline components...:  33%|███▎      | 3/9 [00:09<00:16,  2.70s/it]Loading pipeline components...:  67%|██████▋   | 6/9 [00:09<00:02,  1.06it/s]Loading pipeline components...:  89%|████████▉ | 8/9 [00:10<00:00,  1.59it/s]
-Loading weights:   0%|          | 0/372 [00:00<?, ?it/s][A
-Loading weights:   6%|▌         | 23/372 [00:00<00:01, 205.11it/s][A
-Loading weights:  12%|█▏        | 46/372 [00:00<00:01, 208.70it/s][A
-Loading weights:  19%|█▉        | 72/372 [00:00<00:01, 217.16it/s][A
-Loading weights:  28%|██▊       | 104/372 [00:00<00:01, 237.36it/s][A
-Loading weights:  37%|███▋      | 136/372 [00:00<00:00, 253.01it/s][A
-Loading weights:  44%|████▎     | 162/372 [00:00<00:00, 251.66it/s][A
-Loading weights:  51%|█████     | 188/372 [00:00<00:00, 248.51it/s][A
-Loading weights:  57%|█████▋    | 213/372 [00:00<00:00, 247.33it/s][A
-Loading weights:  65%|██████▍   | 241/372 [00:00<00:00, 256.30it/s][A
-Loading weights:  72%|███████▏  | 267/372 [00:01<00:00, 235.25it/s][A
-Loading weights:  78%|███████▊  | 291/372 [00:01<00:00, 221.94it/s][A
-Loading weights:  87%|████████▋ | 322/372 [00:01<00:00, 243.90it/s][A
-Loading weights:  95%|█████████▌| 354/372 [00:01<00:00, 244.51it/s][ALoading weights: 100%|██████████| 372/372 [00:01<00:00, 245.39it/s]
-[1mCLIPTextModel LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/text_encoder
-Key                                | Status     |  | 
------------------------------------+------------+--+-
-text_model.embeddings.position_ids | UNEXPECTED |  | 
-
-[3mNotes:
-- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
-Loading pipeline components...: 100%|██████████| 9/9 [00:11<00:00,  1.12it/s]Loading pipeline components...: 100%|██████████| 9/9 [00:11<00:00,  1.33s/it]
-Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-Loading pipeline components...:   0%|          | 0/9 [00:00<?, ?it/s]Loading pipeline components...:  11%|█         | 1/9 [00:01<00:12,  1.56s/it]Loading pipeline components...:  22%|██▏       | 2/9 [00:01<00:05,  1.35it/s]
-Loading weights:   0%|          | 0/392 [00:00<?, ?it/s][A
-Loading weights:  64%|██████▎   | 249/392 [00:00<00:00, 2487.56it/s][ALoading weights: 100%|██████████| 392/392 [00:00<00:00, 2115.38it/s]
-[1mCLIPVisionModelWithProjection LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/image_encoder
-Key                                  | Status     |  | 
--------------------------------------+------------+--+-
-vision_model.embeddings.position_ids | UNEXPECTED |  | 
-
-[3mNotes:
-- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
-Loading pipeline components...:  33%|███▎      | 3/9 [00:02<00:03,  1.70it/s]Loading pipeline components...:  89%|████████▉ | 8/9 [00:02<00:00,  6.25it/s]
-Loading weights:   0%|          | 0/372 [00:00<?, ?it/s][A
-Loading weights:  59%|█████▉    | 221/372 [00:00<00:00, 2207.20it/s][ALoading weights: 100%|██████████| 372/372 [00:00<00:00, 1819.97it/s]
-[1mCLIPTextModel LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/text_encoder
-Key                                | Status     |  | 
------------------------------------+------------+--+-
-text_model.embeddings.position_ids | UNEXPECTED |  | 
-
-[3mNotes:
-- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
-Loading pipeline components...: 100%|██████████| 9/9 [00:02<00:00,  3.30it/s]
-Loading pipeline components...:   0%|          | 0/9 [00:00<?, ?it/s]Loading pipeline components...:  11%|█         | 1/9 [00:00<00:07,  1.00it/s]Loading pipeline components...:  22%|██▏       | 2/9 [00:01<00:03,  1.97it/s]
-Loading weights:   0%|          | 0/392 [00:00<?, ?it/s][A
-Loading weights:  64%|██████▎   | 249/392 [00:00<00:00, 2462.26it/s][ALoading weights: 100%|██████████| 392/392 [00:00<00:00, 2129.53it/s]
-[1mCLIPVisionModelWithProjection LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/image_encoder
-Key                                  | Status     |  | 
--------------------------------------+------------+--+-
-vision_model.embeddings.position_ids | UNEXPECTED |  | 
-
-[3mNotes:
-- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
-Loading pipeline components...:  33%|███▎      | 3/9 [00:01<00:02,  2.16it/s]Loading pipeline components...:  89%|████████▉ | 8/9 [00:01<00:00,  7.38it/s]
-Loading weights:   0%|          | 0/372 [00:00<?, ?it/s][A
-Loading weights:  61%|██████    | 227/372 [00:00<00:00, 2269.27it/s][ALoading weights: 100%|██████████| 372/372 [00:00<00:00, 1750.58it/s]
-[1mCLIPTextModel LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/text_encoder
-Key                                | Status     |  | 
------------------------------------+------------+--+-
-text_model.embeddings.position_ids | UNEXPECTED |  | 
-
-[3mNotes:
-- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
-Loading pipeline components...: 100%|██████████| 9/9 [00:02<00:00,  4.07it/s]
