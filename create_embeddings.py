@@ -12,7 +12,7 @@ UNCLIP_MODEL_ID = "sd2-community/stable-diffusion-2-1-unclip-small"
 
 
 def load_unclip_encoder_components(device):
-    dtype = torch.float16 if device.startswith("cuda") else torch.float32
+    dtype = torch.float16 if str(device).startswith("cuda") else torch.float32
 
     pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(
         UNCLIP_MODEL_ID,
@@ -66,14 +66,14 @@ def split_embeddings_and_files(embeddings, file_names, split_ratio):
     return train_embeds, train_files, test_embeds, test_files
 
 
-def build_pairs(embeds1, files1, embeds2, files2):
+def build_pairs_two_datasets(embeds1, files1, embeds2, files2, pairs_per_image=5):
     paired_embeds1 = []
     paired_embeds2 = []
     paired_files1 = []
     paired_files2 = []
 
     for i, e1 in enumerate(embeds1):
-        num_samples = min(10, len(embeds2))
+        num_samples = min(pairs_per_image, len(embeds2))
         sampled_indices = random.sample(range(len(embeds2)), num_samples)
 
         for j in sampled_indices:
@@ -96,7 +96,58 @@ def build_pairs(embeds1, files1, embeds2, files2):
     return paired_embeds1, paired_embeds2, paired_files1, paired_files2
 
 
-def generate_embedding_dataset(folder1, folder2, output_dir="data_embeddings", seed=42, split_ratio=0.9):
+def build_pairs_single_dataset(embeds, files, pairs_per_image=5, avoid_self_pairs=True):
+    paired_embeds1 = []
+    paired_embeds2 = []
+    paired_files1 = []
+    paired_files2 = []
+
+    n = len(embeds)
+    if n < 2 and avoid_self_pairs:
+        raise ValueError("Single-dataset mode with avoid_self_pairs=True requires at least 2 images.")
+
+    for i, e1 in enumerate(embeds):
+        if avoid_self_pairs:
+            candidate_indices = [j for j in range(n) if j != i]
+        else:
+            candidate_indices = list(range(n))
+
+        if len(candidate_indices) == 0:
+            continue
+
+        num_samples = min(pairs_per_image, len(candidate_indices))
+        sampled_indices = random.sample(candidate_indices, num_samples)
+
+        for j in sampled_indices:
+            paired_embeds1.append(e1)
+            paired_embeds2.append(embeds[j])
+            paired_files1.append(files[i])
+            paired_files2.append(files[j])
+
+    paired_embeds1 = torch.stack(paired_embeds1)
+    paired_embeds2 = torch.stack(paired_embeds2)
+
+    total_pairs = len(paired_embeds1)
+    shuffle_idx = torch.randperm(total_pairs)
+
+    paired_embeds1 = paired_embeds1[shuffle_idx]
+    paired_embeds2 = paired_embeds2[shuffle_idx]
+    paired_files1 = [paired_files1[i] for i in shuffle_idx.tolist()]
+    paired_files2 = [paired_files2[i] for i in shuffle_idx.tolist()]
+
+    return paired_embeds1, paired_embeds2, paired_files1, paired_files2
+
+
+def generate_embedding_dataset(
+    folder1,
+    folder2=None,
+    output_dir="data_embeddings",
+    seed=42,
+    split_ratio=0.9,
+    pairs_per_image=5,
+    single_dataset=False,
+    avoid_self_pairs=True,
+):
     os.makedirs(output_dir, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -105,25 +156,54 @@ def generate_embedding_dataset(folder1, folder2, output_dir="data_embeddings", s
 
     processor, model = load_unclip_encoder_components(device)
 
+    # Encode dataset 1
     embeds1, files1 = process_dataset(folder1, processor, model, device)
-    embeds2, files2 = process_dataset(folder2, processor, model, device)
 
-    train_embeds1, train_files1, test_embeds1, test_files1 = split_embeddings_and_files(
-        embeds1, files1, split_ratio
-    )
-    train_embeds2, train_files2, test_embeds2, test_files2 = split_embeddings_and_files(
-        embeds2, files2, split_ratio
-    )
+    if single_dataset:
+        print("Running in single-dataset mode.")
+        train_embeds, train_files, test_embeds, test_files = split_embeddings_and_files(
+            embeds1, files1, split_ratio
+        )
 
-    print("Building 1-to-5 train pairs...")
-    train_e1, train_e2, train_pair_files1, train_pair_files2 = build_pairs(
-        train_embeds1, train_files1, train_embeds2, train_files2
-    )
+        print("Building 1-to-k train pairs from dataset 1 with itself...")
+        train_e1, train_e2, train_pair_files1, train_pair_files2 = build_pairs_single_dataset(
+            train_embeds,
+            train_files,
+            pairs_per_image=pairs_per_image,
+            avoid_self_pairs=avoid_self_pairs,
+        )
 
-    print("Building 1-to-5 test pairs...")
-    test_e1, test_e2, test_pair_files1, test_pair_files2 = build_pairs(
-        test_embeds1, test_files1, test_embeds2, test_files2
-    )
+        print("Building 1-to-k test pairs from dataset 1 with itself...")
+        test_e1, test_e2, test_pair_files1, test_pair_files2 = build_pairs_single_dataset(
+            test_embeds,
+            test_files,
+            pairs_per_image=pairs_per_image,
+            avoid_self_pairs=avoid_self_pairs,
+        )
+
+    else:
+        if folder2 is None:
+            raise ValueError("folder2 must be provided unless --single_dataset is used.")
+
+        print("Running in two-dataset mode.")
+        embeds2, files2 = process_dataset(folder2, processor, model, device)
+
+        train_embeds1, train_files1, test_embeds1, test_files1 = split_embeddings_and_files(
+            embeds1, files1, split_ratio
+        )
+        train_embeds2, train_files2, test_embeds2, test_files2 = split_embeddings_and_files(
+            embeds2, files2, split_ratio
+        )
+
+        print("Building 1-to-k train pairs...")
+        train_e1, train_e2, train_pair_files1, train_pair_files2 = build_pairs_two_datasets(
+            train_embeds1, train_files1, train_embeds2, train_files2, pairs_per_image=pairs_per_image
+        )
+
+        print("Building 1-to-k test pairs...")
+        test_e1, test_e2, test_pair_files1, test_pair_files2 = build_pairs_two_datasets(
+            test_embeds1, test_files1, test_embeds2, test_files2, pairs_per_image=pairs_per_image
+        )
 
     torch.save(train_e1, os.path.join(output_dir, "train_dataset1_embeds.pt"))
     torch.save(train_e2, os.path.join(output_dir, "train_dataset2_embeds.pt"))
@@ -146,15 +226,33 @@ def generate_embedding_dataset(folder1, folder2, output_dir="data_embeddings", s
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+
     parser.add_argument("--folder1", required=True, help="Path to Dataset 1")
-    parser.add_argument("--folder2", required=True, help="Path to Dataset 2")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for shuffling and pairing")
+    parser.add_argument("--folder2", default=None, help="Path to Dataset 2 (not needed in single-dataset mode)")
     parser.add_argument("--output_dir", default="data_embeddings", help="Where to save the embedding dataset")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for shuffling and pairing")
+    parser.add_argument("--split_ratio", type=float, default=0.9, help="Train/test split ratio")
+    parser.add_argument("--pairs_per_image", type=int, default=5, help="How many pairs to sample per image")
+    parser.add_argument(
+        "--single_dataset",
+        action="store_true",
+        help="If set, encode folder1 once and build pairs within the same dataset",
+    )
+    parser.add_argument(
+        "--allow_self_pairs",
+        action="store_true",
+        help="If set, allows an image to be paired with itself in single-dataset mode",
+    )
+
     args = parser.parse_args()
 
     generate_embedding_dataset(
-        args.folder1,
-        args.folder2,
+        folder1=args.folder1,
+        folder2=args.folder2,
         output_dir=args.output_dir,
         seed=args.seed,
+        split_ratio=args.split_ratio,
+        pairs_per_image=args.pairs_per_image,
+        single_dataset=args.single_dataset,
+        avoid_self_pairs=not args.allow_self_pairs,
     )
