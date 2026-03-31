@@ -1,0 +1,64 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading pipeline components...:   0%|          | 0/9 [00:00<?, ?it/s]Loading pipeline components...:  22%|██▏       | 2/9 [00:00<00:03,  2.11it/s]
+Loading weights:   0%|          | 0/372 [00:00<?, ?it/s][A
+Loading weights:  67%|██████▋   | 248/372 [00:00<00:00, 2454.86it/s][ALoading weights: 100%|██████████| 372/372 [00:00<00:00, 2106.85it/s]
+[1mCLIPTextModel LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/text_encoder
+Key                                | Status     |  | 
+-----------------------------------+------------+--+-
+text_model.embeddings.position_ids | UNEXPECTED |  | 
+
+[3mNotes:
+- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
+Loading pipeline components...:  56%|█████▌    | 5/9 [00:01<00:01,  3.91it/s]Loading pipeline components...:  67%|██████▋   | 6/9 [00:01<00:00,  4.45it/s]
+Loading weights:   0%|          | 0/392 [00:00<?, ?it/s][A
+Loading weights:  64%|██████▎   | 249/392 [00:00<00:00, 2480.34it/s][ALoading weights: 100%|██████████| 392/392 [00:00<00:00, 2031.03it/s]
+[1mCLIPVisionModelWithProjection LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/image_encoder
+Key                                  | Status     |  | 
+-------------------------------------+------------+--+-
+vision_model.embeddings.position_ids | UNEXPECTED |  | 
+
+[3mNotes:
+- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
+Loading pipeline components...: 100%|██████████| 9/9 [00:01<00:00,  5.37it/s]Loading pipeline components...: 100%|██████████| 9/9 [00:01<00:00,  4.53it/s]
+Loading pipeline components...:   0%|          | 0/9 [00:00<?, ?it/s]Loading pipeline components...:  22%|██▏       | 2/9 [00:01<00:04,  1.69it/s]
+Loading weights:   0%|          | 0/372 [00:00<?, ?it/s][A
+Loading weights:  77%|███████▋  | 288/372 [00:00<00:00, 2864.86it/s][ALoading weights: 100%|██████████| 372/372 [00:00<00:00, 2379.19it/s]
+[1mCLIPTextModel LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/text_encoder
+Key                                | Status     |  | 
+-----------------------------------+------------+--+-
+text_model.embeddings.position_ids | UNEXPECTED |  | 
+
+[3mNotes:
+- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
+Loading pipeline components...:  56%|█████▌    | 5/9 [00:01<00:01,  3.42it/s]Loading pipeline components...:  67%|██████▋   | 6/9 [00:01<00:00,  3.59it/s]
+Loading weights:   0%|          | 0/392 [00:00<?, ?it/s][A
+Loading weights:  61%|██████▏   | 241/392 [00:00<00:00, 2402.38it/s][ALoading weights: 100%|██████████| 392/392 [00:00<00:00, 1974.51it/s]
+[1mCLIPVisionModelWithProjection LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/image_encoder
+Key                                  | Status     |  | 
+-------------------------------------+------------+--+-
+vision_model.embeddings.position_ids | UNEXPECTED |  | 
+
+[3mNotes:
+- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
+Loading pipeline components...: 100%|██████████| 9/9 [00:02<00:00,  4.72it/s]Loading pipeline components...: 100%|██████████| 9/9 [00:02<00:00,  3.88it/s]
+Loading pipeline components...:   0%|          | 0/9 [00:00<?, ?it/s]Loading pipeline components...:  22%|██▏       | 2/9 [00:01<00:03,  1.91it/s]
+Loading weights:   0%|          | 0/372 [00:00<?, ?it/s][A
+Loading weights:  62%|██████▏   | 232/372 [00:00<00:00, 2314.23it/s][ALoading weights: 100%|██████████| 372/372 [00:00<00:00, 1858.05it/s]
+[1mCLIPTextModel LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/text_encoder
+Key                                | Status     |  | 
+-----------------------------------+------------+--+-
+text_model.embeddings.position_ids | UNEXPECTED |  | 
+
+[3mNotes:
+- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
+Loading pipeline components...:  56%|█████▌    | 5/9 [00:01<00:01,  3.32it/s]Loading pipeline components...:  67%|██████▋   | 6/9 [00:01<00:00,  3.63it/s]
+Loading weights:   0%|          | 0/392 [00:00<?, ?it/s][A
+Loading weights:  59%|█████▉    | 231/392 [00:00<00:00, 2307.97it/s][ALoading weights: 100%|██████████| 392/392 [00:00<00:00, 2282.92it/s]
+[1mCLIPVisionModelWithProjection LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/image_encoder
+Key                                  | Status     |  | 
+-------------------------------------+------------+--+-
+vision_model.embeddings.position_ids | UNEXPECTED |  | 
+
+[3mNotes:
+- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
+Loading pipeline components...: 100%|██████████| 9/9 [00:02<00:00,  4.93it/s]Loading pipeline components...: 100%|██████████| 9/9 [00:02<00:00,  4.02it/s]

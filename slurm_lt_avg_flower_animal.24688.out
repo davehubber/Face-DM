@@ -1,0 +1,25 @@
+
+--- One-Shot Evaluation Metrics (Entire Test Set) ---
+MSE Target: 0.012500
+MSE Deduced: 0.012500
+MSE Mean: 0.012500
+Cosine Similarity Target: 0.986696
+Cosine Similarity Deduced: 0.988019
+Cosine Similarity Mean: 0.987357
+Saved OneShot labeled image row to: experiments/lt_avg_flower_animal/results/oneshot_8_tile_row_labeled.png
+
+
+--- Regular Evaluation Metrics (Entire Test Set) ---
+MSE Target: 0.014378
+MSE Deduced: 0.014378
+MSE Mean: 0.014378
+Cosine Similarity Target: 0.984669
+Cosine Similarity Deduced: 0.986304
+Cosine Similarity Mean: 0.985487
+Saved Regular labeled image row to: experiments/lt_avg_flower_animal/results/regular_8_tile_row_labeled.png
+
+Starting decoder sanity check on cuda...
+Loading matched UnCLIP pipeline...
+Encoding the real images with the pipeline's own encoder...
+Decoding the re-encoded embeddings...
+Saved sanity-check row to: experiments/lt_avg_flower_animal/results/decoder_single_image_sanity_check_64x64.png
