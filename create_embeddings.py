@@ -73,7 +73,7 @@ def build_pairs(embeds1, files1, embeds2, files2):
     paired_files2 = []
 
     for i, e1 in enumerate(embeds1):
-        num_samples = min(5, len(embeds2))
+        num_samples = min(10, len(embeds2))
         sampled_indices = random.sample(range(len(embeds2)), num_samples)
 
         for j in sampled_indices:
