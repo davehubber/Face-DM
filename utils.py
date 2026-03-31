@@ -5,7 +5,7 @@ import torchvision
 import pandas as pd
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from torch.utils.data import Dataset
 from diffusers import PriorTransformer, StableUnCLIPImg2ImgPipeline
 
@@ -139,19 +139,119 @@ def encode_pil_images_to_embeddings(pil_images, pipeline, device):
 
     return image_embeds.to(torch.float32)
 
-def decode_embeddings_to_images(embeddings, pipeline, device):
+def decode_embeddings_to_images(embeddings, pipeline, device, seed=0):
     embeddings = embeddings.to(device=device, dtype=pipeline.unet.dtype)
+
+    generator = torch.Generator(device=device)
+    generator.manual_seed(seed)
 
     images = pipeline(
         prompt=[""] * embeddings.shape[0],
         image_embeds=embeddings,
         noise_level=0,
         num_inference_steps=20,
+        generator=generator,
     ).images
 
     transform = torchvision.transforms.ToTensor()
     image_tensors = torch.stack([transform(img) for img in images]).to(device)
     return image_tensors
+
+def save_labeled_image_row(image_tensors, labels, save_path, tile_size=(64, 64), pad=6, label_pad=4, label_height=18):
+    assert len(image_tensors) == len(labels), "image_tensors and labels must have the same length"
+
+    pil_images = []
+    to_pil = torchvision.transforms.ToPILImage()
+
+    for img in image_tensors:
+        img = img.detach().cpu().clamp(0, 1)
+        pil = to_pil(img)
+        pil = pil.resize(tile_size, Image.Resampling.BILINEAR)
+        pil_images.append(pil)
+
+    n = len(pil_images)
+    tile_w, tile_h = tile_size
+    canvas_w = n * tile_w + (n + 1) * pad
+    canvas_h = pad + tile_h + label_pad + label_height + pad
+
+    canvas = Image.new("RGB", (canvas_w, canvas_h), color="white")
+    draw = ImageDraw.Draw(canvas)
+
+    try:
+        font = ImageFont.load_default()
+    except Exception:
+        font = None
+
+    for i, (pil, label) in enumerate(zip(pil_images, labels)):
+        x = pad + i * (tile_w + pad)
+        y = pad
+        canvas.paste(pil, (x, y))
+
+        if font is not None:
+            bbox = draw.textbbox((0, 0), label, font=font)
+            text_w = bbox[2] - bbox[0]
+        else:
+            text_w = len(label) * 6
+
+        text_x = x + max((tile_w - text_w) // 2, 0)
+        text_y = y + tile_h + label_pad
+        draw.text((text_x, text_y), label, fill="black", font=font)
+
+    canvas.save(save_path)
+
+def compute_embedding_metrics_over_testset(args, test_dataloader, model, diffusion, mode="Regular"):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    total_vectors = 0
+    total_elements = 0
+
+    mse_t_sum = 0.0
+    mse_d_sum = 0.0
+    cos_t_sum = 0.0
+    cos_d_sum = 0.0
+
+    model.eval()
+    with torch.no_grad():
+        for e1, e2, _, _ in test_dataloader:
+            e1 = e1.to(device)
+            e2 = e2.to(device)
+            n = e1.shape[0]
+
+            S = e1 * (1.0 - args.alpha_init) + e2 * args.alpha_init
+
+            if mode == "Regular":
+                pred_e1, pred_e2 = diffusion.sample(model, S, args.alpha_init)
+            else:
+                init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
+                t = torch.full((n,), init_timestep, device=device, dtype=torch.long)
+
+                pred_e1 = model(
+                    hidden_states=S,
+                    timestep=t,
+                    proj_embedding=S,
+                ).predicted_image_embedding.squeeze(1)
+
+                pred_e2 = (S - (1.0 - args.alpha_init) * pred_e1) / args.alpha_init
+
+            mse_t_sum += ((pred_e1 - e1) ** 2).sum().item()
+            mse_d_sum += ((pred_e2 - e2) ** 2).sum().item()
+
+            cos_t_sum += F.cosine_similarity(pred_e1, e1, dim=-1).sum().item()
+            cos_d_sum += F.cosine_similarity(pred_e2, e2, dim=-1).sum().item()
+
+            total_vectors += n
+            total_elements += e1.numel()
+
+    metrics = {
+        "mse_target": mse_t_sum / total_elements,
+        "mse_deduced": mse_d_sum / total_elements,
+        "mse_mean": (mse_t_sum + mse_d_sum) / (2 * total_elements),
+        "cos_target": cos_t_sum / total_vectors,
+        "cos_deduced": cos_d_sum / total_vectors,
+        "cos_mean": (cos_t_sum + cos_d_sum) / (2 * total_vectors),
+    }
+
+    return metrics
 
 def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode="Regular"):
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -174,13 +274,13 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
         for e1, e2, p1, p2 in test_dataloader:
             e1 = e1.to(device)
             e2 = e2.to(device)
+            n = len(e1)
 
             S = e1 * (1.0 - args.alpha_init) + e2 * args.alpha_init
 
             if mode == "Regular":
                 pred_e1, pred_e2 = diffusion.sample(model, S, args.alpha_init)
             else:
-                n = len(e1)
                 init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
                 t = torch.full((n,), init_timestep, device=device, dtype=torch.long)
 
@@ -192,7 +292,6 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
 
                 pred_e2 = (S - (1.0 - args.alpha_init) * pred_e1) / args.alpha_init
 
-            # Only save one pair
             emb_e1 = e1[0:1]
             emb_e2 = e2[0:1]
             emb_S = S[0:1]
@@ -203,11 +302,11 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
             real_img2 = load_real_image_64(p2[0])
             real_mix = real_img1 * (1.0 - args.alpha_init) + real_img2 * args.alpha_init
 
-            dec_e1 = resize_decoded(decode_embeddings_to_images(emb_e1, decoder_pipeline, device))
-            dec_e2 = resize_decoded(decode_embeddings_to_images(emb_e2, decoder_pipeline, device))
-            dec_S = resize_decoded(decode_embeddings_to_images(emb_S, decoder_pipeline, device))
-            dec_pred1 = resize_decoded(decode_embeddings_to_images(emb_pred1, decoder_pipeline, device))
-            dec_pred2 = resize_decoded(decode_embeddings_to_images(emb_pred2, decoder_pipeline, device))
+            dec_e1 = resize_decoded(decode_embeddings_to_images(emb_e1, decoder_pipeline, device, seed=100))
+            dec_e2 = resize_decoded(decode_embeddings_to_images(emb_e2, decoder_pipeline, device, seed=101))
+            dec_S = resize_decoded(decode_embeddings_to_images(emb_S, decoder_pipeline, device, seed=102))
+            dec_pred1 = resize_decoded(decode_embeddings_to_images(emb_pred1, decoder_pipeline, device, seed=103))
+            dec_pred2 = resize_decoded(decode_embeddings_to_images(emb_pred2, decoder_pipeline, device, seed=104))
 
             blank = torch.zeros_like(real_img1)
 
@@ -220,17 +319,25 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
                 dec_S.squeeze(0),
                 dec_pred1.squeeze(0),
                 dec_pred2.squeeze(0),
-                blank.squeeze(0),
-                blank.squeeze(0),
             ]
 
-            grid_tensor = torch.stack(tiles)
-            saved_path = os.path.join(base_dir, "results", f"{mode.lower()}_10_tile_grid.png")
-            torchvision.utils.save_image(grid_tensor, saved_path, nrow=5)
+            labels = [
+                "Real 1",
+                "Real 2",
+                "Real Avg",
+                "Dec E1",
+                "Dec E2",
+                "Dec Avg",
+                "Pred Dec 1",
+                "Pred Dec 2",
+            ]
+
+            saved_path = os.path.join(base_dir, "results", f"{mode.lower()}_8_tile_row_labeled.png")
+            save_labeled_image_row(tiles, labels, saved_path, tile_size=(64, 64))
             break
 
     del decoder_pipeline
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    return f"Saved {mode} evaluation grid to: {saved_path}"
+    return f"Saved {mode} labeled image row to: {saved_path}\n"

@@ -2,7 +2,6 @@ import os
 import torch
 import math
 import wandb
-import numpy as np
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 from torchvision.utils import save_image
@@ -15,9 +14,10 @@ from utils import (
     EmbeddingDataset,
     ColdDiffusionEmbeds,
     get_prior_model,
-    run_image_evaluation,
     get_decoder_pipeline,
     encode_pil_images_to_embeddings,
+    run_image_evaluation,
+    compute_embedding_metrics_over_testset,
 )
 
 def train(args):
@@ -179,11 +179,28 @@ def eval(args):
 
     diffusion = ColdDiffusionEmbeds(alpha_max=args.alpha_max, device=device)
 
-    report = run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode="Regular")
+    metrics = compute_embedding_metrics_over_testset(
+        args, test_dataloader, model, diffusion, mode="Regular"
+    )
 
-    print(f"\n{report}")
+    img_report = run_image_evaluation(
+        args, base_dir, test_dataloader, model, diffusion, mode="Regular"
+    )
+
+    metrics_report = (
+        "--- Regular Evaluation Metrics (Entire Test Set) ---\n"
+        f"MSE Target: {metrics['mse_target']:.6f}\n"
+        f"MSE Deduced: {metrics['mse_deduced']:.6f}\n"
+        f"MSE Mean: {metrics['mse_mean']:.6f}\n"
+        f"Cosine Similarity Target: {metrics['cos_target']:.6f}\n"
+        f"Cosine Similarity Deduced: {metrics['cos_deduced']:.6f}\n"
+        f"Cosine Similarity Mean: {metrics['cos_mean']:.6f}\n"
+        f"{img_report}"
+    )
+
+    print(f"\n{metrics_report}")
     with open(os.path.join(base_dir, "results", "final_eval.txt"), "w") as f:
-        f.write(report)
+        f.write(metrics_report)
 
 def one_shot_eval(args):
     accelerator = Accelerator()
@@ -212,11 +229,28 @@ def one_shot_eval(args):
 
     diffusion = ColdDiffusionEmbeds(alpha_max=args.alpha_max, device=device)
 
-    report = run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode="OneShot")
+    metrics = compute_embedding_metrics_over_testset(
+        args, test_dataloader, model, diffusion, mode="OneShot"
+    )
 
-    print(f"\n{report}")
+    img_report = run_image_evaluation(
+        args, base_dir, test_dataloader, model, diffusion, mode="OneShot"
+    )
+
+    metrics_report = (
+        "--- One-Shot Evaluation Metrics (Entire Test Set) ---\n"
+        f"MSE Target: {metrics['mse_target']:.6f}\n"
+        f"MSE Deduced: {metrics['mse_deduced']:.6f}\n"
+        f"MSE Mean: {metrics['mse_mean']:.6f}\n"
+        f"Cosine Similarity Target: {metrics['cos_target']:.6f}\n"
+        f"Cosine Similarity Deduced: {metrics['cos_deduced']:.6f}\n"
+        f"Cosine Similarity Mean: {metrics['cos_mean']:.6f}\n"
+        f"{img_report}"
+    )
+
+    print(f"\n{metrics_report}")
     with open(os.path.join(base_dir, "results", "one_shot_eval.txt"), "w") as f:
-        f.write(report)
+        f.write(metrics_report)
 
 def test_decoder(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -295,7 +329,7 @@ def launch():
     parser.add_argument('--lr', default=1e-4, help='Learning rate', type=float, required=False)
 
     args = parser.parse_args()
-    train(args)
+    #train(args)
     one_shot_eval(args)
     eval(args)
     test_decoder(args)
