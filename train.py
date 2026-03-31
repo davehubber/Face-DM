@@ -6,7 +6,6 @@ import numpy as np
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 from torchvision.utils import save_image
-from diffusers import StableUnCLIPImg2ImgPipeline
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
 from diffusers.optimization import get_cosine_schedule_with_warmup
@@ -27,17 +26,17 @@ def train(args):
     device = accelerator.device
 
     train_dataset = EmbeddingDataset(
-        data_dir=args.data_dir, 
-        image_dir1=args.image_dir1, 
-        image_dir2=args.image_dir2, 
-        partition='train'
+        data_dir=args.data_dir,
+        image_dir1=args.image_dir1,
+        image_dir2=args.image_dir2,
+        partition="train",
     )
-    
+
     test_dataset = EmbeddingDataset(
-        data_dir=args.data_dir, 
-        image_dir1=args.image_dir1, 
-        image_dir2=args.image_dir2, 
-        partition='test'
+        data_dir=args.data_dir,
+        image_dir1=args.image_dir1,
+        image_dir2=args.image_dir2,
+        partition="test",
     )
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
@@ -52,7 +51,8 @@ def train(args):
         num_training_steps=(len(train_dataloader) * args.epochs),
     )
 
-    diffusion = ColdDiffusionEmbeds(device=device)
+    diffusion = ColdDiffusionEmbeds(alpha_max=args.alpha_max, device=device)
+    init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
 
     ema_model = EMAModel(model.parameters(), inv_gamma=1.0, power=0.75, decay=0.9999)
     ema_model.to(device)
@@ -67,19 +67,24 @@ def train(args):
 
     for epoch in range(args.epochs):
         model.train()
+
         for e1, e2, _, _ in train_dataloader:
-            t = diffusion.sample_timesteps(e1.shape[0]).to(device)
+            t = diffusion.sample_timesteps(e1.shape[0], max_t=init_timestep)
 
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_embeds(e1, e2, t)
-                superimposed = (e1 + e2) / 2.0
-                scale = torch.norm(e1, p=2, dim=-1, keepdim=True)
-                superimposed = torch.nn.functional.normalize(superimposed, p=2, dim=-1) * scale
-                predicted_emb = model(hidden_states=x_t, timestep=t, proj_embedding=superimposed).predicted_image_embedding.squeeze(1)
+                superimposed = e1 * (1.0 - args.alpha_init) + e2 * args.alpha_init
+
+                predicted_emb = model(
+                    hidden_states=x_t,
+                    timestep=t,
+                    proj_embedding=superimposed,
+                ).predicted_image_embedding.squeeze(1)
 
                 loss = F.mse_loss(predicted_emb, e1)
 
                 accelerator.backward(loss)
+
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), 1.0)
 
@@ -92,44 +97,59 @@ def train(args):
 
             global_step += 1
 
-            if global_step % 100 == 0: 
+            if global_step % 100 == 0:
                 model.eval()
                 val_loss = 0.0
                 val_steps = 0
 
                 with torch.no_grad():
                     for v_e1, v_e2, _, _ in test_dataloader:
-                        val_t = diffusion.sample_timesteps(v_e1.shape[0]).to(device)
+                        val_t = diffusion.sample_timesteps(v_e1.shape[0], max_t=init_timestep)
                         val_x_t = diffusion.mix_embeds(v_e1, v_e2, val_t)
-                        val_sup = (v_e1 + v_e2) / 2.0
-                        scale = torch.norm(v_e1, p=2, dim=-1, keepdim=True)
-                        val_sup = torch.nn.functional.normalize(val_sup, p=2, dim=-1) * scale
+                        val_sup = v_e1 * (1.0 - args.alpha_init) + v_e2 * args.alpha_init
 
-                        val_pred = model(hidden_states=val_x_t, timestep=val_t, proj_embedding=val_sup).predicted_image_embedding.squeeze(1)
+                        val_pred = model(
+                            hidden_states=val_x_t,
+                            timestep=val_t,
+                            proj_embedding=val_sup,
+                        ).predicted_image_embedding.squeeze(1)
+
                         v_loss = F.mse_loss(val_pred, v_e1)
                         v_loss = accelerator.gather(v_loss).mean()
                         val_loss += v_loss.item()
                         val_steps += 1
 
-                avg_val_loss = val_loss / val_steps
+                avg_val_loss = val_loss / max(val_steps, 1)
 
                 if accelerator.is_main_process:
-                    wandb.log({
-                        "train_loss": loss.item(), 
-                        "val_loss": avg_val_loss,
-                        "step": global_step, 
-                        "epoch": epoch,
-                        "lr": optimizer.param_groups[0]['lr']
-                    })
-                
+                    wandb.log(
+                        {
+                            "train_loss": loss.item(),
+                            "val_loss": avg_val_loss,
+                            "step": global_step,
+                            "epoch": epoch,
+                            "lr": optimizer.param_groups[0]["lr"],
+                        }
+                    )
+
                 model.train()
 
         if (epoch + 1) % 50 == 0 and accelerator.is_main_process:
             unet = accelerator.unwrap_model(model)
-            torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "prior_active.pt"))
+
+            torch.save(
+                unet.state_dict(),
+                os.path.join(base_dir, "checkpoints", "prior_active.pt"),
+            )
+
             ema_model.store(unet.parameters())
             ema_model.copy_to(unet.parameters())
-            torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "prior_ema.pt"))
+
+            torch.save(
+                unet.state_dict(),
+                os.path.join(base_dir, "checkpoints", "prior_ema.pt"),
+            )
+
             ema_model.restore(unet.parameters())
 
 def eval(args):
@@ -138,57 +158,32 @@ def eval(args):
     base_dir = os.path.join("experiments", args.run_name)
 
     dataset = EmbeddingDataset(
-        data_dir=args.data_dir, 
-        image_dir1=args.image_dir1, 
-        image_dir2=args.image_dir2, 
-        partition='test'
+        data_dir=args.data_dir,
+        image_dir1=args.image_dir1,
+        image_dir2=args.image_dir2,
+        partition="test",
     )
     test_dataloader = DataLoader(dataset, batch_size=args.batch_size)
 
     model = get_prior_model()
     model, test_dataloader = accelerator.prepare(model, test_dataloader)
-    model.load_state_dict(torch.load(os.path.join(base_dir, "checkpoints", "prior_ema.pt"), map_location=device, weights_only=True))
+
+    model.load_state_dict(
+        torch.load(
+            os.path.join(base_dir, "checkpoints", "prior_ema.pt"),
+            map_location=device,
+            weights_only=True,
+        )
+    )
     model.eval()
 
-    diffusion = ColdDiffusionEmbeds(device=device)
-    cos_sim_t_list, cos_sim_d_list = [], []
-    top1_acc_t_list, top1_acc_d_list = [], []
+    diffusion = ColdDiffusionEmbeds(alpha_max=args.alpha_max, device=device)
 
-    for e1, e2, _, _ in test_dataloader:
-        superimposed = e1 * (1 - args.alpha_init) + e2 * args.alpha_init
-        scale = torch.norm(e1, p=2, dim=-1, keepdim=True)
-        superimposed = torch.nn.functional.normalize(superimposed, p=2, dim=-1) * scale
-        pred_e1, pred_e2 = diffusion.sample(model, superimposed, args.alpha_init)
+    report = run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode="Regular")
 
-        cos_sim_t_list.append(F.cosine_similarity(pred_e1, e1, dim=-1).mean().item())
-        cos_sim_d_list.append(F.cosine_similarity(pred_e2, e2, dim=-1).mean().item())
-
-        pred_e1_norm = F.normalize(pred_e1, dim=-1)
-        e1_norm = F.normalize(e1, dim=-1)
-        sim_matrix_t = pred_e1_norm @ e1_norm.T
-        top1_t = (sim_matrix_t.argmax(dim=1) == torch.arange(e1.shape[0], device=device)).float().mean().item()
-        top1_acc_t_list.append(top1_t)
-
-        pred_e2_norm = F.normalize(pred_e2, dim=-1)
-        e2_norm = F.normalize(e2, dim=-1)
-        sim_matrix_d = pred_e2_norm @ e2_norm.T
-        top1_d = (sim_matrix_d.argmax(dim=1) == torch.arange(e2.shape[0], device=device)).float().mean().item()
-        top1_acc_d_list.append(top1_d)
-
-    metrics_report = (
-        f"--- Regular Evaluation Metrics ---\n"
-        f"Cosine Sim Target: {np.mean(cos_sim_t_list):.4f}\n"
-        f"Cosine Sim Deduced: {np.mean(cos_sim_d_list):.4f}\n"
-        f"Top-1 Acc Target: {np.mean(top1_acc_t_list):.4f}\n"
-        f"Top-1 Acc Deduced: {np.mean(top1_acc_d_list):.4f}\n"
-    )
-
-    img_report = run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode="Regular")
-    metrics_report += img_report
-
-    print(f'\n{metrics_report}')
-    with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
-        f.write(metrics_report)
+    print(f"\n{report}")
+    with open(os.path.join(base_dir, "results", "final_eval.txt"), "w") as f:
+        f.write(report)
 
 def one_shot_eval(args):
     accelerator = Accelerator()
@@ -196,69 +191,34 @@ def one_shot_eval(args):
     base_dir = os.path.join("experiments", args.run_name)
 
     dataset = EmbeddingDataset(
-        data_dir=args.data_dir, 
-        image_dir1=args.image_dir1, 
-        image_dir2=args.image_dir2, 
-        partition='test'
+        data_dir=args.data_dir,
+        image_dir1=args.image_dir1,
+        image_dir2=args.image_dir2,
+        partition="test",
     )
     test_dataloader = DataLoader(dataset, batch_size=args.batch_size)
 
     model = get_prior_model()
     model, test_dataloader = accelerator.prepare(model, test_dataloader)
-    model.load_state_dict(torch.load(os.path.join(base_dir, "checkpoints", "prior_ema.pt"), map_location=device, weights_only=True))
+
+    model.load_state_dict(
+        torch.load(
+            os.path.join(base_dir, "checkpoints", "prior_ema.pt"),
+            map_location=device,
+            weights_only=True,
+        )
+    )
     model.eval()
 
-    diffusion = ColdDiffusionEmbeds(device=device)
-    cos_sim_t_list, cos_sim_d_list = [], []
-    top1_acc_t_list, top1_acc_d_list = [], []
+    diffusion = ColdDiffusionEmbeds(alpha_max=args.alpha_max, device=device)
 
-    for e1, e2, _, _ in test_dataloader:
-        n = len(e1)
-        S = e1 * (1 - args.alpha_init) + e2 * args.alpha_init
-        scale = torch.norm(e1, p=2, dim=-1, keepdim=True)
-        S = torch.nn.functional.normalize(S, p=2, dim=-1) * scale
-        init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
-        t = (torch.ones(n) * init_timestep).long().to(device)
+    report = run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode="OneShot")
 
-        with torch.no_grad():
-            pred_e1 = model(hidden_states=S, timestep=t, proj_embedding=S).predicted_image_embedding.squeeze(1)
-            pred_e2 = (S - (1 - args.alpha_init) * pred_e1) / args.alpha_init
-
-        cos_sim_t_list.append(F.cosine_similarity(pred_e1, e1, dim=-1).mean().item())
-        cos_sim_d_list.append(F.cosine_similarity(pred_e2, e2, dim=-1).mean().item())
-
-        pred_e1_norm = F.normalize(pred_e1, dim=-1)
-        e1_norm = F.normalize(e1, dim=-1)
-        sim_matrix_t = pred_e1_norm @ e1_norm.T
-        top1_t = (sim_matrix_t.argmax(dim=1) == torch.arange(n, device=device)).float().mean().item()
-        top1_acc_t_list.append(top1_t)
-
-        pred_e2_norm = F.normalize(pred_e2, dim=-1)
-        e2_norm = F.normalize(e2, dim=-1)
-        sim_matrix_d = pred_e2_norm @ e2_norm.T
-        top1_d = (sim_matrix_d.argmax(dim=1) == torch.arange(n, device=device)).float().mean().item()
-        top1_acc_d_list.append(top1_d)
-
-    metrics_report = (
-        f"--- One-Shot Evaluation Metrics ---\n"
-        f"Cosine Sim Target: {np.mean(cos_sim_t_list):.4f}\n"
-        f"Cosine Sim Deduced: {np.mean(cos_sim_d_list):.4f}\n"
-        f"Top-1 Acc Target: {np.mean(top1_acc_t_list):.4f}\n"
-        f"Top-1 Acc Deduced: {np.mean(top1_acc_d_list):.4f}\n"
-    )
-
-    img_report = run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode="Regular")
-    metrics_report += img_report
-
-    print(f"\n{metrics_report}")
-    with open(os.path.join(base_dir, "results", "one_shot_metrics.txt"), "w") as f:
-        f.write(metrics_report)
+    print(f"\n{report}")
+    with open(os.path.join(base_dir, "results", "one_shot_eval.txt"), "w") as f:
+        f.write(report)
 
 def test_decoder(args):
-    """
-    Sanity-check the matched UnCLIP image encoder + decoder on real images only.
-    This should be run before trusting any averaged/predicted embeddings.
-    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Starting decoder sanity check on {device}...")
 
@@ -312,7 +272,6 @@ def test_decoder(args):
     real_2_t = process_to_64(real_img2)
     dec_2_t = process_to_64(dec_img_2)
 
-    # Order: [Real 1] [Decoded 1] [Real 2] [Decoded 2]
     row_grid = torch.cat([real_1_t, dec_1_t, real_2_t, dec_2_t], dim=2)
 
     base_dir = os.path.join("experiments", args.run_name, "results")
@@ -336,9 +295,9 @@ def launch():
     parser.add_argument('--lr', default=1e-4, help='Learning rate', type=float, required=False)
 
     args = parser.parse_args()
-    #train(args)
-    #one_shot_eval(args)
-    #eval(args)
+    train(args)
+    one_shot_eval(args)
+    eval(args)
     test_decoder(args)
 
 

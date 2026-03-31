@@ -1,7 +1,6 @@
 import os
 import torch
 import math
-import numpy as np
 import torchvision
 import pandas as pd
 import torch.nn.functional as F
@@ -9,8 +8,6 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 from torch.utils.data import Dataset
 from diffusers import PriorTransformer, StableUnCLIPImg2ImgPipeline
-from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
-from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 def setup_logging(run_name):
     base_dir = os.path.join("experiments", run_name)
@@ -49,39 +46,57 @@ class EmbeddingDataset(Dataset):
         return len(self.embeds1)
 
 class ColdDiffusionEmbeds:
-    def __init__(self, max_timesteps=10, alpha_start=0., alpha_max=0.5, device="cuda"):
+    def __init__(self, max_timesteps=10, alpha_start=0.0, alpha_max=0.5, device="cuda"):
         self.max_timesteps = max_timesteps
         self.device = device
+        self.alpha_start = alpha_start
+        self.alpha_max = alpha_max
         self.alteration_per_t = (alpha_max - alpha_start) / max_timesteps
 
     def mix_embeds(self, emb_1, emb_2, t):
-        w1 = (1. - self.alteration_per_t * t).unsqueeze(1)
-        w2 = (self.alteration_per_t * t).unsqueeze(1)
-        mixed = emb_1 * w1 + emb_2 * w2
-        
-        scale = torch.norm(emb_1, p=2, dim=-1, keepdim=True) 
-        mixed = torch.nn.functional.normalize(mixed, p=2, dim=-1) * scale
-        
-        return mixed
+        if not torch.is_tensor(t):
+            t = torch.tensor(t, device=emb_1.device)
 
-    def sample_timesteps(self, n):
-        return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
+        if t.dim() == 0:
+            t = t.expand(emb_1.shape[0])
+
+        alpha_t = self.alteration_per_t * t.float()
+        alpha_t = alpha_t.unsqueeze(1)
+
+        return emb_1 * (1.0 - alpha_t) + emb_2 * alpha_t
+
+    def sample_timesteps(self, n, max_t=None):
+        if max_t is None:
+            max_t = self.max_timesteps
+        return torch.randint(low=1, high=max_t + 1, size=(n,), device=self.device)
 
     def sample(self, model, superimposed_emb, alpha_init=0.5):
         n = len(superimposed_emb)
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
+
         model.eval()
         with torch.no_grad():
             x_t = superimposed_emb.clone()
 
             for i in reversed(range(1, init_timestep + 1)):
-                t = (torch.ones(n) * i).long().to(self.device)
-                predicted_emb = model(hidden_states=x_t, timestep=t, proj_embedding=superimposed_emb).predicted_image_embedding.squeeze(1)
-                other_emb = (superimposed_emb - (1. - alpha_init) * predicted_emb) / alpha_init
-                x_t = x_t - self.mix_embeds(predicted_emb, other_emb, t) + self.mix_embeds(predicted_emb, other_emb, t-1)
+                t = torch.full((n,), i, device=self.device, dtype=torch.long)
+
+                predicted_emb = model(
+                    hidden_states=x_t,
+                    timestep=t,
+                    proj_embedding=superimposed_emb,
+                ).predicted_image_embedding.squeeze(1)
+
+                other_emb = (superimposed_emb - (1.0 - alpha_init) * predicted_emb) / alpha_init
+
+                x_t = (
+                    x_t
+                    - self.mix_embeds(predicted_emb, other_emb, t)
+                    + self.mix_embeds(predicted_emb, other_emb, t - 1)
+                )
 
         model.train()
-        other_emb = (superimposed_emb - (1 - alpha_init) * x_t) / alpha_init
+        other_emb = (superimposed_emb - (1.0 - alpha_init) * x_t) / alpha_init
         return x_t, other_emb
 
 def get_prior_model():
@@ -138,123 +153,84 @@ def decode_embeddings_to_images(embeddings, pipeline, device):
     image_tensors = torch.stack([transform(img) for img in images]).to(device)
     return image_tensors
 
-def compute_image_metrics(gt, pred, avg, psnr_fn, ssim_fn, lpips_fn):
-    psnr_val = psnr_fn(pred, gt).item()
-    ssim_val = ssim_fn(pred, gt).item()
-
-    gt_lpips = gt * 2.0 - 1.0
-    pred_lpips = pred * 2.0 - 1.0
-    avg_lpips = avg * 2.0 - 1.0
-
-    lpips_val = lpips_fn(pred_lpips, gt_lpips).item()
-
-    dist_to_gt = lpips_val
-    dist_to_avg = lpips_fn(pred_lpips, avg_lpips).item()
-    success = 1 if dist_to_gt < dist_to_avg else 0
-
-    return psnr_val, ssim_val, lpips_val, success
-
 def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode="Regular"):
     device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    psnr_metric = PeakSignalNoiseRatio(data_range=1.0).to(device)
-    ssim_metric = StructuralSimilarityIndexMeasure(data_range=1.0).to(device)
-    lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type="vgg").to(device)
-
     decoder_pipeline = get_decoder_pipeline(device)
 
-    num_eval_images = 1
-    evaluated_count = 0
+    os.makedirs(os.path.join(base_dir, "results"), exist_ok=True)
 
-    psnr_list, ssim_list, lpips_list = [], [], []
-    success_count = 0
-    grid_images = []
+    def load_real_image_64(path):
+        img = Image.open(path).convert("RGB")
+        img = TF.to_tensor(TF.resize(img, (64, 64), antialias=True))
+        return img.unsqueeze(0).to(device)
 
-    for e1, e2, p1, p2 in test_dataloader:
-        e1, e2 = e1.to(device), e2.to(device)
-        n = len(e1)
-        S = e1 * (1 - args.alpha_init) + e2 * args.alpha_init
+    def resize_decoded(img_tensor):
+        return F.interpolate(img_tensor, size=(64, 64), mode="area")
 
-        scale = torch.norm(e1, p=2, dim=-1, keepdim=True)
-        S = torch.nn.functional.normalize(S, p=2, dim=-1) * scale
+    saved_path = None
 
-        with torch.no_grad():
+    model.eval()
+    with torch.no_grad():
+        for e1, e2, p1, p2 in test_dataloader:
+            e1 = e1.to(device)
+            e2 = e2.to(device)
+
+            S = e1 * (1.0 - args.alpha_init) + e2 * args.alpha_init
+
             if mode == "Regular":
                 pred_e1, pred_e2 = diffusion.sample(model, S, args.alpha_init)
             else:
+                n = len(e1)
                 init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
-                t = (torch.ones(n) * init_timestep).long().to(device)
+                t = torch.full((n,), init_timestep, device=device, dtype=torch.long)
+
                 pred_e1 = model(
                     hidden_states=S,
                     timestep=t,
                     proj_embedding=S,
                 ).predicted_image_embedding.squeeze(1)
-                pred_e2 = (S - (1 - args.alpha_init) * pred_e1) / args.alpha_init
 
-        for i in range(n):
-            if evaluated_count >= num_eval_images:
-                break
+                pred_e2 = (S - (1.0 - args.alpha_init) * pred_e1) / args.alpha_init
 
-            emb_p1 = pred_e1[i : i + 1]
-            emb_p2 = pred_e2[i : i + 1]
-            emb_S = S[i : i + 1]
+            # Only save one pair
+            emb_e1 = e1[0:1]
+            emb_e2 = e2[0:1]
+            emb_S = S[0:1]
+            emb_pred1 = pred_e1[0:1]
+            emb_pred2 = pred_e2[0:1]
 
-            real_img1 = Image.open(p1[i]).convert("RGB")
-            real_img2 = Image.open(p2[i]).convert("RGB")
+            real_img1 = load_real_image_64(p1[0])
+            real_img2 = load_real_image_64(p2[0])
+            real_mix = real_img1 * (1.0 - args.alpha_init) + real_img2 * args.alpha_init
 
-            gt1_img = TF.to_tensor(TF.resize(real_img1, (64, 64))).unsqueeze(0).to(device)
-            gt2_img = TF.to_tensor(TF.resize(real_img2, (64, 64))).unsqueeze(0).to(device)
+            dec_e1 = resize_decoded(decode_embeddings_to_images(emb_e1, decoder_pipeline, device))
+            dec_e2 = resize_decoded(decode_embeddings_to_images(emb_e2, decoder_pipeline, device))
+            dec_S = resize_decoded(decode_embeddings_to_images(emb_S, decoder_pipeline, device))
+            dec_pred1 = resize_decoded(decode_embeddings_to_images(emb_pred1, decoder_pipeline, device))
+            dec_pred2 = resize_decoded(decode_embeddings_to_images(emb_pred2, decoder_pipeline, device))
 
-            avg_img_large = decode_embeddings_to_images(emb_S, decoder_pipeline, device)
-            pred1_img_large = decode_embeddings_to_images(emb_p1, decoder_pipeline, device)
-            pred2_img_large = decode_embeddings_to_images(emb_p2, decoder_pipeline, device)
+            blank = torch.zeros_like(real_img1)
 
-            avg_img = F.interpolate(avg_img_large, size=(64, 64), mode="area")
-            pred1_img = F.interpolate(pred1_img_large, size=(64, 64), mode="area")
-            pred2_img = F.interpolate(pred2_img_large, size=(64, 64), mode="area")
+            tiles = [
+                real_img1.squeeze(0),
+                real_img2.squeeze(0),
+                real_mix.squeeze(0),
+                dec_e1.squeeze(0),
+                dec_e2.squeeze(0),
+                dec_S.squeeze(0),
+                dec_pred1.squeeze(0),
+                dec_pred2.squeeze(0),
+                blank.squeeze(0),
+                blank.squeeze(0),
+            ]
 
-            p, s, l, succ = compute_image_metrics(gt1_img, pred1_img, avg_img, psnr_metric, ssim_metric, lpips_metric)
-            psnr_list.append(p)
-            ssim_list.append(s)
-            lpips_list.append(l)
-            success_count += succ
-
-            p, s, l, succ = compute_image_metrics(gt2_img, pred2_img, avg_img, psnr_metric, ssim_metric, lpips_metric)
-            psnr_list.append(p)
-            ssim_list.append(s)
-            lpips_list.append(l)
-            success_count += succ
-
-            grid_images.extend(
-                [
-                    gt1_img.squeeze(0),
-                    gt2_img.squeeze(0),
-                    avg_img.squeeze(0),
-                    pred1_img.squeeze(0),
-                    pred2_img.squeeze(0),
-                ]
-            )
-            evaluated_count += 1
-
-        if evaluated_count >= num_eval_images:
+            grid_tensor = torch.stack(tiles)
+            saved_path = os.path.join(base_dir, "results", f"{mode.lower()}_10_tile_grid.png")
+            torchvision.utils.save_image(grid_tensor, saved_path, nrow=5)
             break
 
     del decoder_pipeline
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    if len(grid_images) > 0:
-        grid_tensor = torch.stack(grid_images)
-        grid_path = os.path.join(base_dir, "results", f"{mode.lower()}_1_pairs_grid.png")
-        torchvision.utils.save_image(grid_tensor, grid_path, nrow=5)
-
-    success_rate = (success_count / (num_eval_images * 2)) * 100
-
-    img_metrics_report = (
-        f"\n--- {mode} Image Evaluation Metrics (Calculated on 1 Pairs at 64x64) ---\n"
-        f"PSNR: {np.mean(psnr_list):.4f}\n"
-        f"SSIM: {np.mean(ssim_list):.4f}\n"
-        f"LPIPS: {np.mean(lpips_list):.4f}\n"
-        f"Success Rate of Reversal (%S): {success_rate:.2f}%\n"
-    )
-    return img_metrics_report
+    return f"Saved {mode} evaluation grid to: {saved_path}"
