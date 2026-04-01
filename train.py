@@ -131,7 +131,12 @@ def train(args):
                 x_t = diffusion.mix_images(images, images_add, t)
                 predicted_image = model(x_t, t).sample
 
-                loss = F.mse_loss(predicted_image, images)
+                # Calculate loss for both permutations without reducing
+                loss_1 = F.mse_loss(predicted_image, images, reduction='none').mean(dim=(1, 2, 3))
+                loss_2 = F.mse_loss(predicted_image, images_add, reduction='none').mean(dim=(1, 2, 3))
+                
+                # Take the minimum loss per sample in the batch, then average
+                loss = torch.min(loss_1, loss_2).mean()
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -163,7 +168,11 @@ def train(args):
                     val_x_t = diffusion.mix_images(val_images, val_images_add, val_t)
                     
                     val_pred = model(val_x_t, val_t).sample
-                    v_loss = F.mse_loss(val_pred, val_images)
+                    
+                    # Permutation invariant validation loss
+                    v_loss_1 = F.mse_loss(val_pred, val_images, reduction='none').mean(dim=(1, 2, 3))
+                    v_loss_2 = F.mse_loss(val_pred, val_images_add, reduction='none').mean(dim=(1, 2, 3))
+                    v_loss = torch.min(v_loss_1, v_loss_2)
                     
                     v_loss = accelerator.gather(v_loss).mean()
                     
