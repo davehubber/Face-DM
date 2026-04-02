@@ -111,11 +111,11 @@ class ColdDiffusion:
                     )
 
                 # Pass the ground truth average image into the mix_images steps
-                x_t = self.mix_images(pred_1, pred_2, t - 1, threshold_map, avg_image_device)#(
-               #     x_t
-               #     - self.mix_images(pred_1, pred_2, t, threshold_map, avg_image_device)
-               #     + self.mix_images(pred_1, pred_2, t - 1, threshold_map, avg_image_device)
-               # )
+                x_t = (
+                    x_t
+                    - self.mix_images(pred_1, pred_2, t, threshold_map, avg_image_device)
+                    + self.mix_images(pred_1, pred_2, t - 1, threshold_map, avg_image_device)
+                )
 
         model.train()
 
@@ -249,8 +249,10 @@ def train(args):
             t = diffusion.sample_timesteps(batch_size).to(device)
             threshold_map = diffusion.sample_threshold_map(batch_size, device=device)
 
+            avg_images = 0.5 * (images + images_add)
+
             with accelerator.accumulate(model):
-                x_t = diffusion.mix_images(images, images_add, t, threshold_map)
+                x_t = diffusion.mix_images(images, images_add, t, threshold_map, avg_images)
                 predicted_images = model(x_t, t).sample
 
                 loss = permutation_invariant_mse(predicted_images, images, images_add)
@@ -284,7 +286,8 @@ def train(args):
                     batch_size = val_images.shape[0]
                     val_t = diffusion.sample_timesteps(batch_size).to(device)
                     val_threshold_map = diffusion.sample_threshold_map(batch_size, device=device)
-                    val_x_t = diffusion.mix_images(val_images, val_images_add, val_t, val_threshold_map)
+                    val_avg_images = 0.5 * (val_images + val_images_add)
+                    val_x_t = diffusion.mix_images(val_images, val_images_add, val_t, val_threshold_map, val_avg_images)
 
                     val_pred = model(val_x_t, val_t).sample
                     v_loss = permutation_invariant_mse(val_pred, val_images, val_images_add)
