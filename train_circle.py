@@ -1,3 +1,4 @@
+
 import os, torch, numpy as np, math
 import torch.nn.functional as F
 import wandb
@@ -14,31 +15,57 @@ from skimage.metrics import structural_similarity, peak_signal_noise_ratio
 
 class ColdDiffusion:
     """
-    6-channel cold diffusion with cumulative random spatial averaging.
+    6-channel cold diffusion with an outside-in circular corruption mask and jittered center.
 
     State:
-        s_t = concat(x1_t, x2_t), where each branch is progressively replaced
-        by the average image at spatial positions selected by a cumulative mask.
+        s_t = concat(x1_t, x2_t), where an outer circular ring is progressively replaced
+        by the average image in both branches.
 
-    Forward randomness:
-        For each sample we draw one threshold map U ~ Uniform(0, 1) of shape [1, H, W].
-        The mask at timestep t is M_t = 1[U <= t / T], which guarantees:
-            - monotonic corruption
-            - roughly t/T of averaged spatial positions
-            - exact duplication of the average at t = T
+    Forward process:
+        - t = 0: no corruption
+        - t = T: the entire image is corrupted to the duplicated average
+        - intermediate t: pixels with distance >= r_t from the chosen center are averaged
+
+    Radius schedule:
+        r_t = (1 - t / T) * max_radius(center)
+
+    Center handling:
+        A center is sampled per sample. During training this is freshly sampled for each batch item.
+        During iterative sampling the sampled centers remain fixed for the full reverse path.
     """
 
-    def __init__(self, max_timesteps=64, img_size=64, device="cuda"):
+    def __init__(self, max_timesteps=64, img_size=64, center_jitter=6.0, device="cuda"):
         self.max_timesteps = max_timesteps
         self.img_size = img_size[0] if isinstance(img_size, tuple) else img_size
+        self.center_jitter = float(center_jitter)
         self.device = device
+        self.yy, self.xx = self._build_coordinate_grids(self.img_size, self.device)
+
+    def _build_coordinate_grids(self, img_size, device):
+        coords = torch.arange(img_size, device=device, dtype=torch.float32)
+        yy, xx = torch.meshgrid(coords, coords, indexing='ij')
+        return yy[None, None, :, :], xx[None, None, :, :]
+
+    def _ensure_grids_device(self, device):
+        if self.yy.device != device:
+            self.yy = self.yy.to(device)
+            self.xx = self.xx.to(device)
 
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
 
-    def sample_threshold_map(self, n, device=None):
+    def sample_centers(self, n, device=None):
         device = device or self.device
-        return torch.rand((n, 1, self.img_size, self.img_size), device=device)
+        base = (self.img_size - 1) / 2.0
+        if self.center_jitter <= 0:
+            cy = torch.full((n,), base, device=device)
+            cx = torch.full((n,), base, device=device)
+        else:
+            cy = base + (torch.rand(n, device=device) * 2.0 - 1.0) * self.center_jitter
+            cx = base + (torch.rand(n, device=device) * 2.0 - 1.0) * self.center_jitter
+        cy = cy.clamp(0.0, self.img_size - 1.0)
+        cx = cx.clamp(0.0, self.img_size - 1.0)
+        return torch.stack([cy, cx], dim=1)
 
     def _normalize_t(self, t, batch_size, device):
         if isinstance(t, int):
@@ -49,20 +76,42 @@ class ColdDiffusion:
             t = t.to(device).long()
         return t.clamp_(0, self.max_timesteps)
 
-    def get_mask(self, threshold_map, t):
-        batch_size = threshold_map.shape[0]
-        device = threshold_map.device
+    def _max_radius_from_centers(self, centers):
+        cy = centers[:, 0]
+        cx = centers[:, 1]
+        h = float(self.img_size - 1)
+        w = float(self.img_size - 1)
+        d1 = torch.sqrt(cy ** 2 + cx ** 2)
+        d2 = torch.sqrt(cy ** 2 + (w - cx) ** 2)
+        d3 = torch.sqrt((h - cy) ** 2 + cx ** 2)
+        d4 = torch.sqrt((h - cy) ** 2 + (w - cx) ** 2)
+        return torch.maximum(torch.maximum(d1, d2), torch.maximum(d3, d4))
+
+    def get_mask(self, centers, t, batch_size, device):
+        self._ensure_grids_device(device)
         t = self._normalize_t(t, batch_size, device)
         ratio = (t.float() / float(self.max_timesteps)).view(-1, 1, 1, 1)
-        return (threshold_map <= ratio).float()
 
-    def mix_images(self, image_1, image_2, t, threshold_map):
+        cy = centers[:, 0].view(-1, 1, 1, 1)
+        cx = centers[:, 1].view(-1, 1, 1, 1)
+        dist = torch.sqrt((self.yy - cy) ** 2 + (self.xx - cx) ** 2)
+
+        max_radius = self._max_radius_from_centers(centers).view(-1, 1, 1, 1)
+        radius = (1.0 - ratio) * max_radius
+        return (dist >= radius).float()
+
+    def mix_images(self, image_1, image_2, t, centers):
         """
         Returns the 6-channel corrupted state:
             concat(x1_t, x2_t)
+        where pixels outside the shrinking radius are replaced by the average.
         """
+        batch_size = image_1.shape[0]
+        device = image_1.device
+
         avg = 0.5 * (image_1 + image_2)
-        mask = self.get_mask(threshold_map, t)
+        mask = self.get_mask(centers, t, batch_size, device)
+
         x1_t = image_1 * (1.0 - mask) + avg * mask
         x2_t = image_2 * (1.0 - mask) + avg * mask
         return torch.cat([x1_t, x2_t], dim=1)
@@ -70,12 +119,12 @@ class ColdDiffusion:
     def state_from_average(self, avg_image):
         return torch.cat([avg_image, avg_image], dim=1)
 
-    def _resolve_order_from_current_state(self, current_state, pred_1, pred_2, t, threshold_map):
+    def _resolve_order_from_current_state(self, current_state, pred_1, pred_2, t, centers):
         """
         Choose the branch ordering whose re-corruption best matches the current 6-channel state.
         """
-        keep_state = self.mix_images(pred_1, pred_2, t, threshold_map)
-        swap_state = self.mix_images(pred_2, pred_1, t, threshold_map)
+        keep_state = self.mix_images(pred_1, pred_2, t, centers)
+        swap_state = self.mix_images(pred_2, pred_1, t, centers)
 
         keep_dist = ((current_state - keep_state) ** 2).mean(dim=(1, 2, 3))
         swap_dist = ((current_state - swap_state) ** 2).mean(dim=(1, 2, 3))
@@ -86,22 +135,17 @@ class ColdDiffusion:
         ordered_2 = torch.where(use_swap_expanded, pred_1, pred_2)
         return ordered_1, ordered_2, use_swap
 
-    def sample(self, model, average_image, track_order=True, threshold_map=None):
+    def sample(self, model, average_image, track_order=True, centers=None):
         """
         Reverse process from s_T = concat(avg, avg) down to s_0, using TACOs update:
             s_{t-1} = s_t - F_t(pred) + F_{t-1}(pred)
-
-        Note:
-            At t = T, the current state is duplicated average, so both branch orderings are
-            indistinguishable. That is fine: we keep the model's raw order at that step.
-            From the next step onward, ordering is resolved against the current state.
         """
         n = len(average_image)
         model.eval()
 
         with torch.no_grad():
             x_t = self.state_from_average(average_image.to(self.device))
-            threshold_map = threshold_map if threshold_map is not None else self.sample_threshold_map(n, device=self.device)
+            centers = centers if centers is not None else self.sample_centers(n, device=self.device)
 
             for i in reversed(range(1, self.max_timesteps + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
@@ -110,13 +154,13 @@ class ColdDiffusion:
 
                 if track_order and i < self.max_timesteps:
                     pred_1, pred_2, _ = self._resolve_order_from_current_state(
-                        x_t, pred_1, pred_2, t, threshold_map
+                        x_t, pred_1, pred_2, t, centers
                     )
 
                 x_t = (
                     x_t
-                    - self.mix_images(pred_1, pred_2, t, threshold_map)
-                    + self.mix_images(pred_1, pred_2, t - 1, threshold_map)
+                    - self.mix_images(pred_1, pred_2, t, centers)
+                    + self.mix_images(pred_1, pred_2, t - 1, centers)
                 )
 
         model.train()
@@ -166,10 +210,6 @@ def permutation_invariant_mse(predicted, target_1, target_2):
 
 
 def reorder_to_match_targets(pred_1, pred_2, target_1, target_2):
-    """
-    Reorder predictions per sample so branch 1 matches target_1 and branch 2 matches target_2
-    as well as possible. This is only for evaluation / visualization.
-    """
     keep = ((pred_1 - target_1) ** 2).mean(dim=(1, 2, 3)) + ((pred_2 - target_2) ** 2).mean(dim=(1, 2, 3))
     swap = ((pred_1 - target_2) ** 2).mean(dim=(1, 2, 3)) + ((pred_2 - target_1) ** 2).mean(dim=(1, 2, 3))
 
@@ -213,6 +253,7 @@ def train(args):
     diffusion = ColdDiffusion(
         max_timesteps=args.max_timesteps,
         img_size=args.image_size,
+        center_jitter=args.center_jitter,
         device=device
     )
 
@@ -249,10 +290,9 @@ def train(args):
         for _, (images, images_add) in enumerate(train_dataloader):
             batch_size = images.shape[0]
             t = diffusion.sample_timesteps(batch_size).to(device)
-            threshold_map = diffusion.sample_threshold_map(batch_size, device=device)
 
             with accelerator.accumulate(model):
-                x_t = diffusion.mix_images(images, images_add, t, threshold_map)
+                x_t = diffusion.mix_images(images, images_add, t)
                 predicted_images = model(x_t, t).sample
 
                 loss = permutation_invariant_mse(predicted_images, images, images_add)
@@ -285,8 +325,7 @@ def train(args):
                 for val_images, val_images_add in test_dataloader:
                     batch_size = val_images.shape[0]
                     val_t = diffusion.sample_timesteps(batch_size).to(device)
-                    val_threshold_map = diffusion.sample_threshold_map(batch_size, device=device)
-                    val_x_t = diffusion.mix_images(val_images, val_images_add, val_t, val_threshold_map)
+                    val_x_t = diffusion.mix_images(val_images, val_images_add, val_t)
 
                     val_pred = model(val_x_t, val_t).sample
                     v_loss = permutation_invariant_mse(val_pred, val_images, val_images_add)
@@ -358,6 +397,7 @@ def eval(args):
     diffusion = ColdDiffusion(
         max_timesteps=args.max_timesteps,
         img_size=args.image_size,
+        center_jitter=args.center_jitter,
         device=device
     )
     lpips_model = lpips.LPIPS(net='alex').to(device)
@@ -473,6 +513,7 @@ def one_shot_eval(args):
     diffusion = ColdDiffusion(
         max_timesteps=args.max_timesteps,
         img_size=args.image_size,
+        center_jitter=args.center_jitter,
         device=device
     )
     lpips_model = lpips.LPIPS(net='alex').to(device)
@@ -578,7 +619,8 @@ def launch():
     parser.add_argument('--partition_file', help='CSV file with test indexes', required=True)
 
     parser.add_argument('--image_size', default=64, type=int, help='Dimension of the images', required=False)
-    parser.add_argument('--max_timesteps', default=64, type=int, help='Number of cold diffusion timesteps for cumulative random masking', required=False)
+    parser.add_argument('--max_timesteps', default=64, type=int, help='Number of cold diffusion timesteps for outside-in circular corruption', required=False)
+    parser.add_argument('--center_jitter', default=6.0, type=float, help='Maximum absolute center offset in pixels from the image center. Use 0 for a fixed center.', required=False)
     parser.add_argument('--track_sampling_order', action='store_true', help='Resolve branch ordering during iterative TACOs sampling', required=False)
 
     parser.add_argument('--batch_size', default=16, help='Batch size', type=int, required=False)
@@ -587,8 +629,8 @@ def launch():
     parser.add_argument('--device', default='cuda', help='Device, choose between [cuda, cpu]', required=False)
 
     # Kept only so old command lines do not immediately break.
-    parser.add_argument('--alpha_max', default=0.5, type=float, help='Unused in random-mask experiment', required=False)
-    parser.add_argument('--alpha_init', default=0.5, type=float, help='Unused in random-mask experiment', required=False)
+    parser.add_argument('--alpha_max', default=0.5, type=float, help='Unused in outside-in jittered-circle experiment', required=False)
+    parser.add_argument('--alpha_init', default=0.5, type=float, help='Unused in outside-in jittered-circle experiment', required=False)
 
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)

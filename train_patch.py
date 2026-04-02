@@ -1,3 +1,4 @@
+
 import os, torch, numpy as np, math
 import torch.nn.functional as F
 import wandb
@@ -14,31 +15,39 @@ from skimage.metrics import structural_similarity, peak_signal_noise_ratio
 
 class ColdDiffusion:
     """
-    6-channel cold diffusion with cumulative random spatial averaging.
+    6-channel cold diffusion with cumulative random patch averaging.
 
     State:
         s_t = concat(x1_t, x2_t), where each branch is progressively replaced
-        by the average image at spatial positions selected by a cumulative mask.
+        by the average image over spatially coherent patches selected by a cumulative mask.
 
     Forward randomness:
-        For each sample we draw one threshold map U ~ Uniform(0, 1) of shape [1, H, W].
-        The mask at timestep t is M_t = 1[U <= t / T], which guarantees:
+        For each sample we draw one threshold map U ~ Uniform(0, 1) over the patch grid.
+        The patch mask at timestep t is M_t = 1[U <= t / T], then upsampled to image space.
+        This guarantees:
             - monotonic corruption
-            - roughly t/T of averaged spatial positions
+            - roughly t/T of patches averaged
             - exact duplication of the average at t = T
     """
 
-    def __init__(self, max_timesteps=64, img_size=64, device="cuda"):
+    def __init__(self, max_timesteps=64, img_size=64, patch_size=4, device="cuda"):
         self.max_timesteps = max_timesteps
         self.img_size = img_size[0] if isinstance(img_size, tuple) else img_size
+        self.patch_size = patch_size
         self.device = device
+
+        if self.img_size % self.patch_size != 0:
+            raise ValueError(f"img_size ({self.img_size}) must be divisible by patch_size ({self.patch_size})")
+
+        self.patch_h = self.img_size // self.patch_size
+        self.patch_w = self.img_size // self.patch_size
 
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
 
     def sample_threshold_map(self, n, device=None):
         device = device or self.device
-        return torch.rand((n, 1, self.img_size, self.img_size), device=device)
+        return torch.rand((n, 1, self.patch_h, self.patch_w), device=device)
 
     def _normalize_t(self, t, batch_size, device):
         if isinstance(t, int):
@@ -54,7 +63,8 @@ class ColdDiffusion:
         device = threshold_map.device
         t = self._normalize_t(t, batch_size, device)
         ratio = (t.float() / float(self.max_timesteps)).view(-1, 1, 1, 1)
-        return (threshold_map <= ratio).float()
+        patch_mask = (threshold_map <= ratio).float()
+        return patch_mask.repeat_interleave(self.patch_size, dim=2).repeat_interleave(self.patch_size, dim=3)
 
     def mix_images(self, image_1, image_2, t, threshold_map):
         """
@@ -90,11 +100,6 @@ class ColdDiffusion:
         """
         Reverse process from s_T = concat(avg, avg) down to s_0, using TACOs update:
             s_{t-1} = s_t - F_t(pred) + F_{t-1}(pred)
-
-        Note:
-            At t = T, the current state is duplicated average, so both branch orderings are
-            indistinguishable. That is fine: we keep the model's raw order at that step.
-            From the next step onward, ordering is resolved against the current state.
         """
         n = len(average_image)
         model.eval()
@@ -213,6 +218,7 @@ def train(args):
     diffusion = ColdDiffusion(
         max_timesteps=args.max_timesteps,
         img_size=args.image_size,
+        patch_size=args.patch_size,
         device=device
     )
 
@@ -358,6 +364,7 @@ def eval(args):
     diffusion = ColdDiffusion(
         max_timesteps=args.max_timesteps,
         img_size=args.image_size,
+        patch_size=args.patch_size,
         device=device
     )
     lpips_model = lpips.LPIPS(net='alex').to(device)
@@ -473,6 +480,7 @@ def one_shot_eval(args):
     diffusion = ColdDiffusion(
         max_timesteps=args.max_timesteps,
         img_size=args.image_size,
+        patch_size=args.patch_size,
         device=device
     )
     lpips_model = lpips.LPIPS(net='alex').to(device)
@@ -578,7 +586,8 @@ def launch():
     parser.add_argument('--partition_file', help='CSV file with test indexes', required=True)
 
     parser.add_argument('--image_size', default=64, type=int, help='Dimension of the images', required=False)
-    parser.add_argument('--max_timesteps', default=64, type=int, help='Number of cold diffusion timesteps for cumulative random masking', required=False)
+    parser.add_argument('--max_timesteps', default=64, type=int, help='Number of cold diffusion timesteps for cumulative random patch masking', required=False)
+    parser.add_argument('--patch_size', default=4, type=int, help='Patch size for the cumulative random patch mask. For 64x64, 4 gives a 16x16 patch grid.', required=False)
     parser.add_argument('--track_sampling_order', action='store_true', help='Resolve branch ordering during iterative TACOs sampling', required=False)
 
     parser.add_argument('--batch_size', default=16, help='Batch size', type=int, required=False)
@@ -587,8 +596,8 @@ def launch():
     parser.add_argument('--device', default='cuda', help='Device, choose between [cuda, cpu]', required=False)
 
     # Kept only so old command lines do not immediately break.
-    parser.add_argument('--alpha_max', default=0.5, type=float, help='Unused in random-mask experiment', required=False)
-    parser.add_argument('--alpha_init', default=0.5, type=float, help='Unused in random-mask experiment', required=False)
+    parser.add_argument('--alpha_max', default=0.5, type=float, help='Unused in random-patch experiment', required=False)
+    parser.add_argument('--alpha_init', default=0.5, type=float, help='Unused in random-patch experiment', required=False)
 
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
