@@ -1,0 +1,33 @@
+Size of train: 35945
+Size of test: 5000
+Size of test: 5000
+Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]
+Loading model from: /nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/lpips/weights/v0.1/alex.pth
+
+--- Iterative Evaluation Metrics (Entire Test Set) ---
+SSIM Target: 0.7245
+SSIM Deduced: 0.6668
+PSNR Target: 19.7170
+PSNR Deduced: 19.7614
+LPIPS Target: 0.0963
+LPIPS Deduced: 0.1040
+Success Rate of Reversal Target (%S): 90.90%
+Success Rate of Reversal Deduced (%S): 92.60%
+
+Size of test: 5000
+Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]
+Loading model from: /nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/lpips/weights/v0.1/alex.pth
+
+--- One-Shot Evaluation Metrics (Entire Test Set) ---
+SSIM Target: 0.7144
+SSIM Deduced: 0.6536
+PSNR Target: 19.4871
+PSNR Deduced: 19.4922
+LPIPS Target: 0.1078
+LPIPS Deduced: 0.1155
+Success Rate of Reversal Target (%S): 92.52%
+Success Rate of Reversal Deduced (%S): 92.92%
+
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mavg_flowers_randPixelSwap[0m at: [34mhttps://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/fb1ypkql[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb/run-20260402_145208-fb1ypkql/logs[0m
