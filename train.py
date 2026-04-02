@@ -56,26 +56,26 @@ class ColdDiffusion:
         ratio = (t.float() / float(self.max_timesteps)).view(-1, 1, 1, 1)
         return (threshold_map <= ratio).float()
 
-    def mix_images(self, image_1, image_2, t, threshold_map):
+    def mix_images(self, image_1, image_2, t, threshold_map, avg_image):
         """
         Returns the 6-channel corrupted state:
             concat(x1_t, x2_t)
+        Uses the provided ground-truth average image instead of calculating it.
         """
-        avg = 0.5 * (image_1 + image_2)
         mask = self.get_mask(threshold_map, t)
-        x1_t = image_1 * (1.0 - mask) + avg * mask
-        x2_t = image_2 * (1.0 - mask) + avg * mask
+        x1_t = image_1 * (1.0 - mask) + avg_image * mask
+        x2_t = image_2 * (1.0 - mask) + avg_image * mask
         return torch.cat([x1_t, x2_t], dim=1)
 
     def state_from_average(self, avg_image):
         return torch.cat([avg_image, avg_image], dim=1)
 
-    def _resolve_order_from_current_state(self, current_state, pred_1, pred_2, t, threshold_map):
+    def _resolve_order_from_current_state(self, current_state, pred_1, pred_2, t, threshold_map, avg_image):
         """
         Choose the branch ordering whose re-corruption best matches the current 6-channel state.
         """
-        keep_state = self.mix_images(pred_1, pred_2, t, threshold_map)
-        swap_state = self.mix_images(pred_2, pred_1, t, threshold_map)
+        keep_state = self.mix_images(pred_1, pred_2, t, threshold_map, avg_image)
+        swap_state = self.mix_images(pred_2, pred_1, t, threshold_map, avg_image)
 
         keep_dist = ((current_state - keep_state) ** 2).mean(dim=(1, 2, 3))
         swap_dist = ((current_state - swap_state) ** 2).mean(dim=(1, 2, 3))
@@ -90,17 +90,13 @@ class ColdDiffusion:
         """
         Reverse process from s_T = concat(avg, avg) down to s_0, using TACOs update:
             s_{t-1} = s_t - F_t(pred) + F_{t-1}(pred)
-
-        Note:
-            At t = T, the current state is duplicated average, so both branch orderings are
-            indistinguishable. That is fine: we keep the model's raw order at that step.
-            From the next step onward, ordering is resolved against the current state.
         """
         n = len(average_image)
         model.eval()
 
         with torch.no_grad():
-            x_t = self.state_from_average(average_image.to(self.device))
+            avg_image_device = average_image.to(self.device)
+            x_t = self.state_from_average(avg_image_device)
             threshold_map = threshold_map if threshold_map is not None else self.sample_threshold_map(n, device=self.device)
 
             for i in reversed(range(1, self.max_timesteps + 1)):
@@ -109,15 +105,17 @@ class ColdDiffusion:
                 pred_1, pred_2 = predicted[:, :3], predicted[:, 3:]
 
                 if track_order and i < self.max_timesteps:
+                    # Pass the ground truth average image into the resolver
                     pred_1, pred_2, _ = self._resolve_order_from_current_state(
-                        x_t, pred_1, pred_2, t, threshold_map
+                        x_t, pred_1, pred_2, t, threshold_map, avg_image_device
                     )
 
-                x_t = (
-                    x_t
-                    - self.mix_images(pred_1, pred_2, t, threshold_map)
-                    + self.mix_images(pred_1, pred_2, t - 1, threshold_map)
-                )
+                # Pass the ground truth average image into the mix_images steps
+                x_t = self.mix_images(pred_1, pred_2, t - 1, threshold_map, avg_image_device)#(
+               #     x_t
+               #     - self.mix_images(pred_1, pred_2, t, threshold_map, avg_image_device)
+               #     + self.mix_images(pred_1, pred_2, t - 1, threshold_map, avg_image_device)
+               # )
 
         model.train()
 
@@ -593,9 +591,9 @@ def launch():
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
 
-    train(args)
+    #train(args)
     eval(args)
-    one_shot_eval(args)
+    #one_shot_eval(args)
 
 
 if __name__ == '__main__':
