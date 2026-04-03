@@ -101,7 +101,7 @@ def analyze_and_decode_embeddings(args):
             noise_level=0, 
             num_inference_steps=20,
             generator=generator
-        ).images
+        ).images[0]
 
     image_path = os.path.join(args.output_dir, "decoded_average_embedding.png")
     decoded_image.save(image_path)
