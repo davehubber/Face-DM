@@ -190,7 +190,7 @@ def train(args):
     base_dir = setup_logging(args.run_name)
 
     accelerator = Accelerator(
-        mixed_precision="fp16",
+        mixed_precision="no",
         gradient_accumulation_steps=1,
     )
     device = accelerator.device
