@@ -329,7 +329,7 @@ def launch():
     parser.add_argument('--lr', default=1e-4, help='Learning rate', type=float, required=False)
 
     args = parser.parse_args()
-    #train(args)
+    train(args)
     one_shot_eval(args)
     eval(args)
     test_decoder(args)
