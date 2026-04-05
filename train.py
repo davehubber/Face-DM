@@ -81,7 +81,12 @@ def train(args):
                     proj_embedding=superimposed,
                 ).predicted_image_embedding.squeeze(1)
 
-                loss = F.mse_loss(predicted_emb, e1)
+                # Calculate unreduced MSE for both targets
+                loss_e1 = F.mse_loss(predicted_emb, e1, reduction="none").mean(dim=1)
+                loss_e2 = F.mse_loss(predicted_emb, e2, reduction="none").mean(dim=1)
+                
+                # Take the minimum loss per sample in the batch (Permutation Invariance)
+                loss = torch.minimum(loss_e1, loss_e2).mean()
 
                 accelerator.backward(loss)
 
@@ -114,7 +119,10 @@ def train(args):
                             proj_embedding=val_sup,
                         ).predicted_image_embedding.squeeze(1)
 
-                        v_loss = F.mse_loss(val_pred, v_e1)
+                        v_loss_e1 = F.mse_loss(val_pred, v_e1, reduction="none").mean(dim=1)
+                        v_loss_e2 = F.mse_loss(val_pred, v_e2, reduction="none").mean(dim=1)
+                        
+                        v_loss = torch.minimum(v_loss_e1, v_loss_e2)
                         v_loss = accelerator.gather(v_loss).mean()
                         val_loss += v_loss.item()
                         val_steps += 1
