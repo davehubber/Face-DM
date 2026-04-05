@@ -277,6 +277,10 @@ def test_decoder(args):
 
     real_img1 = Image.open(path_1).convert("RGB")
     real_img2 = Image.open(path_2).convert("RGB")
+
+    if real_img1.size != real_img2.size:
+        real_img2 = real_img2.resize(real_img1.size, Image.Resampling.LANCZOS)
+
     avg_real_img = Image.blend(real_img1, real_img2, alpha=0.5)
 
     print("Loading matched UnCLIP pipeline...")
@@ -284,7 +288,7 @@ def test_decoder(args):
 
     print("Encoding the real images with the pipeline's own encoder...")
     with torch.no_grad():
-        reencoded = encode_pil_images_to_embeddings([real_img1, real_img2], pipeline, device)
+        reencoded = encode_pil_images_to_embeddings([real_img1, real_img2, avg_real_img], pipeline, device)
         emb_1 = reencoded[0:1]
         emb_2 = reencoded[1:2]
         avg_emb = reencoded[2:3]
@@ -348,9 +352,9 @@ def launch():
     parser.add_argument('--lr', default=1e-4, help='Learning rate', type=float, required=False)
 
     args = parser.parse_args()
-    train(args)
-    one_shot_eval(args)
-    eval(args)
+    #train(args)
+    #one_shot_eval(args)
+    #eval(args)
     test_decoder(args)
 
 
