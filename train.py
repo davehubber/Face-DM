@@ -277,6 +277,7 @@ def test_decoder(args):
 
     real_img1 = Image.open(path_1).convert("RGB")
     real_img2 = Image.open(path_2).convert("RGB")
+    avg_real_img = Image.blend(real_img1, real_img2, alpha=0.5)
 
     print("Loading matched UnCLIP pipeline...")
     pipeline = get_decoder_pipeline(device)
@@ -286,6 +287,7 @@ def test_decoder(args):
         reencoded = encode_pil_images_to_embeddings([real_img1, real_img2], pipeline, device)
         emb_1 = reencoded[0:1]
         emb_2 = reencoded[1:2]
+        avg_emb = reencoded[2:3]
 
     print("Decoding the re-encoded embeddings...")
     with torch.no_grad():
@@ -303,6 +305,13 @@ def test_decoder(args):
             num_inference_steps=20,
         ).images[0]
 
+        dec_avg_img = pipeline(
+            prompt=[""],
+            image_embeds=avg_emb.to(dtype=pipeline.unet.dtype),
+            noise_level=0,
+            num_inference_steps=20,
+        ).images[0]
+
     def process_to_64(img):
         if not isinstance(img, torch.Tensor):
             img = TF.to_tensor(img)
@@ -313,8 +322,10 @@ def test_decoder(args):
     dec_1_t = process_to_64(dec_img_1)
     real_2_t = process_to_64(real_img2)
     dec_2_t = process_to_64(dec_img_2)
+    avg_real_t = process_to_64(avg_real_img)
+    dec_avg_t = process_to_64(dec_avg_img)
 
-    row_grid = torch.cat([real_1_t, dec_1_t, real_2_t, dec_2_t], dim=2)
+    row_grid = torch.cat([real_1_t, dec_1_t, real_2_t, dec_2_t, avg_real_t, dec_avg_t], dim=2)
 
     base_dir = os.path.join("experiments", args.run_name, "results")
     os.makedirs(base_dir, exist_ok=True)
