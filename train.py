@@ -17,13 +17,16 @@ class ColdDiffusion:
 
     State:
         s_t = concat(x1_t, x2_t), where each branch is progressively replaced
-        by the average image at spatial positions selected by a cumulative mask.
+        by the average image at spatial positions selected by its own cumulative mask.
 
     Forward randomness:
-        For each sample we draw one threshold map U ~ Uniform(0, 1) of shape [1, H, W].
-        The mask at timestep t is M_t = 1[U <= t / T], which guarantees:
+        For each sample we draw two threshold maps U1, U2 ~ Uniform(0, 1) of shape [1, H, W].
+        The masks at timestep t are:
+            M1_t = 1[U1 <= t / T]
+            M2_t = 1[U2 <= t / T]
+        which guarantees:
             - monotonic corruption
-            - roughly t/T of averaged spatial positions
+            - roughly t/T of averaged spatial positions in each branch
             - exact duplication of the average at t = T
     """
 
@@ -35,9 +38,11 @@ class ColdDiffusion:
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
 
-    def sample_threshold_map(self, n, device=None):
+    def sample_threshold_maps(self, n, device=None):
         device = device or self.device
-        return torch.rand((n, 1, self.img_size, self.img_size), device=device)
+        threshold_map_1 = torch.rand((n, 1, self.img_size, self.img_size), device=device)
+        threshold_map_2 = torch.rand((n, 1, self.img_size, self.img_size), device=device)
+        return threshold_map_1, threshold_map_2
 
     def _normalize_t(self, t, batch_size, device):
         if isinstance(t, int):
@@ -55,65 +60,47 @@ class ColdDiffusion:
         ratio = (t.float() / float(self.max_timesteps)).view(-1, 1, 1, 1)
         return (threshold_map <= ratio).float()
 
-    def mix_images(self, image_1, image_2, t, threshold_map, avg_image):
+    def mix_images(self, image_1, image_2, t, threshold_maps):
         """
         Returns the 6-channel corrupted state:
             concat(x1_t, x2_t)
-        Uses the provided ground-truth average image instead of calculating it.
+        where each branch uses its own random cumulative mask.
         """
-        mask = self.get_mask(threshold_map, t)
-        x1_t = image_1 * (1.0 - mask) + avg_image * mask
-        x2_t = image_2 * (1.0 - mask) + avg_image * mask
+        threshold_map_1, threshold_map_2 = threshold_maps
+        avg = 0.5 * (image_1 + image_2)
+        mask_1 = self.get_mask(threshold_map_1, t)
+        mask_2 = self.get_mask(threshold_map_2, t)
+        x1_t = image_1 * (1.0 - mask_1) + avg * mask_1
+        x2_t = image_2 * (1.0 - mask_2) + avg * mask_2
         return torch.cat([x1_t, x2_t], dim=1)
 
     def state_from_average(self, avg_image):
         return torch.cat([avg_image, avg_image], dim=1)
 
-    def _resolve_order_from_current_state(self, current_state, pred_1, pred_2, t, threshold_map, avg_image):
-        """
-        Choose the branch ordering whose re-corruption best matches the current 6-channel state.
-        """
-        keep_state = self.mix_images(pred_1, pred_2, t, threshold_map, avg_image)
-        swap_state = self.mix_images(pred_2, pred_1, t, threshold_map, avg_image)
-
-        keep_dist = ((current_state - keep_state) ** 2).mean(dim=(1, 2, 3))
-        swap_dist = ((current_state - swap_state) ** 2).mean(dim=(1, 2, 3))
-        use_swap = swap_dist < keep_dist
-
-        use_swap_expanded = use_swap[:, None, None, None]
-        ordered_1 = torch.where(use_swap_expanded, pred_2, pred_1)
-        ordered_2 = torch.where(use_swap_expanded, pred_1, pred_2)
-        return ordered_1, ordered_2, use_swap
-
-    def sample(self, model, average_image, track_order=True, threshold_map=None):
+    def sample(self, model, average_image, threshold_maps=None):
         """
         Reverse process from s_T = concat(avg, avg) down to s_0, using TACOs update:
             s_{t-1} = s_t - F_t(pred) + F_{t-1}(pred)
+
+        No order-tracking logic is used. Branch 1 is always treated as image 1 and
+        branch 2 as image 2 throughout training and sampling.
         """
         n = len(average_image)
         model.eval()
 
         with torch.no_grad():
-            avg_image_device = average_image.to(self.device)
-            x_t = self.state_from_average(avg_image_device)
-            threshold_map = threshold_map if threshold_map is not None else self.sample_threshold_map(n, device=self.device)
+            x_t = self.state_from_average(average_image.to(self.device))
+            threshold_maps = threshold_maps if threshold_maps is not None else self.sample_threshold_maps(n, device=self.device)
 
             for i in reversed(range(1, self.max_timesteps + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
                 predicted = model(x_t, t).sample
                 pred_1, pred_2 = predicted[:, :3], predicted[:, 3:]
 
-                if track_order and i < self.max_timesteps:
-                    # Pass the ground truth average image into the resolver
-                    pred_1, pred_2, _ = self._resolve_order_from_current_state(
-                        x_t, pred_1, pred_2, t, threshold_map, avg_image_device
-                    )
-
-                # Pass the ground truth average image into the mix_images steps
                 x_t = (
                     x_t
-                    - self.mix_images(pred_1, pred_2, t, threshold_map, avg_image_device)
-                    + self.mix_images(pred_1, pred_2, t - 1, threshold_map, avg_image_device)
+                    - self.mix_images(pred_1, pred_2, t, threshold_maps)
+                    + self.mix_images(pred_1, pred_2, t - 1, threshold_maps)
                 )
 
         model.train()
@@ -128,6 +115,7 @@ class ColdDiffusion:
         rec_2 = (rec_2 * 255).type(torch.uint8)
 
         return rec_1, rec_2
+
 
 
 def get_unet(image_size):
@@ -153,29 +141,13 @@ def get_unet(image_size):
     )
 
 
-def permutation_invariant_mse(predicted, target_1, target_2):
+
+def ordered_mse(predicted, target_1, target_2):
     pred_1, pred_2 = predicted[:, :3], predicted[:, 3:]
+    loss_1 = ((pred_1 - target_1) ** 2).mean(dim=(1, 2, 3))
+    loss_2 = ((pred_2 - target_2) ** 2).mean(dim=(1, 2, 3))
+    return (loss_1 + loss_2).mean()
 
-    loss_keep = ((pred_1 - target_1) ** 2).mean(dim=(1, 2, 3)) + ((pred_2 - target_2) ** 2).mean(dim=(1, 2, 3))
-    loss_swap = ((pred_1 - target_2) ** 2).mean(dim=(1, 2, 3)) + ((pred_2 - target_1) ** 2).mean(dim=(1, 2, 3))
-
-    return torch.minimum(loss_keep, loss_swap).mean()
-
-
-def reorder_to_match_targets(pred_1, pred_2, target_1, target_2):
-    """
-    Reorder predictions per sample so branch 1 matches target_1 and branch 2 matches target_2
-    as well as possible. This is only for evaluation / visualization.
-    """
-    keep = ((pred_1 - target_1) ** 2).mean(dim=(1, 2, 3)) + ((pred_2 - target_2) ** 2).mean(dim=(1, 2, 3))
-    swap = ((pred_1 - target_2) ** 2).mean(dim=(1, 2, 3)) + ((pred_2 - target_1) ** 2).mean(dim=(1, 2, 3))
-
-    use_swap = swap < keep
-    use_swap_expanded = use_swap[:, None, None, None]
-
-    ordered_1 = torch.where(use_swap_expanded, pred_2, pred_1)
-    ordered_2 = torch.where(use_swap_expanded, pred_1, pred_2)
-    return ordered_1, ordered_2, use_swap
 
 
 def calculate_metrics(image, add_image, result_ori_image, result_add_image):
@@ -186,11 +158,12 @@ def calculate_metrics(image, add_image, result_ori_image, result_add_image):
     return ssim_original, ssim_added, psnr_original, psnr_added
 
 
+
 def train(args):
     base_dir = setup_logging(args.run_name)
 
     accelerator = Accelerator(
-        mixed_precision="no",
+        mixed_precision="fp16",
         gradient_accumulation_steps=1,
     )
     device = accelerator.device
@@ -246,15 +219,13 @@ def train(args):
         for _, (images, images_add) in enumerate(train_dataloader):
             batch_size = images.shape[0]
             t = diffusion.sample_timesteps(batch_size).to(device)
-            threshold_map = diffusion.sample_threshold_map(batch_size, device=device)
-
-            avg_images = 0.5 * (images + images_add)
+            threshold_maps = diffusion.sample_threshold_maps(batch_size, device=device)
 
             with accelerator.accumulate(model):
-                x_t = diffusion.mix_images(images, images_add, t, threshold_map, avg_images)
+                x_t = diffusion.mix_images(images, images_add, t, threshold_maps)
                 predicted_images = model(x_t, t).sample
 
-                loss = permutation_invariant_mse(predicted_images, images, images_add)
+                loss = ordered_mse(predicted_images, images, images_add)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -284,12 +255,11 @@ def train(args):
                 for val_images, val_images_add in test_dataloader:
                     batch_size = val_images.shape[0]
                     val_t = diffusion.sample_timesteps(batch_size).to(device)
-                    val_threshold_map = diffusion.sample_threshold_map(batch_size, device=device)
-                    val_avg_images = 0.5 * (val_images + val_images_add)
-                    val_x_t = diffusion.mix_images(val_images, val_images_add, val_t, val_threshold_map, val_avg_images)
+                    val_threshold_maps = diffusion.sample_threshold_maps(batch_size, device=device)
+                    val_x_t = diffusion.mix_images(val_images, val_images_add, val_t, val_threshold_maps)
 
                     val_pred = model(val_x_t, val_t).sample
-                    v_loss = permutation_invariant_mse(val_pred, val_images, val_images_add)
+                    v_loss = ordered_mse(val_pred, val_images, val_images_add)
                     v_loss = accelerator.gather(v_loss).mean()
 
                     val_loss += v_loss.detach()
@@ -314,31 +284,21 @@ def train(args):
             sampled_images_1, sampled_images_2 = diffusion.sample(
                 unet,
                 fixed_val_average,
-                track_order=args.track_sampling_order
             )
 
-            gt_1 = fixed_val_images
-            gt_2 = fixed_val_images_add
-
-            pred_1_f = sampled_images_1.float() / 127.5 - 1.0
-            pred_2_f = sampled_images_2.float() / 127.5 - 1.0
-            pred_1_f, pred_2_f, _ = reorder_to_match_targets(pred_1_f, pred_2_f, gt_1, gt_2)
-
-            pred_1 = ((pred_1_f.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
-            pred_2 = ((pred_2_f.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
-
-            f_images = (gt_1.clamp(-1, 1) + 1) / 2
+            f_images = (fixed_val_images.clamp(-1, 1) + 1) / 2
             f_images = (f_images * 255).type(torch.uint8)
 
-            f_images_add = (gt_2.clamp(-1, 1) + 1) / 2
+            f_images_add = (fixed_val_images_add.clamp(-1, 1) + 1) / 2
             f_images_add = (f_images_add * 255).type(torch.uint8)
 
             save_path = os.path.join(base_dir, "samples", "train_fixed", f"epoch_{epoch+1}.jpg")
-            save_images(pred_1, pred_2, f_images, f_images_add, save_path)
+            save_images(sampled_images_1, sampled_images_2, f_images, f_images_add, save_path)
 
             torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "unet_ema.pt"))
 
             ema_model.restore(unet.parameters())
+
 
 
 def eval(args):
@@ -375,15 +335,10 @@ def eval(args):
         sampled_images_1, sampled_images_2 = diffusion.sample(
             model,
             avg_images,
-            track_order=args.track_sampling_order
         )
 
-        pred_1 = sampled_images_1.float() / 127.5 - 1.0
-        pred_2 = sampled_images_2.float() / 127.5 - 1.0
-        pred_1, pred_2, _ = reorder_to_match_targets(pred_1, pred_2, images, images_add)
-
-        sampled_images = ((pred_1.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
-        sampled_other_image = ((pred_2.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
+        sampled_images = sampled_images_1
+        sampled_other_image = sampled_images_2
 
         images_u8 = ((images.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
         images_add_u8 = ((images_add.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
@@ -457,6 +412,7 @@ def eval(args):
         f.write(metrics_report)
 
 
+
 def one_shot_eval(args):
     accelerator = Accelerator()
     device = accelerator.device
@@ -494,8 +450,6 @@ def one_shot_eval(args):
         with torch.no_grad():
             predicted = model(state_T, t).sample
             pred_1, pred_2 = predicted[:, :3], predicted[:, 3:]
-
-        pred_1, pred_2, _ = reorder_to_match_targets(pred_1, pred_2, images, images_add)
 
         sampled_images = ((pred_1.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
         sampled_other_image = ((pred_2.clamp(-1, 1) + 1) / 2 * 255).type(torch.uint8)
@@ -570,6 +524,7 @@ def one_shot_eval(args):
         f.write(metrics_report)
 
 
+
 def launch():
     import argparse
     parser = argparse.ArgumentParser()
@@ -579,7 +534,6 @@ def launch():
 
     parser.add_argument('--image_size', default=64, type=int, help='Dimension of the images', required=False)
     parser.add_argument('--max_timesteps', default=64, type=int, help='Number of cold diffusion timesteps for cumulative random masking', required=False)
-    parser.add_argument('--track_sampling_order', action='store_true', help='Resolve branch ordering during iterative TACOs sampling', required=False)
 
     parser.add_argument('--batch_size', default=16, help='Batch size', type=int, required=False)
     parser.add_argument('--epochs', default=1000, help='Number of epochs', type=int, required=False)
