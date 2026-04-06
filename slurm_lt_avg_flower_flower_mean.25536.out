@@ -1,0 +1,22 @@
+Aligning test dataset pairs to the global mean...
+
+--- One-Shot Evaluation Metrics (Entire Test Set) ---
+MSE Target: 0.047756
+MSE Deduced: 0.047756
+MSE Mean: 0.047756
+Cosine Similarity Target: 0.948790
+Cosine Similarity Deduced: 0.947593
+Cosine Similarity Mean: 0.948191
+Saved OneShot labeled image row to: experiments/lt_avg_flower_flower_mean/results/oneshot_8_tile_row_labeled.png
+
+Aligning test dataset pairs to the global mean...
+
+--- Regular Evaluation Metrics (Entire Test Set) ---
+MSE Target: 0.065890
+MSE Deduced: 0.065890
+MSE Mean: 0.065890
+Cosine Similarity Target: 0.930240
+Cosine Similarity Deduced: 0.930702
+Cosine Similarity Mean: 0.930471
+Saved Regular labeled image row to: experiments/lt_avg_flower_flower_mean/results/regular_8_tile_row_labeled.png
+

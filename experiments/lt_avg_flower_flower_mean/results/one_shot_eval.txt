@@ -2,7 +2,7 @@
 MSE Target: 0.047756
 MSE Deduced: 0.047756
 MSE Mean: 0.047756
-Cosine Similarity Target: 0.948791
-Cosine Similarity Deduced: 0.947594
-Cosine Similarity Mean: 0.948192
+Cosine Similarity Target: 0.948790
+Cosine Similarity Deduced: 0.947593
+Cosine Similarity Mean: 0.948191
 Saved OneShot labeled image row to: experiments/lt_avg_flower_flower_mean/results/oneshot_8_tile_row_labeled.png
