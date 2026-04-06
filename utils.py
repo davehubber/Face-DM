@@ -116,11 +116,11 @@ class ColdDiffusionEmbeds:
 
                 other_emb = (superimposed_emb - (1.0 - alpha_init) * predicted_emb) / alpha_init
 
-                x_t = self.mix_embeds(predicted_emb, other_emb, t - 1) #(
-                    #x_t
-                    #- self.mix_embeds(predicted_emb, other_emb, t)
-                    #+ self.mix_embeds(predicted_emb, other_emb, t - 1)
-                #)
+                x_t = (
+                    x_t
+                    - self.mix_embeds(predicted_emb, other_emb, t)
+                    + self.mix_embeds(predicted_emb, other_emb, t - 1)
+                )
 
         model.train()
         other_emb = (superimposed_emb - (1.0 - alpha_init) * x_t) / alpha_init
