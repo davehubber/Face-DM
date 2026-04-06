@@ -80,11 +80,12 @@ class ColdDiffusionEmbeds:
 
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
+                null_proj = torch.zeros_like(x_t)
 
                 predicted_emb = model(
                     hidden_states=x_t,
                     timestep=t,
-                    proj_embedding=superimposed_emb,
+                    proj_embedding=null_proj,
                 ).predicted_image_embedding.squeeze(1)
 
                 other_emb = (superimposed_emb - (1.0 - alpha_init) * predicted_emb) / alpha_init
@@ -224,11 +225,12 @@ def compute_embedding_metrics_over_testset(args, test_dataloader, model, diffusi
             else:
                 init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
                 t = torch.full((n,), init_timestep, device=device, dtype=torch.long)
+                null_proj = torch.zeros_like(S)
 
                 pred_e1 = model(
                     hidden_states=S,
                     timestep=t,
-                    proj_embedding=S,
+                    proj_embedding=null_proj,
                 ).predicted_image_embedding.squeeze(1)
 
                 pred_e2 = (S - (1.0 - args.alpha_init) * pred_e1) / args.alpha_init
@@ -283,11 +285,12 @@ def run_image_evaluation(args, base_dir, test_dataloader, model, diffusion, mode
             else:
                 init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
                 t = torch.full((n,), init_timestep, device=device, dtype=torch.long)
+                null_proj = torch.zeros_like(S)
 
                 pred_e1 = model(
                     hidden_states=S,
                     timestep=t,
-                    proj_embedding=S,
+                    proj_embedding=null_proj,
                 ).predicted_image_embedding.squeeze(1)
 
                 pred_e2 = (S - (1.0 - args.alpha_init) * pred_e1) / args.alpha_init

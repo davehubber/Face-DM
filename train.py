@@ -74,11 +74,12 @@ def train(args):
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_embeds(e1, e2, t)
                 superimposed = e1 * (1.0 - args.alpha_init) + e2 * args.alpha_init
+                null_proj = torch.zeros_like(x_t)
 
                 predicted_emb = model(
                     hidden_states=x_t,
                     timestep=t,
-                    proj_embedding=superimposed,
+                    proj_embedding=null_proj,
                 ).predicted_image_embedding.squeeze(1)
 
                 # Calculate unreduced MSE for both targets
@@ -112,11 +113,12 @@ def train(args):
                         val_t = diffusion.sample_timesteps(v_e1.shape[0], max_t=init_timestep)
                         val_x_t = diffusion.mix_embeds(v_e1, v_e2, val_t)
                         val_sup = v_e1 * (1.0 - args.alpha_init) + v_e2 * args.alpha_init
+                        val_null_proj = torch.zeros_like(x_t)
 
                         val_pred = model(
                             hidden_states=val_x_t,
                             timestep=val_t,
-                            proj_embedding=val_sup,
+                            proj_embedding=val_null_proj,
                         ).predicted_image_embedding.squeeze(1)
 
                         v_loss_e1 = F.mse_loss(val_pred, v_e1, reduction="none").mean(dim=1)
