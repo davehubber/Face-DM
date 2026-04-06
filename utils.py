@@ -72,7 +72,7 @@ class EmbeddingDataset(Dataset):
         return len(self.embeds1)
 
 class ColdDiffusionEmbeds:
-    def __init__(self, max_timesteps=10, alpha_start=0.0, alpha_max=0.5, device="cuda"):
+    def __init__(self, max_timesteps=100, alpha_start=0.0, alpha_max=0.5, device="cuda"):
         self.max_timesteps = max_timesteps
         self.device = device
         self.alpha_start = alpha_start
