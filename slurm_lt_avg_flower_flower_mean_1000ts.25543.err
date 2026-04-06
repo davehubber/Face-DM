@@ -1,51 +1,0 @@
-wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /nas-ctm01/homes/dacordeiro/.netrc.
-wandb: Currently logged in as: davcordeiro03 (davcordeiro03-inesc-tec) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
-wandb: setting up run lg3y5y70
-wandb: Tracking run with wandb version 0.25.0
-wandb: Run data is saved locally in /nas-ctm01/homes/dacordeiro/Face-DM/wandb/run-20260406_123742-lg3y5y70
-wandb: Run `wandb offline` to turn off syncing.
-wandb: Syncing run lt_avg_flower_flower_mean_1000ts
-wandb: ⭐️ View project at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM
-wandb: 🚀 View run at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/lg3y5y70
-Loading pipeline components...:   0%|          | 0/9 [00:00<?, ?it/s]Loading pipeline components...:  22%|██▏       | 2/9 [00:00<00:00, 14.49it/s]Loading pipeline components...:  44%|████▍     | 4/9 [00:00<00:01,  4.87it/s]
-Loading weights:   0%|          | 0/392 [00:00<?, ?it/s][A
-Loading weights:  76%|███████▌  | 297/392 [00:00<00:00, 2960.65it/s][ALoading weights: 100%|██████████| 392/392 [00:00<00:00, 2926.93it/s]
-[1mCLIPVisionModelWithProjection LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/image_encoder
-Key                                  | Status     |  | 
--------------------------------------+------------+--+-
-vision_model.embeddings.position_ids | UNEXPECTED |  | 
-
-[3mNotes:
-- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
-Loading pipeline components...:  67%|██████▋   | 6/9 [00:01<00:00,  5.46it/s]
-Loading weights:   0%|          | 0/372 [00:00<?, ?it/s][A
-Loading weights:  80%|███████▉  | 296/372 [00:00<00:00, 2883.96it/s][ALoading weights: 100%|██████████| 372/372 [00:00<00:00, 2882.56it/s]
-[1mCLIPTextModel LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/text_encoder
-Key                                | Status     |  | 
------------------------------------+------------+--+-
-text_model.embeddings.position_ids | UNEXPECTED |  | 
-
-[3mNotes:
-- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
-Loading pipeline components...:  89%|████████▉ | 8/9 [00:01<00:00,  5.77it/s]Loading pipeline components...: 100%|██████████| 9/9 [00:01<00:00,  6.57it/s]
-Loading pipeline components...:   0%|          | 0/9 [00:00<?, ?it/s]Loading pipeline components...:  22%|██▏       | 2/9 [00:00<00:00, 13.37it/s]Loading pipeline components...:  44%|████▍     | 4/9 [00:00<00:01,  4.58it/s]
-Loading weights:   0%|          | 0/392 [00:00<?, ?it/s][A
-Loading weights:  74%|███████▍  | 290/392 [00:00<00:00, 2893.84it/s][ALoading weights: 100%|██████████| 392/392 [00:00<00:00, 2882.21it/s]
-[1mCLIPVisionModelWithProjection LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/image_encoder
-Key                                  | Status     |  | 
--------------------------------------+------------+--+-
-vision_model.embeddings.position_ids | UNEXPECTED |  | 
-
-[3mNotes:
-- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
-Loading pipeline components...:  67%|██████▋   | 6/9 [00:01<00:00,  5.12it/s]
-Loading weights:   0%|          | 0/372 [00:00<?, ?it/s][A
-Loading weights:  80%|████████  | 298/372 [00:00<00:00, 2957.61it/s][ALoading weights: 100%|██████████| 372/372 [00:00<00:00, 3031.50it/s]
-[1mCLIPTextModel LOAD REPORT[0m from: /nas-ctm01/homes/dacordeiro/.cache/huggingface/hub/models--sd2-community--stable-diffusion-2-1-unclip-small/snapshots/c4fa2c555799f276765c4b293c8ff5672d388948/text_encoder
-Key                                | Status     |  | 
------------------------------------+------------+--+-
-text_model.embeddings.position_ids | UNEXPECTED |  | 
-
-[3mNotes:
-- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
-Loading pipeline components...:  89%|████████▉ | 8/9 [00:01<00:00,  5.51it/s]Loading pipeline components...: 100%|██████████| 9/9 [00:01<00:00,  6.23it/s]

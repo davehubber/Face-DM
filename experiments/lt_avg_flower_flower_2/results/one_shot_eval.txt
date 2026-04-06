@@ -1,8 +1,0 @@
---- One-Shot Evaluation Metrics (Entire Test Set) ---
-MSE Target: 0.073596
-MSE Deduced: 0.073596
-MSE Mean: 0.073596
-Cosine Similarity Target: 0.918955
-Cosine Similarity Deduced: 0.919550
-Cosine Similarity Mean: 0.919253
-Saved OneShot labeled image row to: experiments/lt_avg_flower_flower_2/results/oneshot_8_tile_row_labeled.png

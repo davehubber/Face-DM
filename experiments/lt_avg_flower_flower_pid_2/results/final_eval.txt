@@ -1,8 +1,0 @@
---- Regular Evaluation Metrics (Entire Test Set) ---
-MSE Target: 0.107495
-MSE Deduced: 0.107495
-MSE Mean: 0.107495
-Cosine Similarity Target: 0.885549
-Cosine Similarity Deduced: 0.884377
-Cosine Similarity Mean: 0.884963
-Saved Regular labeled image row to: experiments/lt_avg_flower_flower_pid_2/results/regular_8_tile_row_labeled.png

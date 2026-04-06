@@ -16,7 +16,7 @@ def setup_logging(run_name):
     return base_dir
 
 class EmbeddingDataset(Dataset):
-    def __init__(self, data_dir, image_dir1, image_dir2, partition="train", align_to_mean=True):
+    def __init__(self, data_dir, image_dir1, image_dir2, partition="train"):
         self.image_dir1 = image_dir1
         self.image_dir2 = image_dir2
 
@@ -33,32 +33,6 @@ class EmbeddingDataset(Dataset):
         self.df = pd.read_csv(os.path.join(data_dir, "partition.csv"))
         self.df = self.df[self.df["Partition"] == partition].reset_index(drop=True)
 
-        # --- NEW SORTING LOGIC ---
-        if align_to_mean:
-            print(f"Aligning {partition} dataset pairs to the global mean...")
-            
-            # 1. Calculate global mean across all embeddings
-            global_mean = torch.cat([self.embeds1, self.embeds2], dim=0).mean(dim=0)
-            
-            # 2. Compute MSE distance to the mean for both arrays
-            dist1 = F.mse_loss(self.embeds1, global_mean.unsqueeze(0).expand_as(self.embeds1), reduction="none").mean(dim=1)
-            dist2 = F.mse_loss(self.embeds2, global_mean.unsqueeze(0).expand_as(self.embeds2), reduction="none").mean(dim=1)
-            
-            # 3. Create mask where e2 is closer to the mean than e1
-            swap_mask = dist2 < dist1
-            
-            # 4. Swap embeddings using the mask
-            e1_aligned = torch.where(swap_mask.unsqueeze(1), self.embeds2, self.embeds1)
-            e2_aligned = torch.where(swap_mask.unsqueeze(1), self.embeds1, self.embeds2)
-            self.embeds1 = e1_aligned
-            self.embeds2 = e2_aligned
-            
-            # 5. Swap dataframe paths to keep image paths synced with the swapped embeddings
-            swap_idx = swap_mask.nonzero(as_tuple=True)[0].tolist()
-            temp_paths = self.df.loc[swap_idx, "Image1_Path"].copy()
-            self.df.loc[swap_idx, "Image1_Path"] = self.df.loc[swap_idx, "Image2_Path"]
-            self.df.loc[swap_idx, "Image2_Path"] = temp_paths
-
     def __getitem__(self, index):
         name1 = self.df.iloc[index]["Image1_Path"]
         name2 = self.df.iloc[index]["Image2_Path"]
@@ -72,7 +46,7 @@ class EmbeddingDataset(Dataset):
         return len(self.embeds1)
 
 class ColdDiffusionEmbeds:
-    def __init__(self, max_timesteps=1000, alpha_start=0.0, alpha_max=0.5, device="cuda"):
+    def __init__(self, max_timesteps=10, alpha_start=0.0, alpha_max=0.5, device="cuda"):
         self.max_timesteps = max_timesteps
         self.device = device
         self.alpha_start = alpha_start
