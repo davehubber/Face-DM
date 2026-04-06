@@ -1,0 +1,28 @@
+
+--- One-Shot Evaluation Metrics (Entire Test Set) ---
+MSE Target: 0.073596
+MSE Deduced: 0.073596
+MSE Mean: 0.073596
+Cosine Similarity Target: 0.918955
+Cosine Similarity Deduced: 0.919550
+Cosine Similarity Mean: 0.919253
+Saved OneShot labeled image row to: experiments/lt_avg_flower_flower_2/results/oneshot_8_tile_row_labeled.png
+
+
+--- Regular Evaluation Metrics (Entire Test Set) ---
+MSE Target: 0.090033
+MSE Deduced: 0.090033
+MSE Mean: 0.090033
+Cosine Similarity Target: 0.903095
+Cosine Similarity Deduced: 0.901720
+Cosine Similarity Mean: 0.902407
+Saved Regular labeled image row to: experiments/lt_avg_flower_flower_2/results/regular_8_tile_row_labeled.png
+
+Starting decoder sanity check on cuda...
+Loading matched UnCLIP pipeline...
+Encoding the real images with the pipeline's own encoder...
+Decoding the re-encoded embeddings...
+Saved sanity-check row to: experiments/lt_avg_flower_flower_2/results/decoder_single_image_sanity_check_64x64.png
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mlt_avg_flower_flower_2[0m at: [34mhttps://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/jy0xiobt[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb/run-20260406_102735-jy0xiobt/logs[0m

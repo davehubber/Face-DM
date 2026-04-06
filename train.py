@@ -82,12 +82,7 @@ def train(args):
                     proj_embedding=null_proj,
                 ).predicted_image_embedding.squeeze(1)
 
-                # Calculate unreduced MSE for both targets
-                loss_e1 = F.mse_loss(predicted_emb, e1, reduction="none").mean(dim=1)
-                loss_e2 = F.mse_loss(predicted_emb, e2, reduction="none").mean(dim=1)
-                
-                # Take the minimum loss per sample in the batch (Permutation Invariance)
-                loss = torch.minimum(loss_e1, loss_e2).mean()
+                loss = F.mse_loss(predicted_emb, e1)
 
                 accelerator.backward(loss)
 
@@ -113,7 +108,7 @@ def train(args):
                         val_t = diffusion.sample_timesteps(v_e1.shape[0], max_t=init_timestep)
                         val_x_t = diffusion.mix_embeds(v_e1, v_e2, val_t)
                         val_sup = v_e1 * (1.0 - args.alpha_init) + v_e2 * args.alpha_init
-                        val_null_proj = torch.zeros_like(x_t)
+                        val_null_proj = torch.zeros_like(val_x_t)
 
                         val_pred = model(
                             hidden_states=val_x_t,
@@ -121,11 +116,9 @@ def train(args):
                             proj_embedding=val_null_proj,
                         ).predicted_image_embedding.squeeze(1)
 
-                        v_loss_e1 = F.mse_loss(val_pred, v_e1, reduction="none").mean(dim=1)
-                        v_loss_e2 = F.mse_loss(val_pred, v_e2, reduction="none").mean(dim=1)
-                        
-                        v_loss = torch.minimum(v_loss_e1, v_loss_e2)
+                        v_loss = F.mse_loss(val_pred, v_e1)
                         v_loss = accelerator.gather(v_loss).mean()
+
                         val_loss += v_loss.item()
                         val_steps += 1
 
@@ -144,7 +137,7 @@ def train(args):
 
                 model.train()
 
-        if (epoch + 1) % 50 == 0 and accelerator.is_main_process:
+        if (epoch + 1) % 5 == 0 and accelerator.is_main_process:
             unet = accelerator.unwrap_model(model)
 
             torch.save(
@@ -354,9 +347,9 @@ def launch():
     parser.add_argument('--lr', default=1e-4, help='Learning rate', type=float, required=False)
 
     args = parser.parse_args()
-    #train(args)
-    #one_shot_eval(args)
-    #eval(args)
+    train(args)
+    one_shot_eval(args)
+    eval(args)
     test_decoder(args)
 
 
