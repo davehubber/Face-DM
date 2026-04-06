@@ -1,0 +1,61 @@
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /nas-ctm01/homes/dacordeiro/.netrc.
+wandb: Currently logged in as: davcordeiro03 (davcordeiro03-inesc-tec) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run gh5k3qez
+wandb: Tracking run with wandb version 0.25.0
+wandb: Run data is saved locally in /nas-ctm01/homes/dacordeiro/Face-DM/wandb/run-20260406_140938-gh5k3qez
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run lt_avg_flower_flower_hot
+wandb: ⭐️ View project at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM
+wandb: 🚀 View run at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/gh5k3qez
+Traceback (most recent call last):
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_pair_prior.py", line 271, in <module>
+    launch()
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_pair_prior.py", line 267, in launch
+    evaluate(args)
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_pair_prior.py", line 208, in evaluate
+    metrics = compute_pair_embedding_metrics_over_testset(
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/utils_pair_prior.py", line 368, in compute_pair_embedding_metrics_over_testset
+    pred_pair = sample_pair_embeddings(
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/utils_pair_prior.py", line 211, in sample_pair_embeddings
+    pred_x0 = model(
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/accelerate/utils/operations.py", line 823, in forward
+    return model_forward(*args, **kwargs)
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/accelerate/utils/operations.py", line 811, in __call__
+    return convert_to_fp32(self.model_forward(*args, **kwargs))
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/torch/amp/autocast_mode.py", line 44, in decorate_autocast
+    return func(*args, **kwargs)
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/diffusers/models/transformers/prior_transformer.py", line 350, in forward
+    hidden_states = hidden_states + positional_embeddings
+RuntimeError: The size of tensor a (770) must match the size of tensor b (5) at non-singleton dimension 1
+Traceback (most recent call last):
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_pair_prior.py", line 271, in <module>
+    launch()
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_pair_prior.py", line 267, in launch
+    evaluate(args)
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_pair_prior.py", line 208, in evaluate
+    metrics = compute_pair_embedding_metrics_over_testset(
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/utils_pair_prior.py", line 368, in compute_pair_embedding_metrics_over_testset
+    pred_pair = sample_pair_embeddings(
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/utils_pair_prior.py", line 211, in sample_pair_embeddings
+    pred_x0 = model(
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/accelerate/utils/operations.py", line 823, in forward
+    return model_forward(*args, **kwargs)
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/accelerate/utils/operations.py", line 811, in __call__
+    return convert_to_fp32(self.model_forward(*args, **kwargs))
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/torch/amp/autocast_mode.py", line 44, in decorate_autocast
+    return func(*args, **kwargs)
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/diffusers/models/transformers/prior_transformer.py", line 350, in forward
+    hidden_states = hidden_states + positional_embeddings
+RuntimeError: The size of tensor a (770) must match the size of tensor b (5) at non-singleton dimension 1
