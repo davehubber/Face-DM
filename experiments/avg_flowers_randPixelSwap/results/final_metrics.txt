@@ -1,9 +1,9 @@
 --- Iterative Evaluation Metrics (Entire Test Set) ---
-SSIM Target: 0.0152
-SSIM Deduced: 0.0144
-PSNR Target: 7.3208
-PSNR Deduced: 7.3064
-LPIPS Target: 0.7695
-LPIPS Deduced: 0.7701
-Success Rate of Reversal Target (%S): 0.54%
-Success Rate of Reversal Deduced (%S): 0.52%
+SSIM Target: 0.6751
+SSIM Deduced: 0.6006
+PSNR Target: 18.7835
+PSNR Deduced: 18.7809
+LPIPS Target: 0.1467
+LPIPS Deduced: 0.1594
+Success Rate of Reversal Target (%S): 76.16%
+Success Rate of Reversal Deduced (%S): 72.76%
