@@ -30,7 +30,7 @@ class ColdDiffusion:
             - exact duplication of the average at t = T
     """
 
-    def __init__(self, max_timesteps=64, img_size=64, device="cuda"):
+    def __init__(self, max_timesteps=128, img_size=64, device="cuda"):
         self.max_timesteps = max_timesteps
         self.img_size = img_size[0] if isinstance(img_size, tuple) else img_size
         self.device = device
