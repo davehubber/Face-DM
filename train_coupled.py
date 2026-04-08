@@ -299,7 +299,7 @@ def train(args):
     base_dir = setup_logging(args.run_name)
 
     accelerator = Accelerator(
-        mixed_precision="fp16",
+        mixed_precision="bf16",
         gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
     device = accelerator.device
@@ -863,7 +863,7 @@ def launch():
     parser.add_argument("--max_timesteps", default=250, type=int, help="Number of diffusion timesteps", required=False)
     parser.add_argument(
         "--max_noise_std",
-        default=0.196,
+        default=0.01,
         type=float,
         help="Maximum standard deviation reached by the linear Gaussian noise schedule over the full 6-channel state",
         required=False,
