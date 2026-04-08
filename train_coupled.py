@@ -6,6 +6,7 @@ import lpips
 import numpy as np
 import torch
 import wandb
+import torch.nn.functional as F
 from torch import optim
 
 from utils_coupled import *
@@ -173,17 +174,17 @@ def deterministic_noise(shape: Tuple[int, ...], seed: int, device: torch.device,
 
 
 
-def permutation_invariant_l1_loss(predicted_state: torch.Tensor, target_image_1: torch.Tensor, target_image_2: torch.Tensor):
+def permutation_invariant_l1_loss(predicted_state: torch.Tensor, target_image_1: torch.Tensor, target_image_2: torch.Tensor, beta: float = 1.0):
     predicted_image_1, predicted_image_2 = split_pair_state(predicted_state)
 
-    loss_12 = (
-        (predicted_image_1 - target_image_1).abs().flatten(1).mean(1)
-        + (predicted_image_2 - target_image_2).abs().flatten(1).mean(1)
-    )
-    loss_21 = (
-        (predicted_image_1 - target_image_2).abs().flatten(1).mean(1)
-        + (predicted_image_2 - target_image_1).abs().flatten(1).mean(1)
-    )
+    def pair_loss(p1, t1, p2, t2):
+        l1 = F.smooth_l1_loss(p1, t1, reduction='none', beta=beta).flatten(1).mean(1)
+        l2 = F.smooth_l1_loss(p2, t2, reduction='none', beta=beta).flatten(1).mean(1)
+        return l1 + l2
+
+    loss_12 = pair_loss(predicted_image_1, target_image_1, predicted_image_2, target_image_2)
+    loss_21 = pair_loss(predicted_image_1, target_image_2, predicted_image_2, target_image_1)
+
     per_sample_loss = torch.minimum(loss_12, loss_21)
     return per_sample_loss.mean()
 
@@ -299,7 +300,7 @@ def train(args):
     base_dir = setup_logging(args.run_name)
 
     accelerator = Accelerator(
-        mixed_precision="bf16",
+        mixed_precision="fp16",
         gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
     device = accelerator.device
@@ -860,7 +861,7 @@ def launch():
         help="DataLoader worker count; defaults to min(cpu_count, 8)",
     )
 
-    parser.add_argument("--max_timesteps", default=250, type=int, help="Number of diffusion timesteps", required=False)
+    parser.add_argument("--max_timesteps", default=300, type=int, help="Number of diffusion timesteps", required=False)
     parser.add_argument(
         "--max_noise_std",
         default=0.01,
@@ -871,7 +872,7 @@ def launch():
     parser.add_argument("--image_size", default=64, type=int, help="Dimension of the images", required=False)
     parser.add_argument("--batch_size", default=16, help="Batch size", type=int, required=False)
     parser.add_argument("--epochs", default=1000, help="Number of epochs", type=int, required=False)
-    parser.add_argument("--lr", default=3e-4, help="Learning rate", type=float, required=False)
+    parser.add_argument("--lr", default=3e-5, help="Learning rate", type=float, required=False)
     parser.add_argument(
         "--gradient_accumulation_steps",
         default=1,
