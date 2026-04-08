@@ -863,7 +863,7 @@ def launch():
     parser.add_argument("--max_timesteps", default=250, type=int, help="Number of diffusion timesteps", required=False)
     parser.add_argument(
         "--max_noise_std",
-        default=0.01,
+        default=0.196,
         type=float,
         help="Maximum standard deviation reached by the linear Gaussian noise schedule over the full 6-channel state",
         required=False,
