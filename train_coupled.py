@@ -198,12 +198,11 @@ def ordered_branch_smooth_l1_loss(
     predicted_state: torch.Tensor,
     target_image_1: torch.Tensor,
     target_image_2: torch.Tensor,
-    beta: float = 1.0,
 ):
     predicted_image_1, predicted_image_2 = split_pair_state(predicted_state)
 
-    loss_1 = F.smooth_l1_loss(predicted_image_1, target_image_1, reduction="none", beta=beta).flatten(1).mean(1)
-    loss_2 = F.smooth_l1_loss(predicted_image_2, target_image_2, reduction="none", beta=beta).flatten(1).mean(1)
+    loss_1 = F.l1_loss(predicted_image_1, target_image_1, reduction="none").flatten(1).mean(1)
+    loss_2 = F.l1_loss(predicted_image_2, target_image_2, reduction="none").flatten(1).mean(1)
     return (loss_1 + loss_2).mean()
 
 

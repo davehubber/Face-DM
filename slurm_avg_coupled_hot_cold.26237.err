@@ -9,3 +9,4 @@ wandb: Run `wandb offline` to turn off syncing.
 wandb: Syncing run avg_coupled_hot_cold
 wandb: ⭐️ View project at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM
 wandb: 🚀 View run at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/smrapr3b
+slurmstepd-01.ctm-deep-06: error: *** JOB 26237 ON 01.ctm-deep-06 CANCELLED AT 2026-04-09T13:29:26 ***
