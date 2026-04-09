@@ -18,6 +18,7 @@ from diffusers.training_utils import EMAModel
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
 
+
 class CoupledColdDiffusion:
     def __init__(self, max_timesteps=250, max_noise_std=1.0, img_size=256, device="cuda"):
         if max_timesteps <= 0:
@@ -33,11 +34,17 @@ class CoupledColdDiffusion:
     def sample_timesteps(self, n: int) -> torch.Tensor:
         return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
 
-    def mix_ratio(self, t: torch.Tensor) -> torch.Tensor:
-        return (t.float() / float(self.max_timesteps))[:, None, None, None]
+    def hot_mix_ratio(self, t: torch.Tensor) -> torch.Tensor:
+        return (t.float() / float(self.max_timesteps)).clamp(0.0, 1.0)[:, None, None, None]
 
-    def noise_std(self, t: torch.Tensor) -> torch.Tensor:
-        return (self.max_noise_std * t.float() / float(self.max_timesteps))[:, None, None, None]
+    def cold_mix_ratio(self, t: torch.Tensor) -> torch.Tensor:
+        return self.hot_mix_ratio(t)
+
+    def hot_signal_scale(self, t: torch.Tensor) -> torch.Tensor:
+        return torch.sqrt((1.0 - self.hot_mix_ratio(t)).clamp_min(0.0))
+
+    def hot_noise_scale(self, t: torch.Tensor) -> torch.Tensor:
+        return self.max_noise_std * torch.sqrt(self.hot_mix_ratio(t).clamp_min(0.0))
 
     def build_clean_state(self, image_1: torch.Tensor, image_2: torch.Tensor) -> torch.Tensor:
         return stack_pair_state(image_1, image_2)
@@ -48,6 +55,9 @@ class CoupledColdDiffusion:
     def duplicated_average_state(self, average_image: torch.Tensor) -> torch.Tensor:
         return torch.cat([average_image, average_image], dim=1)
 
+    def final_hybrid_state(self, average_image: torch.Tensor, hot_noise: torch.Tensor) -> torch.Tensor:
+        return stack_pair_state(self.max_noise_std * hot_noise, average_image)
+
     def degrade_state(
         self,
         clean_state: torch.Tensor,
@@ -57,20 +67,27 @@ class CoupledColdDiffusion:
         if clean_state.shape[1] != 6:
             raise ValueError(f"Expected clean_state with 6 channels, got shape {tuple(clean_state.shape)}")
 
-        duplicated_average = duplicate_average_from_state(clean_state)
-        if noise is None:
-            noise = torch.randn_like(clean_state)
+        clean_image_1, clean_image_2 = split_pair_state(clean_state)
+        average_image = self.average_image(clean_image_1, clean_image_2)
 
-        mix_ratio = self.mix_ratio(t)
-        noise_std = self.noise_std(t)
-        return (1.0 - mix_ratio) * clean_state + mix_ratio * duplicated_average + noise_std * noise
+        if noise is None:
+            noise = torch.randn_like(clean_image_1)
+        elif noise.shape[1] == 6:
+            noise = noise[:, :3]
+        elif noise.shape[1] != 3:
+            raise ValueError(f"Expected hot-branch noise with 3 or 6 channels, got shape {tuple(noise.shape)}")
+
+        hot_branch = self.hot_signal_scale(t) * clean_image_1 + self.hot_noise_scale(t) * noise
+        cold_branch = (1.0 - self.cold_mix_ratio(t)) * clean_image_2 + self.cold_mix_ratio(t) * average_image
+        return stack_pair_state(hot_branch, cold_branch)
 
     def estimate_noise(self, x_t: torch.Tensor, predicted_clean_state: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        duplicated_average = duplicate_average_from_state(predicted_clean_state)
-        mix_ratio = self.mix_ratio(t)
-        noise_std = self.noise_std(t)
-        deterministic_part = (1.0 - mix_ratio) * predicted_clean_state + mix_ratio * duplicated_average
-        return (x_t - deterministic_part) / noise_std.clamp_min(1e-8)
+        predicted_image_1, _ = split_pair_state(predicted_clean_state)
+        x_t_image_1, _ = split_pair_state(x_t)
+
+        hot_noise_scale = self.hot_noise_scale(t)
+        deterministic_hot_part = self.hot_signal_scale(t) * predicted_image_1
+        return (x_t_image_1 - deterministic_hot_part) / hot_noise_scale.clamp_min(1e-8)
 
     def tacos_step(
         self,
@@ -95,14 +112,16 @@ class CoupledColdDiffusion:
         was_training = model.training
         model.eval()
         with torch.no_grad():
-            duplicated_average = self.duplicated_average_state(average_image.to(self.device))
+            average_image = average_image.to(self.device)
             if start_noise is None:
-                start_noise = torch.randn_like(duplicated_average)
+                start_noise = torch.randn_like(average_image)
             else:
                 start_noise = start_noise.to(self.device)
+                if start_noise.shape[1] == 6:
+                    start_noise = start_noise[:, :3]
 
             final_timestep = torch.full((n,), self.max_timesteps, device=self.device, dtype=torch.long)
-            x_t = duplicated_average + self.noise_std(final_timestep) * start_noise
+            x_t = self.final_hybrid_state(average_image, start_noise)
 
             for i in reversed(range(1, self.max_timesteps + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
@@ -121,19 +140,20 @@ class CoupledColdDiffusion:
         was_training = model.training
         model.eval()
         with torch.no_grad():
-            duplicated_average = self.duplicated_average_state(average_image.to(self.device))
+            average_image = average_image.to(self.device)
             if start_noise is None:
-                start_noise = torch.randn_like(duplicated_average)
+                start_noise = torch.randn_like(average_image)
             else:
                 start_noise = start_noise.to(self.device)
+                if start_noise.shape[1] == 6:
+                    start_noise = start_noise[:, :3]
 
-            x_t = duplicated_average + self.noise_std(final_timestep) * start_noise
+            x_t = self.final_hybrid_state(average_image, start_noise)
             predicted_clean_state = model(x_t, final_timestep).sample
 
         if was_training:
             model.train()
         return predicted_clean_state
-
 
 
 def get_unet(image_size):
@@ -174,19 +194,17 @@ def deterministic_noise(shape: Tuple[int, ...], seed: int, device: torch.device,
 
 
 
-def permutation_invariant_l1_loss(predicted_state: torch.Tensor, target_image_1: torch.Tensor, target_image_2: torch.Tensor, beta: float = 1.0):
+def ordered_branch_smooth_l1_loss(
+    predicted_state: torch.Tensor,
+    target_image_1: torch.Tensor,
+    target_image_2: torch.Tensor,
+    beta: float = 1.0,
+):
     predicted_image_1, predicted_image_2 = split_pair_state(predicted_state)
 
-    def pair_loss(p1, t1, p2, t2):
-        l1 = F.smooth_l1_loss(p1, t1, reduction='none', beta=beta).flatten(1).mean(1)
-        l2 = F.smooth_l1_loss(p2, t2, reduction='none', beta=beta).flatten(1).mean(1)
-        return l1 + l2
-
-    loss_12 = pair_loss(predicted_image_1, target_image_1, predicted_image_2, target_image_2)
-    loss_21 = pair_loss(predicted_image_1, target_image_2, predicted_image_2, target_image_1)
-
-    per_sample_loss = torch.minimum(loss_12, loss_21)
-    return per_sample_loss.mean()
+    loss_1 = F.smooth_l1_loss(predicted_image_1, target_image_1, reduction="none", beta=beta).flatten(1).mean(1)
+    loss_2 = F.smooth_l1_loss(predicted_image_2, target_image_2, reduction="none", beta=beta).flatten(1).mean(1)
+    return (loss_1 + loss_2).mean()
 
 
 
@@ -205,7 +223,7 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator, noise_se
             )
             clean_state = diffusion.build_clean_state(val_images, val_images_add)
             val_noise = deterministic_noise(
-                tuple(clean_state.shape),
+                (clean_state.shape[0], 3, clean_state.shape[2], clean_state.shape[3]),
                 seed=noise_seed + batch_idx,
                 device=accelerator.device,
                 dtype=clean_state.dtype,
@@ -213,7 +231,7 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator, noise_se
             val_x_t = diffusion.degrade_state(clean_state, val_t, noise=val_noise)
             val_pred = model(val_x_t, val_t).sample
 
-            batch_loss = permutation_invariant_l1_loss(val_pred, val_images, val_images_add)
+            batch_loss = ordered_branch_smooth_l1_loss(val_pred, val_images, val_images_add)
             batch_size = torch.tensor([val_images.shape[0]], device=accelerator.device, dtype=torch.float32)
             loss_sum += batch_loss.detach() * batch_size
             loss_count += batch_size
@@ -238,18 +256,18 @@ def save_training_preview(
 ):
     average_image = diffusion.average_image(fixed_val_images, fixed_val_images_add)
     sampled_state = diffusion.sample(unet, average_image, start_noise=fixed_preview_noise)
-    aligned_image_1, aligned_image_2, _ = align_prediction_to_targets(sampled_state, fixed_val_images, fixed_val_images_add)
+    predicted_image_1, predicted_image_2 = split_pair_state(sampled_state)
 
     f_images = to_uint8(fixed_val_images)
     f_images_add = to_uint8(fixed_val_images_add)
     fixed_average_uint8 = to_uint8(average_image)
-    aligned_image_1_uint8 = to_uint8(aligned_image_1)
-    aligned_image_2_uint8 = to_uint8(aligned_image_2)
+    predicted_image_1_uint8 = to_uint8(predicted_image_1)
+    predicted_image_2_uint8 = to_uint8(predicted_image_2)
 
     latest_path = os.path.join(save_dir, "latest.jpg")
     save_images(
-        aligned_image_1_uint8,
-        aligned_image_2_uint8,
+        predicted_image_1_uint8,
+        predicted_image_2_uint8,
         f_images,
         f_images_add,
         latest_path,
@@ -260,8 +278,8 @@ def save_training_preview(
     if save_history:
         history_path = os.path.join(save_dir, f"epoch_{epoch:03d}.jpg")
         save_images(
-            aligned_image_1_uint8,
-            aligned_image_2_uint8,
+            predicted_image_1_uint8,
+            predicted_image_2_uint8,
             f_images,
             f_images_add,
             history_path,
@@ -269,8 +287,8 @@ def save_training_preview(
         )
 
     preview_tensors = {
-        "sampled_images": aligned_image_1_uint8,
-        "other_images": aligned_image_2_uint8,
+        "sampled_images": predicted_image_1_uint8,
+        "other_images": predicted_image_2_uint8,
         "original_images": f_images,
         "added_images": f_images_add,
         "input_images": fixed_average_uint8,
@@ -352,7 +370,7 @@ def train(args):
     fixed_val_images = torch.cat(fixed_val_images)[: args.num_fixed_samples].to(device)
     fixed_val_images_add = torch.cat(fixed_val_images_add)[: args.num_fixed_samples].to(device)
     fixed_preview_noise = deterministic_noise(
-        (fixed_val_images.shape[0], 6, fixed_val_images.shape[2], fixed_val_images.shape[3]),
+        (fixed_val_images.shape[0], 3, fixed_val_images.shape[2], fixed_val_images.shape[3]),
         seed=args.preview_noise_seed,
         device=device,
         dtype=fixed_val_images.dtype,
@@ -373,7 +391,7 @@ def train(args):
                 clean_state = diffusion.build_clean_state(images, images_add)
                 x_t = diffusion.degrade_state(clean_state, t)
                 predicted_state = model(x_t, t).sample
-                loss = permutation_invariant_l1_loss(predicted_state, images, images_add)
+                loss = ordered_branch_smooth_l1_loss(predicted_state, images, images_add)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -523,18 +541,18 @@ def _evaluate_pair_outputs(
     average_image: torch.Tensor,
     lpips_model,
 ):
-    aligned_image_1, aligned_image_2, _ = align_prediction_to_targets(predicted_state, images, images_add)
+    predicted_image_1, predicted_image_2 = split_pair_state(predicted_state)
 
     images_uint8 = to_uint8(images)
     images_add_uint8 = to_uint8(images_add)
-    aligned_image_1_uint8 = to_uint8(aligned_image_1)
-    aligned_image_2_uint8 = to_uint8(aligned_image_2)
+    predicted_image_1_uint8 = to_uint8(predicted_image_1)
+    predicted_image_2_uint8 = to_uint8(predicted_image_2)
     average_uint8 = to_uint8(average_image)
 
     images_np = images_uint8.cpu().permute(0, 2, 3, 1).numpy()
-    aligned_image_1_np = aligned_image_1_uint8.cpu().permute(0, 2, 3, 1).numpy()
+    predicted_image_1_np = predicted_image_1_uint8.cpu().permute(0, 2, 3, 1).numpy()
     images_add_np = images_add_uint8.cpu().permute(0, 2, 3, 1).numpy()
-    aligned_image_2_np = aligned_image_2_uint8.cpu().permute(0, 2, 3, 1).numpy()
+    predicted_image_2_np = predicted_image_2_uint8.cpu().permute(0, 2, 3, 1).numpy()
     average_np = average_uint8.cpu().permute(0, 2, 3, 1).numpy()
 
     ssim_o, ssim_a, lpips_o, lpips_a, psnr_o, psnr_a = [], [], [], [], [], []
@@ -546,11 +564,11 @@ def _evaluate_pair_outputs(
             so, sa, po, pa = calculate_metrics(
                 images_np[k],
                 images_add_np[k],
-                aligned_image_1_np[k],
-                aligned_image_2_np[k],
+                predicted_image_1_np[k],
+                predicted_image_2_np[k],
             )
-            lo = lpips_model(images[k].unsqueeze(0), aligned_image_1[k].unsqueeze(0))
-            la = lpips_model(images_add[k].unsqueeze(0), aligned_image_2[k].unsqueeze(0))
+            lo = lpips_model(images[k].unsqueeze(0), predicted_image_1[k].unsqueeze(0))
+            la = lpips_model(images_add[k].unsqueeze(0), predicted_image_2[k].unsqueeze(0))
 
             ssim_s_o = structural_similarity(images_np[k], average_np[k], data_range=255, channel_axis=-1)
             ssim_s_a = structural_similarity(images_add_np[k], average_np[k], data_range=255, channel_axis=-1)
@@ -570,8 +588,8 @@ def _evaluate_pair_outputs(
     return {
         "images_uint8": images_uint8,
         "images_add_uint8": images_add_uint8,
-        "predicted_image_1_uint8": aligned_image_1_uint8,
-        "predicted_image_2_uint8": aligned_image_2_uint8,
+        "predicted_image_1_uint8": predicted_image_1_uint8,
+        "predicted_image_2_uint8": predicted_image_2_uint8,
         "average_uint8": average_uint8,
         "ssim_o": ssim_o,
         "ssim_a": ssim_a,
@@ -619,7 +637,7 @@ def eval(args):
     for batch_idx, (images, images_add) in enumerate(test_dataloader):
         average_image = diffusion.average_image(images, images_add)
         start_noise = deterministic_noise(
-            (images.shape[0], 6, images.shape[2], images.shape[3]),
+            (images.shape[0], 3, images.shape[2], images.shape[3]),
             seed=args.eval_noise_seed + batch_idx,
             device=device,
             dtype=images.dtype,
@@ -726,7 +744,7 @@ def one_shot_eval(args):
     for batch_idx, (images, images_add) in enumerate(test_dataloader):
         average_image = diffusion.average_image(images, images_add)
         start_noise = deterministic_noise(
-            (images.shape[0], 6, images.shape[2], images.shape[3]),
+            (images.shape[0], 3, images.shape[2], images.shape[3]),
             seed=args.one_shot_noise_seed + batch_idx,
             device=device,
             dtype=images.dtype,
@@ -864,9 +882,9 @@ def launch():
     parser.add_argument("--max_timesteps", default=800, type=int, help="Number of diffusion timesteps", required=False)
     parser.add_argument(
         "--max_noise_std",
-        default=0.196,
+        default=1.0,
         type=float,
-        help="Maximum standard deviation reached by the linear Gaussian noise schedule over the full 6-channel state",
+        help="Final standard deviation of the Gaussian-noise branch (first 3 channels), which ends at pure isotropic Gaussian noise",
         required=False,
     )
     parser.add_argument("--image_size", default=64, type=int, help="Dimension of the images", required=False)
@@ -919,28 +937,28 @@ def launch():
         "--preview_noise_seed",
         default=2024,
         type=int,
-        help="Seed for the fixed preview start noise at the final diffusion timestep",
+        help="Seed for the fixed preview noise used to initialize the noisy first branch at the final diffusion timestep",
         required=False,
     )
     parser.add_argument(
         "--validation_noise_seed",
         default=31415,
         type=int,
-        help="Base seed for deterministic validation noise when logging EMA validation loss",
+        help="Base seed for deterministic hot-branch noise when logging EMA validation loss",
         required=False,
     )
     parser.add_argument(
         "--eval_noise_seed",
         default=27182,
         type=int,
-        help="Base seed for deterministic TACoS sampling noise during eval()",
+        help="Base seed for deterministic hot-branch sampling noise during eval()",
         required=False,
     )
     parser.add_argument(
         "--one_shot_noise_seed",
         default=16180,
         type=int,
-        help="Base seed for deterministic one-shot sampling noise during one_shot_eval()",
+        help="Base seed for deterministic hot-branch sampling noise during one_shot_eval()",
         required=False,
     )
     parser.add_argument("--device", default="cuda", help="Device, choose between [cuda, cpu]", required=False)
