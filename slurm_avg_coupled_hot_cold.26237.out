@@ -1,0 +1,2 @@
+Size of train: 6551 source images, 36000 sampled pairs per epoch/pass
+Size of test: 1638 source images, 5000 sampled pairs per epoch/pass
