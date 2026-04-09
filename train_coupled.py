@@ -861,10 +861,10 @@ def launch():
         help="DataLoader worker count; defaults to min(cpu_count, 8)",
     )
 
-    parser.add_argument("--max_timesteps", default=300, type=int, help="Number of diffusion timesteps", required=False)
+    parser.add_argument("--max_timesteps", default=800, type=int, help="Number of diffusion timesteps", required=False)
     parser.add_argument(
         "--max_noise_std",
-        default=0.01,
+        default=0.196,
         type=float,
         help="Maximum standard deviation reached by the linear Gaussian noise schedule over the full 6-channel state",
         required=False,
