@@ -1,2 +1,5 @@
 Size of train: 6551 source images, 36000 random pairs
 Size of val: 1638 source images, 5000 deterministic pairs
+Size of val: 1638 source images, 5000 deterministic pairs
+Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]
+Loading model from: /nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/lpips/weights/v0.1/alex.pth
