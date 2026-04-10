@@ -2,11 +2,10 @@
   deprecate("max_value", "1.0.0", deprecation_message, standard_warn=False)
 wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /nas-ctm01/homes/dacordeiro/.netrc.
 wandb: Currently logged in as: davcordeiro03 (davcordeiro03-inesc-tec) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
-wandb: setting up run vygowluv
+wandb: setting up run psjz6v1w
 wandb: Tracking run with wandb version 0.25.0
-wandb: Run data is saved locally in /nas-ctm01/homes/dacordeiro/Face-DM/wandb/run-20260410_094800-vygowluv
+wandb: Run data is saved locally in /nas-ctm01/homes/dacordeiro/Face-DM/wandb/run-20260410_120557-psjz6v1w
 wandb: Run `wandb offline` to turn off syncing.
 wandb: Syncing run avg_coupled_cold_diff
 wandb: ⭐️ View project at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM
-wandb: 🚀 View run at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/vygowluv
-slurmstepd-01.ctm-deep-05: error: *** JOB 26350 ON 01.ctm-deep-05 CANCELLED AT 2026-04-10T12:05:34 ***
+wandb: 🚀 View run at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/psjz6v1w
