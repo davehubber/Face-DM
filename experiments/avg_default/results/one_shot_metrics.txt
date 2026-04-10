@@ -1,9 +1,9 @@
 --- One-Shot Evaluation Metrics (Entire Validation Set) ---
-SSIM Bright: 0.7033
-SSIM Dark: 0.6488
-PSNR Bright: 19.6751
-PSNR Dark: 19.6694
-LPIPS Bright: 0.1385
-LPIPS Dark: 0.1456
-Success Rate Bright (%S): 82.64%
-Success Rate Dark (%S): 81.60%
+SSIM Bright: 0.7295
+SSIM Dark: 0.6773
+PSNR Bright: 20.1878
+PSNR Dark: 20.1874
+LPIPS Bright: 0.1125
+LPIPS Dark: 0.1181
+Success Rate Bright (%S): 96.14%
+Success Rate Dark (%S): 95.94%
