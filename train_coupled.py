@@ -231,12 +231,48 @@ def train(args):
         accelerator.wait_for_everyone()
 
 
-def calculate_metrics(bright_image, dark_image, predicted_bright, predicted_dark):
-    ssim_bright = structural_similarity(bright_image, predicted_bright, data_range=255, channel_axis=-1)
-    ssim_dark = structural_similarity(dark_image, predicted_dark, data_range=255, channel_axis=-1)
-    psnr_bright = peak_signal_noise_ratio(bright_image, predicted_bright, data_range=255)
-    psnr_dark = peak_signal_noise_ratio(dark_image, predicted_dark, data_range=255)
-    return ssim_bright, ssim_dark, psnr_bright, psnr_dark
+def calculate_metrics(target_1, target_2, pred_1, pred_2):
+    ssim_1 = structural_similarity(target_1, pred_1, data_range=255, channel_axis=-1)
+    ssim_2 = structural_similarity(target_2, pred_2, data_range=255, channel_axis=-1)
+    psnr_1 = peak_signal_noise_ratio(target_1, pred_1, data_range=255)
+    psnr_2 = peak_signal_noise_ratio(target_2, pred_2, data_range=255)
+    return ssim_1, ssim_2, psnr_1, psnr_2
+
+
+def calculate_lpips(lpips_model, target_tensor, pred_tensor):
+    return lpips_model(
+        (target_tensor.unsqueeze(0).float() - 127.5) / 127.5,
+        (pred_tensor.unsqueeze(0).float() - 127.5) / 127.5,
+    ).item()
+
+
+def calculate_permutation_invariant_metrics(
+    bright_image,
+    dark_image,
+    predicted_bright_image,
+    predicted_dark_image,
+    bright_tensor,
+    dark_tensor,
+    predicted_bright_tensor,
+    predicted_dark_tensor,
+    lpips_model,
+):
+    sb_direct, sd_direct, pb_direct, pd_direct = calculate_metrics(
+        bright_image, dark_image, predicted_bright_image, predicted_dark_image
+    )
+    lb_direct = calculate_lpips(lpips_model, bright_tensor, predicted_bright_tensor)
+    ld_direct = calculate_lpips(lpips_model, dark_tensor, predicted_dark_tensor)
+
+    sb_swap, sd_swap, pb_swap, pd_swap = calculate_metrics(
+        bright_image, dark_image, predicted_dark_image, predicted_bright_image
+    )
+    lb_swap = calculate_lpips(lpips_model, bright_tensor, predicted_dark_tensor)
+    ld_swap = calculate_lpips(lpips_model, dark_tensor, predicted_bright_tensor)
+
+    if (sb_swap + sd_swap) > (sb_direct + sd_direct):
+        return sb_swap, sd_swap, pb_swap, pd_swap, lb_swap, ld_swap
+
+    return sb_direct, sd_direct, pb_direct, pd_direct, lb_direct, ld_direct
 
 
 def eval(args):
@@ -292,16 +328,16 @@ def eval(args):
 
         with torch.no_grad():
             for k in range(len(bright_np)):
-                sb, sd, pb, pd = calculate_metrics(
-                    bright_np[k], dark_np[k], predicted_bright_np[k], predicted_dark_np[k]
-                )
-                lb = lpips_model(
-                    (bright_uint8[k].unsqueeze(0).float() - 127.5) / 127.5,
-                    (predicted_bright[k].unsqueeze(0).float() - 127.5) / 127.5,
-                )
-                ld = lpips_model(
-                    (dark_uint8[k].unsqueeze(0).float() - 127.5) / 127.5,
-                    (predicted_dark[k].unsqueeze(0).float() - 127.5) / 127.5,
+                sb, sd, pb, pd, lb, ld = calculate_permutation_invariant_metrics(
+                    bright_np[k],
+                    dark_np[k],
+                    predicted_bright_np[k],
+                    predicted_dark_np[k],
+                    bright_uint8[k],
+                    dark_uint8[k],
+                    predicted_bright[k],
+                    predicted_dark[k],
+                    lpips_model,
                 )
 
                 ssim_mixed_bright = structural_similarity(bright_np[k], mixed_np[k], data_range=255, channel_axis=-1)
@@ -317,8 +353,8 @@ def eval(args):
                 ssim_dark.append(sd)
                 psnr_bright.append(pb)
                 psnr_dark.append(pd)
-                lpips_bright.append(lb.detach().cpu().numpy())
-                lpips_dark.append(ld.detach().cpu().numpy())
+                lpips_bright.append(lb)
+                lpips_dark.append(ld)
 
     if collected_for_grid > 0:
         save_images(
@@ -407,16 +443,16 @@ def one_shot_eval(args):
 
         with torch.no_grad():
             for k in range(n):
-                sb, sd, pb, pd = calculate_metrics(
-                    bright_np[k], dark_np[k], predicted_bright_np[k], predicted_dark_np[k]
-                )
-                lb = lpips_model(
-                    (bright_uint8[k].unsqueeze(0).float() - 127.5) / 127.5,
-                    (predicted_bright[k].unsqueeze(0).float() - 127.5) / 127.5,
-                )
-                ld = lpips_model(
-                    (dark_uint8[k].unsqueeze(0).float() - 127.5) / 127.5,
-                    (predicted_dark[k].unsqueeze(0).float() - 127.5) / 127.5,
+                sb, sd, pb, pd, lb, ld = calculate_permutation_invariant_metrics(
+                    bright_np[k],
+                    dark_np[k],
+                    predicted_bright_np[k],
+                    predicted_dark_np[k],
+                    bright_uint8[k],
+                    dark_uint8[k],
+                    predicted_bright[k],
+                    predicted_dark[k],
+                    lpips_model,
                 )
 
                 ssim_mixed_bright = structural_similarity(bright_np[k], mixed_np[k], data_range=255, channel_axis=-1)
@@ -432,8 +468,8 @@ def one_shot_eval(args):
                 ssim_dark.append(sd)
                 psnr_bright.append(pb)
                 psnr_dark.append(pd)
-                lpips_bright.append(lb.detach().cpu().numpy())
-                lpips_dark.append(ld.detach().cpu().numpy())
+                lpips_bright.append(lb)
+                lpips_dark.append(ld)
 
     if collected_for_grid > 0:
         save_images(
