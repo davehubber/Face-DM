@@ -39,7 +39,10 @@ class ColdDiffusion:
 
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
-                predicted_bright = model(x_t, t).sample
+
+                model_out = model(x_t, t).sample
+                predicted_bright = model_out[:, :3]
+
                 predicted_dark = (mixed_image - (1.0 - alpha_init) * predicted_bright) / alpha_init
 
                 x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
@@ -57,7 +60,7 @@ def get_unet(image_size):
     return UNet2DModel(
         sample_size=resolution,
         in_channels=3,
-        out_channels=3,
+        out_channels=6,
         layers_per_block=2,
         block_out_channels=(64, 128, 256, 512),
         down_block_types=("DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "DownBlock2D"),
@@ -84,10 +87,16 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
                 device=accelerator.device,
             )
             x_t = diffusion.mix_images(bright_images, dark_images, t)
-            predicted_bright = model(x_t, t).sample
 
-            loss_sum += F.mse_loss(predicted_bright, bright_images, reduction="sum").detach()
-            loss_count += bright_images.numel()
+            model_out = model(x_t, t).sample
+            predicted_bright = model_out[:, :3]
+            predicted_dark = model_out[:, 3:]
+
+            loss_bright = F.mse_loss(predicted_bright, bright_images, reduction="sum")
+            loss_dark = F.mse_loss(predicted_dark, dark_images, reduction="sum")
+
+            loss_sum += (loss_bright + loss_dark).detach()
+            loss_count += bright_images.numel() + dark_images.numel()
 
     avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(loss_count).sum()).item()
     model.train()
@@ -168,8 +177,14 @@ def train(args):
 
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_images(bright_images, dark_images, t)
-                predicted_bright = model(x_t, t).sample
-                loss = F.mse_loss(predicted_bright, bright_images)
+
+                model_out = model(x_t, t).sample
+                predicted_bright = model_out[:, :3]
+                predicted_dark = model_out[:, 3:]
+
+                loss_bright = F.mse_loss(predicted_bright, bright_images)
+                loss_dark = F.mse_loss(predicted_dark, dark_images)
+                loss = 0.5 * (loss_bright + loss_dark)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -418,7 +433,8 @@ def one_shot_eval(args):
         t = torch.full((n,), init_timestep, device=device, dtype=torch.long)
 
         with torch.no_grad():
-            predicted_bright = model(mixed_images, t).sample
+            model_out = model(mixed_images, t).sample
+            predicted_bright = model_out[:, :3]
             predicted_dark = (mixed_images - (1 - args.alpha_init) * predicted_bright) / args.alpha_init
 
         bright_uint8 = to_uint8(bright_images)
