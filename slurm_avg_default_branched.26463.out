@@ -1,0 +1,2 @@
+Size of train: 6551 source images, 36000 random pairs
+Size of val: 1638 source images, 5000 deterministic pairs
