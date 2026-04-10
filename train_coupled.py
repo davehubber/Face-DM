@@ -1,12 +1,12 @@
 import math
 import os
-from typing import Optional, Tuple
+from typing import Dict
 
 import lpips
 import numpy as np
 import torch
-import wandb
 import torch.nn.functional as F
+import wandb
 from torch import optim
 
 from utils_coupled import *
@@ -18,150 +18,75 @@ from diffusers.training_utils import EMAModel
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
 
-
-class CoupledColdDiffusion:
-    def __init__(self, max_timesteps=250, max_noise_std=1.0, img_size=256, device="cuda"):
+class DifferenceColdDiffusion:
+    def __init__(self, max_timesteps: int = 250, device: str = "cuda"):
         if max_timesteps <= 0:
             raise ValueError(f"max_timesteps must be positive, got {max_timesteps}")
-        if max_noise_std < 0:
-            raise ValueError(f"max_noise_std must be non-negative, got {max_noise_std}")
-
         self.max_timesteps = int(max_timesteps)
-        self.max_noise_std = float(max_noise_std)
-        self.img_size = img_size
         self.device = device
 
-    def sample_timesteps(self, n: int) -> torch.Tensor:
-        return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
+    def sample_timesteps(self, batch_size: int) -> torch.Tensor:
+        return torch.randint(1, self.max_timesteps + 1, (batch_size,), device=self.device)
 
-    def hot_mix_ratio(self, t: torch.Tensor) -> torch.Tensor:
+    def mix_ratio(self, t: torch.Tensor) -> torch.Tensor:
         return (t.float() / float(self.max_timesteps)).clamp(0.0, 1.0)[:, None, None, None]
 
-    def cold_mix_ratio(self, t: torch.Tensor) -> torch.Tensor:
-        return self.hot_mix_ratio(t)
+    def average_image(self, brighter: torch.Tensor, darker: torch.Tensor) -> torch.Tensor:
+        return 0.5 * (brighter + darker)
 
-    def hot_signal_scale(self, t: torch.Tensor) -> torch.Tensor:
-        return torch.sqrt((1.0 - self.hot_mix_ratio(t)).clamp_min(0.0))
+    def half_difference_image(self, brighter: torch.Tensor, darker: torch.Tensor) -> torch.Tensor:
+        return 0.5 * (brighter - darker)
 
-    def hot_noise_scale(self, t: torch.Tensor) -> torch.Tensor:
-        return self.max_noise_std * torch.sqrt(self.hot_mix_ratio(t).clamp_min(0.0))
+    def darker_from_average_and_half_difference(self, average: torch.Tensor, half_difference: torch.Tensor) -> torch.Tensor:
+        return average - half_difference
 
-    def build_clean_state(self, image_1: torch.Tensor, image_2: torch.Tensor) -> torch.Tensor:
-        return stack_pair_state(image_1, image_2)
+    def degrade(self, half_difference: torch.Tensor, darker: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        return half_difference + self.mix_ratio(t) * darker
 
-    def average_image(self, image_1: torch.Tensor, image_2: torch.Tensor) -> torch.Tensor:
-        return 0.5 * (image_1 + image_2)
+    def degrade_from_average(self, half_difference: torch.Tensor, average: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        darker = self.darker_from_average_and_half_difference(average, half_difference)
+        return self.degrade(half_difference, darker, t)
 
-    def duplicated_average_state(self, average_image: torch.Tensor) -> torch.Tensor:
-        return torch.cat([average_image, average_image], dim=1)
-
-    def final_hybrid_state(self, average_image: torch.Tensor, hot_noise: torch.Tensor) -> torch.Tensor:
-        return stack_pair_state(self.max_noise_std * hot_noise, average_image)
-
-    def degrade_state(
-        self,
-        clean_state: torch.Tensor,
-        t: torch.Tensor,
-        noise: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        if clean_state.shape[1] != 6:
-            raise ValueError(f"Expected clean_state with 6 channels, got shape {tuple(clean_state.shape)}")
-
-        clean_image_1, clean_image_2 = split_pair_state(clean_state)
-        average_image = self.average_image(clean_image_1, clean_image_2)
-
-        if noise is None:
-            noise = torch.randn_like(clean_image_1)
-        elif noise.shape[1] == 6:
-            noise = noise[:, :3]
-        elif noise.shape[1] != 3:
-            raise ValueError(f"Expected hot-branch noise with 3 or 6 channels, got shape {tuple(noise.shape)}")
-
-        hot_branch = self.hot_signal_scale(t) * clean_image_1 + self.hot_noise_scale(t) * noise
-        cold_branch = (1.0 - self.cold_mix_ratio(t)) * clean_image_2 + self.cold_mix_ratio(t) * average_image
-        return stack_pair_state(hot_branch, cold_branch)
-
-    def estimate_noise(self, x_t: torch.Tensor, predicted_clean_state: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        predicted_image_1, _ = split_pair_state(predicted_clean_state)
-        x_t_image_1, _ = split_pair_state(x_t)
-
-        hot_noise_scale = self.hot_noise_scale(t)
-        deterministic_hot_part = self.hot_signal_scale(t) * predicted_image_1
-        return (x_t_image_1 - deterministic_hot_part) / hot_noise_scale.clamp_min(1e-8)
-
-    def tacos_step(
-        self,
-        x_t: torch.Tensor,
-        predicted_clean_state: torch.Tensor,
-        t: torch.Tensor,
-        estimated_noise: torch.Tensor,
-    ) -> torch.Tensor:
+    def tacos_step(self, x_t: torch.Tensor, predicted_half_difference: torch.Tensor, average: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         return (
             x_t
-            - self.degrade_state(predicted_clean_state, t, noise=estimated_noise)
-            + self.degrade_state(predicted_clean_state, t - 1, noise=estimated_noise)
+            - self.degrade_from_average(predicted_half_difference, average, t)
+            + self.degrade_from_average(predicted_half_difference, average, t - 1)
         )
 
-    def sample(
-        self,
-        model,
-        average_image: torch.Tensor,
-        start_noise: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        n = len(average_image)
+    def sample(self, model, average: torch.Tensor) -> torch.Tensor:
+        batch_size = average.shape[0]
+        average = average.to(self.device)
         was_training = model.training
         model.eval()
         with torch.no_grad():
-            average_image = average_image.to(self.device)
-            if start_noise is None:
-                start_noise = torch.randn_like(average_image)
-            else:
-                start_noise = start_noise.to(self.device)
-                if start_noise.shape[1] == 6:
-                    start_noise = start_noise[:, :3]
-
-            final_timestep = torch.full((n,), self.max_timesteps, device=self.device, dtype=torch.long)
-            x_t = self.final_hybrid_state(average_image, start_noise)
-
-            for i in reversed(range(1, self.max_timesteps + 1)):
-                t = torch.full((n,), i, device=self.device, dtype=torch.long)
-                predicted_clean_state = model(x_t, t).sample
-                estimated_noise = self.estimate_noise(x_t, predicted_clean_state, t)
-                x_t = self.tacos_step(x_t, predicted_clean_state, t, estimated_noise)
-
+            x_t = average
+            for i in range(self.max_timesteps, 0, -1):
+                t = torch.full((batch_size,), i, device=self.device, dtype=torch.long)
+                predicted_half_difference = model(x_t, t).sample
+                x_t = self.tacos_step(x_t, predicted_half_difference, average, t)
         if was_training:
             model.train()
         return x_t
 
-    def one_shot(self, model, average_image: torch.Tensor, start_noise: Optional[torch.Tensor] = None) -> torch.Tensor:
-        n = len(average_image)
-        final_timestep = torch.full((n,), self.max_timesteps, device=self.device, dtype=torch.long)
-
+    def one_shot(self, model, average: torch.Tensor) -> torch.Tensor:
+        average = average.to(self.device)
+        t = torch.full((average.shape[0],), self.max_timesteps, device=self.device, dtype=torch.long)
         was_training = model.training
         model.eval()
         with torch.no_grad():
-            average_image = average_image.to(self.device)
-            if start_noise is None:
-                start_noise = torch.randn_like(average_image)
-            else:
-                start_noise = start_noise.to(self.device)
-                if start_noise.shape[1] == 6:
-                    start_noise = start_noise[:, :3]
-
-            x_t = self.final_hybrid_state(average_image, start_noise)
-            predicted_clean_state = model(x_t, final_timestep).sample
-
+            predicted_half_difference = model(average, t).sample
         if was_training:
             model.train()
-        return predicted_clean_state
+        return predicted_half_difference
 
 
 def get_unet(image_size):
     resolution = image_size[0] if isinstance(image_size, tuple) else image_size
     return UNet2DModel(
         sample_size=resolution,
-        in_channels=6,
-        out_channels=6,
+        in_channels=3,
+        out_channels=3,
         layers_per_block=2,
         block_out_channels=(64, 128, 256, 512),
         down_block_types=(
@@ -179,152 +104,256 @@ def get_unet(image_size):
     )
 
 
+def ordered_l1_loss(predicted_half_difference: torch.Tensor, target_half_difference: torch.Tensor) -> torch.Tensor:
+    return F.l1_loss(predicted_half_difference, target_half_difference)
 
-def build_fixed_validation_timesteps(batch_size, batch_idx, max_timesteps, device):
+
+def build_fixed_validation_timesteps(batch_size: int, batch_idx: int, max_timesteps: int, device) -> torch.Tensor:
     base = torch.arange(batch_size, device=device, dtype=torch.long)
     return ((base + batch_idx * batch_size) % max_timesteps) + 1
 
 
-
-def deterministic_noise(shape: Tuple[int, ...], seed: int, device: torch.device, dtype=torch.float32) -> torch.Tensor:
-    generator = torch.Generator(device="cpu")
-    generator.manual_seed(int(seed))
-    noise = torch.randn(shape, generator=generator, dtype=dtype)
-    return noise.to(device=device)
-
+def prepare_canonical_pair(diffusion: DifferenceColdDiffusion, image_1: torch.Tensor, image_2: torch.Tensor):
+    brighter, darker, _ = order_pair_by_brightness(image_1, image_2)
+    average = diffusion.average_image(brighter, darker)
+    half_difference = diffusion.half_difference_image(brighter, darker)
+    return brighter, darker, average, half_difference
 
 
-def ordered_branch_smooth_l1_loss(
-    predicted_state: torch.Tensor,
-    target_image_1: torch.Tensor,
-    target_image_2: torch.Tensor,
-):
-    predicted_image_1, predicted_image_2 = split_pair_state(predicted_state)
-
-    loss_1 = F.l1_loss(predicted_image_1, target_image_1, reduction="none").flatten(1).mean(1)
-    loss_2 = F.l1_loss(predicted_image_2, target_image_2, reduction="none").flatten(1).mean(1)
-    return (loss_1 + loss_2).mean()
-
-
-
-def evaluate_validation_loss(model, dataloader, diffusion, accelerator, noise_seed: int):
+def evaluate_validation_loss(model, dataloader, diffusion: DifferenceColdDiffusion, accelerator: Accelerator) -> float:
     model.eval()
     loss_sum = torch.zeros(1, device=accelerator.device)
-    loss_count = torch.zeros(1, device=accelerator.device)
+    item_count = torch.zeros(1, device=accelerator.device)
 
     with torch.no_grad():
-        for batch_idx, (val_images, val_images_add) in enumerate(dataloader):
-            val_t = build_fixed_validation_timesteps(
-                batch_size=val_images.shape[0],
-                batch_idx=batch_idx,
-                max_timesteps=diffusion.max_timesteps,
-                device=accelerator.device,
-            )
-            clean_state = diffusion.build_clean_state(val_images, val_images_add)
-            val_noise = deterministic_noise(
-                (clean_state.shape[0], 3, clean_state.shape[2], clean_state.shape[3]),
-                seed=noise_seed + batch_idx,
-                device=accelerator.device,
-                dtype=clean_state.dtype,
-            )
-            val_x_t = diffusion.degrade_state(clean_state, val_t, noise=val_noise)
-            val_pred = model(val_x_t, val_t).sample
-
-            batch_loss = ordered_branch_smooth_l1_loss(val_pred, val_images, val_images_add)
-            batch_size = torch.tensor([val_images.shape[0]], device=accelerator.device, dtype=torch.float32)
+        for batch_idx, (images, images_add) in enumerate(dataloader):
+            t = build_fixed_validation_timesteps(images.shape[0], batch_idx, diffusion.max_timesteps, accelerator.device)
+            brighter, darker, _, half_difference = prepare_canonical_pair(diffusion, images, images_add)
+            x_t = diffusion.degrade(half_difference, darker, t)
+            predicted_half_difference = model(x_t, t).sample
+            batch_loss = ordered_l1_loss(predicted_half_difference, half_difference)
+            batch_size = torch.tensor([images.shape[0]], device=accelerator.device, dtype=torch.float32)
             loss_sum += batch_loss.detach() * batch_size
-            loss_count += batch_size
+            item_count += batch_size
 
-    gathered_loss_sum = accelerator.gather(loss_sum).sum()
-    gathered_loss_count = accelerator.gather(loss_count).sum()
-    avg_val_loss = (gathered_loss_sum / gathered_loss_count.clamp_min(1.0)).item()
+    avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(item_count).sum().clamp_min(1.0)).item()
     model.train()
     return avg_val_loss
 
 
+def save_checkpoint_set(active_unet, ema_unet, base_dir: str, epoch: int, save_periodic_backup: bool):
+    checkpoint_dir = os.path.join(base_dir, "checkpoints")
+    active_latest_path = os.path.join(checkpoint_dir, "unet_active.pt")
+    ema_latest_path = os.path.join(checkpoint_dir, "unet_ema.pt")
+    torch.save(active_unet.state_dict(), active_latest_path)
+    torch.save(ema_unet.state_dict(), ema_latest_path)
+    if save_periodic_backup:
+        torch.save(active_unet.state_dict(), os.path.join(checkpoint_dir, f"unet_active_epoch_{epoch:03d}.pt"))
+        torch.save(ema_unet.state_dict(), os.path.join(checkpoint_dir, f"unet_ema_epoch_{epoch:03d}.pt"))
+    return active_latest_path, ema_latest_path
 
-def save_training_preview(
-    unet,
-    diffusion,
-    fixed_val_images,
-    fixed_val_images_add,
-    fixed_preview_noise,
-    save_dir,
-    epoch,
-    save_history,
-):
-    average_image = diffusion.average_image(fixed_val_images, fixed_val_images_add)
-    sampled_state = diffusion.sample(unet, average_image, start_noise=fixed_preview_noise)
-    predicted_image_1, predicted_image_2 = split_pair_state(sampled_state)
 
-    f_images = to_uint8(fixed_val_images)
-    f_images_add = to_uint8(fixed_val_images_add)
-    fixed_average_uint8 = to_uint8(average_image)
-    predicted_image_1_uint8 = to_uint8(predicted_image_1)
-    predicted_image_2_uint8 = to_uint8(predicted_image_2)
+def save_training_preview(unet, diffusion: DifferenceColdDiffusion, fixed_val_images, fixed_val_images_add, save_dir: str, epoch: int, save_history: bool):
+    brighter, darker, average, _ = prepare_canonical_pair(diffusion, fixed_val_images, fixed_val_images_add)
+    sampled_half_difference = diffusion.sample(unet, average)
+    predicted_brighter, predicted_darker = reconstruct_images_from_average_and_half_difference(average, sampled_half_difference)
+
+    preview = {
+        "sampled_images": to_uint8(predicted_brighter),
+        "other_images": to_uint8(predicted_darker),
+        "original_images": to_uint8(brighter),
+        "added_images": to_uint8(darker),
+        "input_images": to_uint8(average),
+    }
 
     latest_path = os.path.join(save_dir, "latest.jpg")
     save_images(
-        predicted_image_1_uint8,
-        predicted_image_2_uint8,
-        f_images,
-        f_images_add,
+        preview["sampled_images"],
+        preview["other_images"],
+        preview["original_images"],
+        preview["added_images"],
         latest_path,
-        input_images=fixed_average_uint8,
+        input_images=preview["input_images"],
     )
 
     history_path = None
     if save_history:
         history_path = os.path.join(save_dir, f"epoch_{epoch:03d}.jpg")
         save_images(
-            predicted_image_1_uint8,
-            predicted_image_2_uint8,
-            f_images,
-            f_images_add,
+            preview["sampled_images"],
+            preview["other_images"],
+            preview["original_images"],
+            preview["added_images"],
             history_path,
-            input_images=fixed_average_uint8,
+            input_images=preview["input_images"],
         )
 
-    preview_tensors = {
-        "sampled_images": predicted_image_1_uint8,
-        "other_images": predicted_image_2_uint8,
-        "original_images": f_images,
-        "added_images": f_images_add,
-        "input_images": fixed_average_uint8,
+    return latest_path, history_path, preview
+
+
+def calculate_metrics(image, add_image, result_ori_image, result_add_image):
+    ssim_original = structural_similarity(image, result_ori_image, data_range=255, channel_axis=-1)
+    ssim_added = structural_similarity(add_image, result_add_image, data_range=255, channel_axis=-1)
+    psnr_original = peak_signal_noise_ratio(image, result_ori_image, data_range=255)
+    psnr_added = peak_signal_noise_ratio(add_image, result_add_image, data_range=255)
+    return ssim_original, ssim_added, psnr_original, psnr_added
+
+
+def evaluate_pair_outputs(
+    brighter: torch.Tensor,
+    darker: torch.Tensor,
+    average: torch.Tensor,
+    predicted_half_difference: torch.Tensor,
+    lpips_model,
+) -> Dict[str, object]:
+    predicted_brighter, predicted_darker = reconstruct_images_from_average_and_half_difference(average, predicted_half_difference)
+    predicted_brighter = predicted_brighter.clamp(-1, 1)
+    predicted_darker = predicted_darker.clamp(-1, 1)
+
+    brighter_uint8 = to_uint8(brighter)
+    darker_uint8 = to_uint8(darker)
+    predicted_brighter_uint8 = to_uint8(predicted_brighter)
+    predicted_darker_uint8 = to_uint8(predicted_darker)
+    average_uint8 = to_uint8(average)
+
+    brighter_np = brighter_uint8.cpu().permute(0, 2, 3, 1).numpy()
+    darker_np = darker_uint8.cpu().permute(0, 2, 3, 1).numpy()
+    predicted_brighter_np = predicted_brighter_uint8.cpu().permute(0, 2, 3, 1).numpy()
+    predicted_darker_np = predicted_darker_uint8.cpu().permute(0, 2, 3, 1).numpy()
+    average_np = average_uint8.cpu().permute(0, 2, 3, 1).numpy()
+
+    ssim_o, ssim_a, psnr_o, psnr_a, lpips_o, lpips_a = [], [], [], [], [], []
+    success_count_target = 0
+    success_count_deduced = 0
+
+    with torch.no_grad():
+        for k in range(len(brighter_np)):
+            so, sa, po, pa = calculate_metrics(brighter_np[k], darker_np[k], predicted_brighter_np[k], predicted_darker_np[k])
+            lo = lpips_model(brighter[k].unsqueeze(0), predicted_brighter[k].unsqueeze(0))
+            la = lpips_model(darker[k].unsqueeze(0), predicted_darker[k].unsqueeze(0))
+
+            ssim_avg_bright = structural_similarity(brighter_np[k], average_np[k], data_range=255, channel_axis=-1)
+            ssim_avg_dark = structural_similarity(darker_np[k], average_np[k], data_range=255, channel_axis=-1)
+
+            success_count_target += int(so > ssim_avg_bright)
+            success_count_deduced += int(sa > ssim_avg_dark)
+
+            ssim_o.append(so)
+            ssim_a.append(sa)
+            psnr_o.append(po)
+            psnr_a.append(pa)
+            lpips_o.append(lo.detach().cpu().item())
+            lpips_a.append(la.detach().cpu().item())
+
+    return {
+        "images_uint8": brighter_uint8,
+        "images_add_uint8": darker_uint8,
+        "predicted_image_1_uint8": predicted_brighter_uint8,
+        "predicted_image_2_uint8": predicted_darker_uint8,
+        "average_uint8": average_uint8,
+        "ssim_o": ssim_o,
+        "ssim_a": ssim_a,
+        "psnr_o": psnr_o,
+        "psnr_a": psnr_a,
+        "lpips_o": lpips_o,
+        "lpips_a": lpips_a,
+        "success_count_target": success_count_target,
+        "success_count_deduced": success_count_deduced,
+        "total_items": len(brighter_np),
     }
-    return latest_path, history_path, preview_tensors
 
 
+def run_reconstruction_eval(args, mode: str):
+    if mode not in {"sample", "one_shot"}:
+        raise ValueError(f"Unsupported eval mode: {mode}")
 
-def save_checkpoint_set(active_unet, ema_unet, base_dir, epoch, save_periodic_backup):
-    checkpoint_dir = os.path.join(base_dir, "checkpoints")
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
 
-    active_latest_path = os.path.join(checkpoint_dir, "unet_active.pt")
-    ema_latest_path = os.path.join(checkpoint_dir, "unet_ema.pt")
+    test_dataloader = get_data(args, "test")
+    model = get_unet(args.image_size)
+    model, test_dataloader = accelerator.prepare(model, test_dataloader)
 
-    torch.save(active_unet.state_dict(), active_latest_path)
-    torch.save(ema_unet.state_dict(), ema_latest_path)
+    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
+    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
 
-    if save_periodic_backup:
-        torch.save(active_unet.state_dict(), os.path.join(checkpoint_dir, f"unet_active_epoch_{epoch:03d}.pt"))
-        torch.save(ema_unet.state_dict(), os.path.join(checkpoint_dir, f"unet_ema_epoch_{epoch:03d}.pt"))
+    diffusion = DifferenceColdDiffusion(max_timesteps=args.max_timesteps, device=device)
+    lpips_model = lpips.LPIPS(net="alex").to(device)
 
-    return active_latest_path, ema_latest_path
+    ssim_o, ssim_a, lpips_o, lpips_a, psnr_o, psnr_a = [], [], [], [], [], []
+    success_count_target = 0
+    success_count_deduced = 0
+    total_items = 0
+    grid_si, grid_soi, grid_i, grid_ia, grid_input = [], [], [], [], []
+    collected_for_grid = 0
 
+    for images, images_add in test_dataloader:
+        brighter, darker, average, _ = prepare_canonical_pair(diffusion, images, images_add)
+        if mode == "sample":
+            predicted_half_difference = diffusion.sample(model, average)
+        else:
+            predicted_half_difference = diffusion.one_shot(model, average)
+
+        batch_results = evaluate_pair_outputs(brighter, darker, average, predicted_half_difference, lpips_model)
+
+        if collected_for_grid < 50:
+            grid_si.append(batch_results["predicted_image_1_uint8"].cpu())
+            grid_soi.append(batch_results["predicted_image_2_uint8"].cpu())
+            grid_i.append(batch_results["images_uint8"].cpu())
+            grid_ia.append(batch_results["images_add_uint8"].cpu())
+            grid_input.append(batch_results["average_uint8"].cpu())
+            collected_for_grid += len(images)
+
+        ssim_o.extend(batch_results["ssim_o"])
+        ssim_a.extend(batch_results["ssim_a"])
+        psnr_o.extend(batch_results["psnr_o"])
+        psnr_a.extend(batch_results["psnr_a"])
+        lpips_o.extend(batch_results["lpips_o"])
+        lpips_a.extend(batch_results["lpips_a"])
+        success_count_target += batch_results["success_count_target"]
+        success_count_deduced += batch_results["success_count_deduced"]
+        total_items += batch_results["total_items"]
+
+    sample_dir = "eval" if mode == "sample" else "one_shot"
+    grid_name = "eval_grid_50.jpg" if mode == "sample" else "one_shot_grid_50.jpg"
+    metrics_name = "final_metrics.txt" if mode == "sample" else "one_shot_metrics.txt"
+    title = "TACoS Sampling" if mode == "sample" else "One-Shot"
+
+    if collected_for_grid > 0:
+        save_images(
+            torch.cat(grid_si)[:50],
+            torch.cat(grid_soi)[:50],
+            torch.cat(grid_i)[:50],
+            torch.cat(grid_ia)[:50],
+            os.path.join(base_dir, "samples", sample_dir, grid_name),
+            input_images=torch.cat(grid_input)[:50],
+        )
+
+    metrics_report = (
+        f"--- {title} Evaluation Metrics (Entire Test Set) ---\n"
+        f"SSIM Target: {np.average(ssim_o):.4f}\n"
+        f"SSIM Deduced: {np.average(ssim_a):.4f}\n"
+        f"PSNR Target: {np.average(psnr_o):.4f}\n"
+        f"PSNR Deduced: {np.average(psnr_a):.4f}\n"
+        f"LPIPS Target: {np.average(lpips_o):.4f}\n"
+        f"LPIPS Deduced: {np.average(lpips_a):.4f}\n"
+        f"Success Rate of Reversal Target (%S): {(success_count_target / total_items) * 100:.2f}%\n"
+        f"Success Rate of Reversal Deduced (%S): {(success_count_deduced / total_items) * 100:.2f}%\n"
+    )
+    print(f"\n{metrics_report}")
+    with open(os.path.join(base_dir, "results", metrics_name), "w") as f:
+        f.write(metrics_report)
 
 
 def train(args):
     base_dir = setup_logging(args.run_name)
-
-    accelerator = Accelerator(
-        mixed_precision="fp16",
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-    )
+    accelerator = Accelerator(mixed_precision="fp16", gradient_accumulation_steps=args.gradient_accumulation_steps)
     device = accelerator.device
 
     train_dataloader = get_data(args, "train")
     test_dataloader = get_data(args, "test")
-
     model = get_unet(args.image_size)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
@@ -334,20 +363,9 @@ def train(args):
         num_warmup_steps=500,
         num_training_steps=steps_per_epoch * args.epochs,
     )
+    diffusion = DifferenceColdDiffusion(max_timesteps=args.max_timesteps, device=device)
 
-    diffusion = CoupledColdDiffusion(
-        max_timesteps=args.max_timesteps,
-        max_noise_std=args.max_noise_std,
-        img_size=args.image_size,
-        device=device,
-    )
-
-    ema_model = EMAModel(
-        model.parameters(),
-        inv_gamma=1.0,
-        power=0.75,
-        max_value=0.9999,
-    )
+    ema_model = EMAModel(model.parameters(), inv_gamma=1.0, power=0.75, max_value=0.9999)
     ema_model.to(device)
 
     if accelerator.is_main_process:
@@ -355,7 +373,6 @@ def train(args):
 
     global_step = 0
     best_ema_val_loss = float("inf")
-
     model, optimizer, train_dataloader, test_dataloader, lr_scheduler = accelerator.prepare(
         model, optimizer, train_dataloader, test_dataloader, lr_scheduler
     )
@@ -364,16 +381,10 @@ def train(args):
     for val_img, val_img_add in test_dataloader:
         fixed_val_images.append(val_img)
         fixed_val_images_add.append(val_img_add)
-        if sum(x.shape[0] for x in fixed_val_images) >= args.num_fixed_samples:
+        if sum(batch.shape[0] for batch in fixed_val_images) >= args.num_fixed_samples:
             break
     fixed_val_images = torch.cat(fixed_val_images)[: args.num_fixed_samples].to(device)
     fixed_val_images_add = torch.cat(fixed_val_images_add)[: args.num_fixed_samples].to(device)
-    fixed_preview_noise = deterministic_noise(
-        (fixed_val_images.shape[0], 3, fixed_val_images.shape[2], fixed_val_images.shape[3]),
-        seed=args.preview_noise_seed,
-        device=device,
-        dtype=fixed_val_images.dtype,
-    )
 
     train_loss_window_sum = 0.0
     train_loss_window_count = 0
@@ -384,18 +395,16 @@ def train(args):
         epoch_train_loss_count = 0
 
         for images, images_add in train_dataloader:
-            t = diffusion.sample_timesteps(images.shape[0]).to(device)
-
+            t = diffusion.sample_timesteps(images.shape[0])
             with accelerator.accumulate(model):
-                clean_state = diffusion.build_clean_state(images, images_add)
-                x_t = diffusion.degrade_state(clean_state, t)
-                predicted_state = model(x_t, t).sample
-                loss = ordered_branch_smooth_l1_loss(predicted_state, images, images_add)
+                _, darker, _, half_difference = prepare_canonical_pair(diffusion, images, images_add)
+                x_t = diffusion.degrade(half_difference, darker, t)
+                predicted_half_difference = model(x_t, t).sample
+                loss = ordered_l1_loss(predicted_half_difference, half_difference)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), 1.0)
-
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
@@ -403,7 +412,6 @@ def train(args):
             if accelerator.sync_gradients:
                 ema_model.step(model.parameters())
                 global_step += 1
-
                 synced_loss = accelerator.gather(loss.detach()).mean().item()
                 train_loss_window_sum += synced_loss
                 train_loss_window_count += 1
@@ -441,7 +449,6 @@ def train(args):
             continue
 
         unet = accelerator.unwrap_model(model)
-
         active_state_dict = None
         if accelerator.is_main_process:
             active_state_dict = {k: v.detach().cpu() for k, v in unet.state_dict().items()}
@@ -450,13 +457,7 @@ def train(args):
         ema_model.store(unet.parameters())
         ema_model.copy_to(unet.parameters())
 
-        ema_val_loss = evaluate_validation_loss(
-            model=model,
-            dataloader=test_dataloader,
-            diffusion=diffusion,
-            accelerator=accelerator,
-            noise_seed=args.validation_noise_seed,
-        )
+        ema_val_loss = evaluate_validation_loss(model, test_dataloader, diffusion, accelerator)
         epoch_train_loss = epoch_train_loss_sum / max(epoch_train_loss_count, 1)
         is_best = ema_val_loss < best_ema_val_loss
         if is_best:
@@ -474,16 +475,14 @@ def train(args):
                 step=global_step,
             )
 
-            preview_saved_in_history = (epoch + 1) % args.preview_history_every == 0
             latest_preview_path, history_preview_path, preview_tensors = save_training_preview(
                 unet=unet,
                 diffusion=diffusion,
                 fixed_val_images=fixed_val_images,
                 fixed_val_images_add=fixed_val_images_add,
-                fixed_preview_noise=fixed_preview_noise,
                 save_dir=os.path.join(base_dir, "samples", "train_fixed"),
                 epoch=epoch + 1,
-                save_history=preview_saved_in_history,
+                save_history=((epoch + 1) % args.preview_history_every == 0),
             )
 
             active_unet_for_save = get_unet(args.image_size)
@@ -498,13 +497,12 @@ def train(args):
 
             if is_best:
                 torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "unet_ema_best.pt"))
-                best_preview_path = os.path.join(base_dir, "samples", "train_fixed", "best_ema.jpg")
                 save_images(
                     preview_tensors["sampled_images"],
                     preview_tensors["other_images"],
                     preview_tensors["original_images"],
                     preview_tensors["added_images"],
-                    best_preview_path,
+                    os.path.join(base_dir, "samples", "train_fixed", "best_ema.jpg"),
                     input_images=preview_tensors["input_images"],
                 )
 
@@ -523,448 +521,45 @@ def train(args):
         accelerator.wait_for_everyone()
 
 
-
-def calculate_metrics(image, add_image, result_ori_image, result_add_image):
-    ssim_original = structural_similarity(image, result_ori_image, data_range=255, channel_axis=-1)
-    ssim_added = structural_similarity(add_image, result_add_image, data_range=255, channel_axis=-1)
-    psnr_original = peak_signal_noise_ratio(image, result_ori_image, data_range=255)
-    psnr_added = peak_signal_noise_ratio(add_image, result_add_image, data_range=255)
-    return ssim_original, ssim_added, psnr_original, psnr_added
-
-
-
-def _evaluate_pair_outputs(
-    images: torch.Tensor,
-    images_add: torch.Tensor,
-    predicted_state: torch.Tensor,
-    average_image: torch.Tensor,
-    lpips_model,
-):
-    predicted_image_1, predicted_image_2 = split_pair_state(predicted_state)
-
-    images_uint8 = to_uint8(images)
-    images_add_uint8 = to_uint8(images_add)
-    predicted_image_1_uint8 = to_uint8(predicted_image_1)
-    predicted_image_2_uint8 = to_uint8(predicted_image_2)
-    average_uint8 = to_uint8(average_image)
-
-    images_np = images_uint8.cpu().permute(0, 2, 3, 1).numpy()
-    predicted_image_1_np = predicted_image_1_uint8.cpu().permute(0, 2, 3, 1).numpy()
-    images_add_np = images_add_uint8.cpu().permute(0, 2, 3, 1).numpy()
-    predicted_image_2_np = predicted_image_2_uint8.cpu().permute(0, 2, 3, 1).numpy()
-    average_np = average_uint8.cpu().permute(0, 2, 3, 1).numpy()
-
-    ssim_o, ssim_a, lpips_o, lpips_a, psnr_o, psnr_a = [], [], [], [], [], []
-    success_count_target = 0
-    success_count_deduced = 0
-
-    with torch.no_grad():
-        for k in range(len(images_np)):
-            so, sa, po, pa = calculate_metrics(
-                images_np[k],
-                images_add_np[k],
-                predicted_image_1_np[k],
-                predicted_image_2_np[k],
-            )
-            lo = lpips_model(images[k].unsqueeze(0), predicted_image_1[k].unsqueeze(0))
-            la = lpips_model(images_add[k].unsqueeze(0), predicted_image_2[k].unsqueeze(0))
-
-            ssim_s_o = structural_similarity(images_np[k], average_np[k], data_range=255, channel_axis=-1)
-            ssim_s_a = structural_similarity(images_add_np[k], average_np[k], data_range=255, channel_axis=-1)
-
-            if so > ssim_s_o:
-                success_count_target += 1
-            if sa > ssim_s_a:
-                success_count_deduced += 1
-
-            ssim_o.append(so)
-            ssim_a.append(sa)
-            psnr_o.append(po)
-            psnr_a.append(pa)
-            lpips_o.append(lo.detach().cpu().item())
-            lpips_a.append(la.detach().cpu().item())
-
-    return {
-        "images_uint8": images_uint8,
-        "images_add_uint8": images_add_uint8,
-        "predicted_image_1_uint8": predicted_image_1_uint8,
-        "predicted_image_2_uint8": predicted_image_2_uint8,
-        "average_uint8": average_uint8,
-        "ssim_o": ssim_o,
-        "ssim_a": ssim_a,
-        "psnr_o": psnr_o,
-        "psnr_a": psnr_a,
-        "lpips_o": lpips_o,
-        "lpips_a": lpips_a,
-        "success_count_target": success_count_target,
-        "success_count_deduced": success_count_deduced,
-        "total_items": len(images_np),
-    }
-
-
-
 def eval(args):
-    accelerator = Accelerator()
-    device = accelerator.device
-    base_dir = os.path.join("experiments", args.run_name)
-
-    test_dataloader = get_data(args, "test")
-    model = get_unet(args.image_size)
-
-    model, test_dataloader = accelerator.prepare(model, test_dataloader)
-
-    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
-    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-
-    diffusion = CoupledColdDiffusion(
-        max_timesteps=args.max_timesteps,
-        max_noise_std=args.max_noise_std,
-        img_size=args.image_size,
-        device=device,
-    )
-    lpips_model = lpips.LPIPS(net="alex").to(device)
-
-    ssim_o, ssim_a, lpips_o, lpips_a, psnr_o, psnr_a = [], [], [], [], [], []
-    success_count_target = 0
-    success_count_deduced = 0
-    total_items = 0
-
-    grid_si, grid_soi, grid_i, grid_ia, grid_input = [], [], [], [], []
-    collected_for_grid = 0
-
-    for batch_idx, (images, images_add) in enumerate(test_dataloader):
-        average_image = diffusion.average_image(images, images_add)
-        start_noise = deterministic_noise(
-            (images.shape[0], 3, images.shape[2], images.shape[3]),
-            seed=args.eval_noise_seed + batch_idx,
-            device=device,
-            dtype=images.dtype,
-        )
-        sampled_state = diffusion.sample(model, average_image, start_noise=start_noise)
-
-        batch_results = _evaluate_pair_outputs(
-            images=images,
-            images_add=images_add,
-            predicted_state=sampled_state,
-            average_image=average_image,
-            lpips_model=lpips_model,
-        )
-
-        if collected_for_grid < 50:
-            grid_si.append(batch_results["predicted_image_1_uint8"].cpu())
-            grid_soi.append(batch_results["predicted_image_2_uint8"].cpu())
-            grid_i.append(batch_results["images_uint8"].cpu())
-            grid_ia.append(batch_results["images_add_uint8"].cpu())
-            grid_input.append(batch_results["average_uint8"].cpu())
-            collected_for_grid += len(images)
-
-        ssim_o.extend(batch_results["ssim_o"])
-        ssim_a.extend(batch_results["ssim_a"])
-        psnr_o.extend(batch_results["psnr_o"])
-        psnr_a.extend(batch_results["psnr_a"])
-        lpips_o.extend(batch_results["lpips_o"])
-        lpips_a.extend(batch_results["lpips_a"])
-        success_count_target += batch_results["success_count_target"]
-        success_count_deduced += batch_results["success_count_deduced"]
-        total_items += batch_results["total_items"]
-
-    if collected_for_grid > 0:
-        grid_si = torch.cat(grid_si)[:50]
-        grid_soi = torch.cat(grid_soi)[:50]
-        grid_i = torch.cat(grid_i)[:50]
-        grid_ia = torch.cat(grid_ia)[:50]
-        grid_input = torch.cat(grid_input)[:50]
-        save_images(
-            grid_si,
-            grid_soi,
-            grid_i,
-            grid_ia,
-            os.path.join(base_dir, "samples", "eval", "eval_grid_50.jpg"),
-            input_images=grid_input,
-        )
-
-    avg_ssim_o = np.average(ssim_o)
-    avg_ssim_a = np.average(ssim_a)
-    avg_psnr_o = np.average(psnr_o)
-    avg_psnr_a = np.average(psnr_a)
-    avg_lpips_o = np.average(lpips_o)
-    avg_lpips_a = np.average(lpips_a)
-    success_rate_target = (success_count_target / total_items) * 100
-    success_rate_deduced = (success_count_deduced / total_items) * 100
-
-    metrics_report = (
-        f"--- TACoS Sampling Evaluation Metrics (Entire Test Set) ---\n"
-        f"SSIM Target: {avg_ssim_o:.4f}\n"
-        f"SSIM Deduced: {avg_ssim_a:.4f}\n"
-        f"PSNR Target: {avg_psnr_o:.4f}\n"
-        f"PSNR Deduced: {avg_psnr_a:.4f}\n"
-        f"LPIPS Target: {avg_lpips_o:.4f}\n"
-        f"LPIPS Deduced: {avg_lpips_a:.4f}\n"
-        f"Success Rate of Reversal Target (%S): {success_rate_target:.2f}%\n"
-        f"Success Rate of Reversal Deduced (%S): {success_rate_deduced:.2f}%\n"
-    )
-    print(f"\n{metrics_report}")
-
-    with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
-        f.write(metrics_report)
-
+    run_reconstruction_eval(args, mode="sample")
 
 
 def one_shot_eval(args):
-    accelerator = Accelerator()
-    device = accelerator.device
-    base_dir = os.path.join("experiments", args.run_name)
-
-    test_dataloader = get_data(args, "test")
-    model = get_unet(args.image_size)
-
-    model, test_dataloader = accelerator.prepare(model, test_dataloader)
-    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
-    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-
-    diffusion = CoupledColdDiffusion(
-        max_timesteps=args.max_timesteps,
-        max_noise_std=args.max_noise_std,
-        img_size=args.image_size,
-        device=device,
-    )
-    lpips_model = lpips.LPIPS(net="alex").to(device)
-
-    ssim_o, ssim_a, psnr_o, psnr_a, lpips_o, lpips_a = [], [], [], [], [], []
-    success_count_target = 0
-    success_count_deduced = 0
-    total_items = 0
-
-    grid_si, grid_soi, grid_i, grid_ia, grid_input = [], [], [], [], []
-    collected_for_grid = 0
-
-    for batch_idx, (images, images_add) in enumerate(test_dataloader):
-        average_image = diffusion.average_image(images, images_add)
-        start_noise = deterministic_noise(
-            (images.shape[0], 3, images.shape[2], images.shape[3]),
-            seed=args.one_shot_noise_seed + batch_idx,
-            device=device,
-            dtype=images.dtype,
-        )
-        predicted_state = diffusion.one_shot(model, average_image, start_noise=start_noise)
-
-        batch_results = _evaluate_pair_outputs(
-            images=images,
-            images_add=images_add,
-            predicted_state=predicted_state,
-            average_image=average_image,
-            lpips_model=lpips_model,
-        )
-
-        if collected_for_grid < 50:
-            grid_si.append(batch_results["predicted_image_1_uint8"].cpu())
-            grid_soi.append(batch_results["predicted_image_2_uint8"].cpu())
-            grid_i.append(batch_results["images_uint8"].cpu())
-            grid_ia.append(batch_results["images_add_uint8"].cpu())
-            grid_input.append(batch_results["average_uint8"].cpu())
-            collected_for_grid += len(images)
-
-        ssim_o.extend(batch_results["ssim_o"])
-        ssim_a.extend(batch_results["ssim_a"])
-        psnr_o.extend(batch_results["psnr_o"])
-        psnr_a.extend(batch_results["psnr_a"])
-        lpips_o.extend(batch_results["lpips_o"])
-        lpips_a.extend(batch_results["lpips_a"])
-        success_count_target += batch_results["success_count_target"]
-        success_count_deduced += batch_results["success_count_deduced"]
-        total_items += batch_results["total_items"]
-
-    if collected_for_grid > 0:
-        grid_si = torch.cat(grid_si)[:50]
-        grid_soi = torch.cat(grid_soi)[:50]
-        grid_i = torch.cat(grid_i)[:50]
-        grid_ia = torch.cat(grid_ia)[:50]
-        grid_input = torch.cat(grid_input)[:50]
-        save_images(
-            grid_si,
-            grid_soi,
-            grid_i,
-            grid_ia,
-            os.path.join(base_dir, "samples", "one_shot", "one_shot_grid_50.jpg"),
-            input_images=grid_input,
-        )
-
-    avg_ssim_o, avg_ssim_a = np.average(ssim_o), np.average(ssim_a)
-    avg_psnr_o, avg_psnr_a = np.average(psnr_o), np.average(psnr_a)
-    avg_lpips_o, avg_lpips_a = np.average(lpips_o), np.average(lpips_a)
-    success_rate_target = (success_count_target / total_items) * 100
-    success_rate_deduced = (success_count_deduced / total_items) * 100
-
-    metrics_report = (
-        f"--- One-Shot Evaluation Metrics (Entire Test Set) ---\n"
-        f"SSIM Target: {avg_ssim_o:.4f}\n"
-        f"SSIM Deduced: {avg_ssim_a:.4f}\n"
-        f"PSNR Target: {avg_psnr_o:.4f}\n"
-        f"PSNR Deduced: {avg_psnr_a:.4f}\n"
-        f"LPIPS Target: {avg_lpips_o:.4f}\n"
-        f"LPIPS Deduced: {avg_lpips_a:.4f}\n"
-        f"Success Rate of Reversal Target (%S): {success_rate_target:.2f}%\n"
-        f"Success Rate of Reversal Deduced (%S): {success_rate_deduced:.2f}%\n"
-    )
-
-    print(f"\n{metrics_report}")
-
-    with open(os.path.join(base_dir, "results", "one_shot_metrics.txt"), "w") as f:
-        f.write(metrics_report)
-
+    run_reconstruction_eval(args, mode="one_shot")
 
 
 def launch():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_path", help="Path to dataset", required=True)
-    parser.add_argument("--run_name", help="Name of the experiment for saving models and results", required=True)
-    parser.add_argument("--partition_file", help="Optional CSV file with predefined train/test pairs", required=False, default=None)
-
-    parser.add_argument(
-        "--use_dynamic_pairs",
-        action="store_true",
-        help="Use on-the-fly random pair sampling from an image-level train/test split instead of a CSV pair file",
-    )
-    parser.add_argument(
-        "--train_fraction",
-        default=0.8,
-        type=float,
-        help="Fraction of source images assigned to the training split when using on-the-fly pairing",
-    )
-    parser.add_argument(
-        "--split_seed",
-        default=42,
-        type=int,
-        help="Seed used for the image-level 80/20 train/test split",
-    )
-    parser.add_argument(
-        "--pair_seed",
-        default=1234,
-        type=int,
-        help="Base seed used for deterministic test pairs and worker RNG initialization",
-    )
-    parser.add_argument(
-        "--train_pairs_per_image",
-        default=5,
-        type=int,
-        help="Default number of sampled train pairs per source image in each epoch when train_samples_per_epoch is not set",
-    )
-    parser.add_argument(
-        "--test_pairs_per_image",
-        default=5,
-        type=int,
-        help="Default number of sampled test/validation pairs per source image when test_samples is not set",
-    )
-    parser.add_argument(
-        "--train_samples_per_epoch",
-        default=None,
-        type=int,
-        help="Explicit number of random training pairs to draw per epoch when using on-the-fly pairing",
-    )
-    parser.add_argument(
-        "--test_samples",
-        default=None,
-        type=int,
-        help="Explicit number of deterministic test/validation pairs to evaluate when using on-the-fly pairing",
-    )
-    parser.add_argument(
-        "--num_workers",
-        default=None,
-        type=int,
-        help="DataLoader worker count; defaults to min(cpu_count, 8)",
-    )
-
-    parser.add_argument("--max_timesteps", default=800, type=int, help="Number of diffusion timesteps", required=False)
-    parser.add_argument(
-        "--max_noise_std",
-        default=1.0,
-        type=float,
-        help="Final standard deviation of the Gaussian-noise branch (first 3 channels), which ends at pure isotropic Gaussian noise",
-        required=False,
-    )
-    parser.add_argument("--image_size", default=64, type=int, help="Dimension of the images", required=False)
-    parser.add_argument("--batch_size", default=16, help="Batch size", type=int, required=False)
-    parser.add_argument("--epochs", default=1000, help="Number of epochs", type=int, required=False)
-    parser.add_argument("--lr", default=3e-5, help="Learning rate", type=float, required=False)
-    parser.add_argument(
-        "--gradient_accumulation_steps",
-        default=1,
-        type=int,
-        help="Number of gradient accumulation steps",
-        required=False,
-    )
-    parser.add_argument(
-        "--train_log_every",
-        default=100,
-        type=int,
-        help="Log smoothed training loss every N optimizer steps",
-        required=False,
-    )
-    parser.add_argument(
-        "--val_every",
-        default=1,
-        type=int,
-        help="Run EMA validation every N epochs",
-        required=False,
-    )
-    parser.add_argument(
-        "--checkpoint_every",
-        default=25,
-        type=int,
-        help="Save periodic checkpoint history every N validation epochs",
-        required=False,
-    )
-    parser.add_argument(
-        "--preview_history_every",
-        default=10,
-        type=int,
-        help="Save a numbered preview image every N validation epochs",
-        required=False,
-    )
-    parser.add_argument(
-        "--num_fixed_samples",
-        default=10,
-        type=int,
-        help="Number of fixed validation pairs used for preview images",
-        required=False,
-    )
-    parser.add_argument(
-        "--preview_noise_seed",
-        default=2024,
-        type=int,
-        help="Seed for the fixed preview noise used to initialize the noisy first branch at the final diffusion timestep",
-        required=False,
-    )
-    parser.add_argument(
-        "--validation_noise_seed",
-        default=31415,
-        type=int,
-        help="Base seed for deterministic hot-branch noise when logging EMA validation loss",
-        required=False,
-    )
-    parser.add_argument(
-        "--eval_noise_seed",
-        default=27182,
-        type=int,
-        help="Base seed for deterministic hot-branch sampling noise during eval()",
-        required=False,
-    )
-    parser.add_argument(
-        "--one_shot_noise_seed",
-        default=16180,
-        type=int,
-        help="Base seed for deterministic hot-branch sampling noise during one_shot_eval()",
-        required=False,
-    )
-    parser.add_argument("--device", default="cuda", help="Device, choose between [cuda, cpu]", required=False)
+    parser.add_argument("--dataset_path", required=True, help="Path to dataset")
+    parser.add_argument("--run_name", required=True, help="Name of the experiment for saving models and results")
+    parser.add_argument("--partition_file", default=None, help="Optional CSV file with predefined train/test pairs")
+    parser.add_argument("--use_dynamic_pairs", action="store_true", help="Use on-the-fly random pair sampling")
+    parser.add_argument("--train_fraction", default=0.8, type=float, help="Fraction of source images used for train")
+    parser.add_argument("--split_seed", default=42, type=int, help="Seed for the image-level train/test split")
+    parser.add_argument("--pair_seed", default=1234, type=int, help="Base seed for deterministic test pairs and worker init")
+    parser.add_argument("--train_pairs_per_image", default=5, type=int, help="Default sampled train pairs per source image")
+    parser.add_argument("--test_pairs_per_image", default=5, type=int, help="Default sampled test pairs per source image")
+    parser.add_argument("--train_samples_per_epoch", default=None, type=int, help="Explicit number of train pairs per epoch")
+    parser.add_argument("--test_samples", default=None, type=int, help="Explicit number of test pairs")
+    parser.add_argument("--num_workers", default=None, type=int, help="DataLoader worker count")
+    parser.add_argument("--max_timesteps", default=300, type=int, help="Number of diffusion timesteps")
+    parser.add_argument("--image_size", default=64, type=int, help="Image size")
+    parser.add_argument("--batch_size", default=16, type=int, help="Batch size")
+    parser.add_argument("--epochs", default=1000, type=int, help="Number of epochs")
+    parser.add_argument("--lr", default=3e-5, type=float, help="Learning rate")
+    parser.add_argument("--gradient_accumulation_steps", default=1, type=int, help="Gradient accumulation steps")
+    parser.add_argument("--train_log_every", default=100, type=int, help="Log smoothed training loss every N optimizer steps")
+    parser.add_argument("--val_every", default=1, type=int, help="Run EMA validation every N epochs")
+    parser.add_argument("--checkpoint_every", default=25, type=int, help="Save periodic checkpoint history every N validation epochs")
+    parser.add_argument("--preview_history_every", default=10, type=int, help="Save a numbered preview image every N validation epochs")
+    parser.add_argument("--num_fixed_samples", default=10, type=int, help="Number of fixed validation pairs used for preview images")
+    parser.add_argument("--device", default="cuda", help="Device, choose between [cuda, cpu]")
 
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
-
     train(args)
     eval(args)
     one_shot_eval(args)
