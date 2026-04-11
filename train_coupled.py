@@ -42,8 +42,7 @@ class ColdDiffusion:
 
                 model_out = model(x_t, t).sample
                 predicted_bright = model_out[:, :3]
-
-                predicted_dark = (mixed_image - (1.0 - alpha_init) * predicted_bright) / alpha_init
+                predicted_dark = model_out[:, 3:]
 
                 x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
                     predicted_bright, predicted_dark, t - 1
@@ -397,6 +396,132 @@ def eval(args):
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
+def _run_iterative_eval(args, max_items=None, grid_filename="eval_grid_50.jpg", metrics_filename="final_metrics.txt", title_suffix="Entire Validation Set"):
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
+
+    val_dataloader = get_data(args, "val")
+    model = get_unet(args.image_size)
+
+    model, val_dataloader = accelerator.prepare(model, val_dataloader)
+
+    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
+    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+
+    diffusion = ColdDiffusion(
+        max_timesteps=args.max_timesteps,
+        alpha_max=args.alpha_max,
+        device=device,
+    )
+    lpips_model = lpips.LPIPS(net="alex").to(device)
+
+    ssim_bright, ssim_dark, lpips_bright, lpips_dark, psnr_bright, psnr_dark = [], [], [], [], [], []
+    success_count_bright = 0
+    success_count_dark = 0
+    total_items = 0
+
+    grid_predicted_bright, grid_predicted_dark, grid_bright, grid_dark, grid_mixed = [], [], [], [], []
+    collected_for_grid = 0
+    limit = float("inf") if max_items is None else int(max_items)
+
+    for bright_images, dark_images in val_dataloader:
+        if total_items >= limit:
+            break
+
+        remaining = limit - total_items
+        if remaining < len(bright_images):
+            bright_images = bright_images[:remaining]
+            dark_images = dark_images[:remaining]
+
+        mixed_images = bright_images * (1 - args.alpha_init) + dark_images * args.alpha_init
+        predicted_bright, predicted_dark = diffusion.sample(model, mixed_images, args.alpha_init)
+
+        bright_uint8 = to_uint8(bright_images)
+        dark_uint8 = to_uint8(dark_images)
+        mixed_uint8 = to_uint8(mixed_images)
+
+        if collected_for_grid < min(50, limit):
+            grid_predicted_bright.append(predicted_bright.cpu())
+            grid_predicted_dark.append(predicted_dark.cpu())
+            grid_bright.append(bright_uint8.cpu())
+            grid_dark.append(dark_uint8.cpu())
+            grid_mixed.append(mixed_uint8.cpu())
+            collected_for_grid += len(bright_uint8)
+
+        bright_np = bright_uint8.cpu().permute(0, 2, 3, 1).numpy()
+        predicted_bright_np = predicted_bright.cpu().permute(0, 2, 3, 1).numpy()
+        dark_np = dark_uint8.cpu().permute(0, 2, 3, 1).numpy()
+        predicted_dark_np = predicted_dark.cpu().permute(0, 2, 3, 1).numpy()
+        mixed_np = mixed_uint8.cpu().permute(0, 2, 3, 1).numpy()
+
+        with torch.no_grad():
+            for k in range(len(bright_np)):
+                sb, sd, pb, pd, lb, ld = calculate_permutation_invariant_metrics(
+                    bright_np[k],
+                    dark_np[k],
+                    predicted_bright_np[k],
+                    predicted_dark_np[k],
+                    bright_uint8[k],
+                    dark_uint8[k],
+                    predicted_bright[k],
+                    predicted_dark[k],
+                    lpips_model,
+                )
+
+                ssim_mixed_bright = structural_similarity(bright_np[k], mixed_np[k], data_range=255, channel_axis=-1)
+                ssim_mixed_dark = structural_similarity(dark_np[k], mixed_np[k], data_range=255, channel_axis=-1)
+
+                if sb > ssim_mixed_bright:
+                    success_count_bright += 1
+                if sd > ssim_mixed_dark:
+                    success_count_dark += 1
+                total_items += 1
+
+                ssim_bright.append(sb)
+                ssim_dark.append(sd)
+                psnr_bright.append(pb)
+                psnr_dark.append(pd)
+                lpips_bright.append(lb)
+                lpips_dark.append(ld)
+
+    if collected_for_grid > 0:
+        n_grid = min(50, len(ssim_bright))
+        save_images(
+            torch.cat(grid_predicted_bright)[:n_grid],
+            torch.cat(grid_predicted_dark)[:n_grid],
+            torch.cat(grid_bright)[:n_grid],
+            torch.cat(grid_dark)[:n_grid],
+            os.path.join(base_dir, "samples", "eval", grid_filename),
+            input_images=torch.cat(grid_mixed)[:n_grid],
+        )
+
+    metrics_report = (
+        f"--- Iterative Evaluation Metrics ({title_suffix}) ---\n"
+        f"SSIM Bright: {np.average(ssim_bright):.4f}\n"
+        f"SSIM Dark: {np.average(ssim_dark):.4f}\n"
+        f"PSNR Bright: {np.average(psnr_bright):.4f}\n"
+        f"PSNR Dark: {np.average(psnr_dark):.4f}\n"
+        f"LPIPS Bright: {np.average(lpips_bright):.4f}\n"
+        f"LPIPS Dark: {np.average(lpips_dark):.4f}\n"
+        f"Success Rate Bright (%S): {(success_count_bright / total_items) * 100:.2f}%\n"
+        f"Success Rate Dark (%S): {(success_count_dark / total_items) * 100:.2f}%\n"
+    )
+    print(f"\n{metrics_report}")
+
+    with open(os.path.join(base_dir, "results", metrics_filename), "w") as f:
+        f.write(metrics_report)
+
+
+def eval_fixed_50(args):
+    _run_iterative_eval(
+        args,
+        max_items=50,
+        grid_filename="eval_grid_fixed50.jpg",
+        metrics_filename="final_metrics_fixed50.txt",
+        title_suffix="Fixed 50 Validation Images",
+    )
 
 def one_shot_eval(args):
     accelerator = Accelerator()
@@ -540,9 +665,10 @@ def launch():
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
 
-    train(args)
-    eval(args)
-    one_shot_eval(args)
+    eval_fixed_50(args)
+    #train(args)
+    #eval(args)
+    #one_shot_eval(args)
 
 
 if __name__ == "__main__":
