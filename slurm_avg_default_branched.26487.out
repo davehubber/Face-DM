@@ -1,0 +1,14 @@
+Size of val: 1638 source images, 5000 deterministic pairs
+Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]
+Loading model from: /nas-ctm01/homes/dacordeiro/.conda/envs/demorph/lib/python3.10/site-packages/lpips/weights/v0.1/alex.pth
+
+--- Iterative Evaluation Metrics (Fixed 50 Validation Images) ---
+SSIM Bright: 0.7542
+SSIM Dark: 0.7130
+PSNR Bright: 21.4351
+PSNR Dark: 21.4259
+LPIPS Bright: 0.0887
+LPIPS Dark: 0.1018
+Success Rate Bright (%S): 96.00%
+Success Rate Dark (%S): 98.00%
+

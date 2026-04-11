@@ -1,9 +1,9 @@
 --- Iterative Evaluation Metrics (Fixed 50 Validation Images) ---
-SSIM Bright: 0.7729
-SSIM Dark: 0.7212
-PSNR Bright: 21.4980
-PSNR Dark: 21.4648
-LPIPS Bright: 0.0709
-LPIPS Dark: 0.0911
-Success Rate Bright (%S): 100.00%
+SSIM Bright: 0.7542
+SSIM Dark: 0.7130
+PSNR Bright: 21.4351
+PSNR Dark: 21.4259
+LPIPS Bright: 0.0887
+LPIPS Dark: 0.1018
+Success Rate Bright (%S): 96.00%
 Success Rate Dark (%S): 98.00%
