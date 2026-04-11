@@ -120,8 +120,7 @@ class OnTheFlyPairedDataset(Dataset):
             image_1 = self.transform(image_1)
             image_2 = self.transform(image_2)
 
-        bright_image, dark_image = order_by_brightness(image_1, image_2)
-        return bright_image, dark_image
+        return image_1, image_2
 
 
 def _default_num_pairs(num_images: int) -> int:

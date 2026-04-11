@@ -92,14 +92,21 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
             x_t = diffusion.mix_images(bright_images, dark_images, t)
 
             model_out = model(x_t, t).sample
-            predicted_bright = model_out[:, :3]
-            predicted_dark = model_out[:, 3:]
+            pred_1 = model_out[:, :3]
+            pred_2 = model_out[:, 3:]
 
-            loss_bright = F.mse_loss(predicted_bright, bright_images, reduction="sum")
-            loss_dark = F.mse_loss(predicted_dark, dark_images, reduction="sum")
+            direct_1 = F.mse_loss(pred_1, bright_images, reduction="none")
+            direct_2 = F.mse_loss(pred_2, dark_images, reduction="none")
+            loss_direct = (direct_1 + direct_2).mean(dim=(1, 2, 3))
 
-            loss_sum += (loss_bright + loss_dark).detach()
-            loss_count += bright_images.numel() + dark_images.numel()
+            swap_1 = F.mse_loss(pred_1, dark_images, reduction="none")
+            swap_2 = F.mse_loss(pred_2, bright_images, reduction="none")
+            loss_swapped = (swap_1 + swap_2).mean(dim=(1, 2, 3))
+
+            batch_loss = torch.minimum(loss_direct, loss_swapped)
+
+            loss_sum += batch_loss.sum().detach()
+            loss_count += torch.tensor(batch_loss.numel(), device=accelerator.device)
 
     avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(loss_count).sum()).item()
     model.train()
@@ -182,12 +189,18 @@ def train(args):
                 x_t = diffusion.mix_images(bright_images, dark_images, t)
 
                 model_out = model(x_t, t).sample
-                predicted_bright = model_out[:, :3]
-                predicted_dark = model_out[:, 3:]
+                pred_1 = model_out[:, :3]
+                pred_2 = model_out[:, 3:]
 
-                loss_bright = F.mse_loss(predicted_bright, bright_images)
-                loss_dark = F.mse_loss(predicted_dark, dark_images)
-                loss = 0.5 * (loss_bright + loss_dark)
+                direct_1 = F.mse_loss(pred_1, bright_images, reduction="none")
+                direct_2 = F.mse_loss(pred_2, dark_images, reduction="none")
+                loss_direct = (direct_1 + direct_2).mean(dim=(1, 2, 3))
+
+                swap_1 = F.mse_loss(pred_1, dark_images, reduction="none")
+                swap_2 = F.mse_loss(pred_2, bright_images, reduction="none")
+                loss_swapped = (swap_1 + swap_2).mean(dim=(1, 2, 3))
+
+                loss = 0.5 * torch.minimum(loss_direct, loss_swapped).mean()
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -669,10 +682,10 @@ def launch():
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
 
-    eval_fixed_50(args)
-    #train(args)
+    #eval_fixed_50(args)
+    train(args)
     #eval(args)
-    #one_shot_eval(args)
+    one_shot_eval(args)
 
 
 if __name__ == "__main__":
