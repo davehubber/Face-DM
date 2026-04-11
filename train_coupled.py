@@ -36,13 +36,18 @@ class ColdDiffusion:
         model.eval()
         with torch.no_grad():
             x_t = mixed_image.to(self.device)
+            fixed_predicted_dark = None
 
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
 
                 model_out = model(x_t, t).sample
                 predicted_bright = model_out[:, :3]
-                predicted_dark = model_out[:, 3:]
+
+                if i == init_timestep:
+                    fixed_predicted_dark = model_out[:, 3:]
+
+                predicted_dark = fixed_predicted_dark
 
                 x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
                     predicted_bright, predicted_dark, t - 1
