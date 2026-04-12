@@ -53,7 +53,8 @@ class ColdDiffusion:
 
                 model_out = model(x_t, t).sample
                 predicted_bright = model_out[:, :3]
-                predicted_dark = model_out[:, 3:]
+                #predicted_dark = model_out[:, 3:]
+                predicted_dark = (mixed_image - (1.0 - alpha_init) * predicted_bright) / alpha_init
 
                 x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
                     predicted_bright, predicted_dark, t - 1
