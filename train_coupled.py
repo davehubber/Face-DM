@@ -839,15 +839,15 @@ def _lpips_minus1_1(lpips_model, pred, target):
     return lpips_model(pred, target).item()
 
 
-def _save_two_prediction_trajectory_grid(rows, save_path):
+def _save_dark_reference_trajectory_grid(rows, save_path, title_left, title_right, ref_tag):
     font = ImageFont.load_default()
 
     sample_img = _tensor_to_pil_image(rows[0]["pred_bright"])
     image_w, image_h = sample_img.size
 
     label_w = 58
-    cell_w = max(image_w, 150)
-    text_h = 52
+    cell_w = max(image_w, 120)
+    text_h = 26
     row_h = image_h + text_h
     col_gap = 12
     row_gap = 6
@@ -860,7 +860,7 @@ def _save_two_prediction_trajectory_grid(rows, save_path):
     canvas = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(canvas)
 
-    headers = ["pred bright", "pred dark"]
+    headers = [title_left, title_right]
     for col, title in enumerate(headers):
         x0 = outer_pad + label_w + col * (cell_w + col_gap)
         draw.text((x0, outer_pad), title, fill="black", font=font)
@@ -873,17 +873,11 @@ def _save_two_prediction_trajectory_grid(rows, save_path):
         entries = [
             (
                 _tensor_to_pil_image(row["pred_bright"]),
-                (
-                    f"D0 MSE: {row['mse_bright_to_first_dark']:.4f}  LPIPS: {row['lpips_bright_to_first_dark']:.4f}\n"
-                    f"B0 MSE: {row['mse_bright_to_first_bright']:.4f}  LPIPS: {row['lpips_bright_to_first_bright']:.4f}"
-                ),
+                f"{ref_tag} MSE: {row['mse_bright']:.4f}\n{ref_tag} LPIPS: {row['lpips_bright']:.4f}",
             ),
             (
                 _tensor_to_pil_image(row["pred_dark"]),
-                (
-                    f"D0 MSE: {row['mse_dark_to_first_dark']:.4f}  LPIPS: {row['lpips_dark_to_first_dark']:.4f}\n"
-                    f"B0 MSE: {row['mse_dark_to_first_bright']:.4f}  LPIPS: {row['lpips_dark_to_first_bright']:.4f}"
-                ),
+                f"{ref_tag} MSE: {row['mse_dark']:.4f}\n{ref_tag} LPIPS: {row['lpips_dark']:.4f}",
             ),
         ]
 
@@ -933,8 +927,8 @@ def eval_single_dark_dominant_path(args):
     full_t = torch.tensor([diffusion.max_timesteps], device=device, dtype=torch.long)
     x_t = diffusion.mix_images(dark_image, bright_image, full_t).clone()
 
-    rows = []
-    first_pred_bright = None
+    rows_gt_dark = []
+    rows_first_dark = []
     first_pred_dark = None
 
     with torch.no_grad():
@@ -947,24 +941,32 @@ def eval_single_dark_dominant_path(args):
 
             pred_bright = predicted_bright_raw[0].clamp(-1, 1)
             pred_dark = predicted_dark_raw[0].clamp(-1, 1)
+            gt_dark = dark_image[0]
 
-            if first_pred_bright is None:
-                first_pred_bright = pred_bright.detach().clone()
+            if first_pred_dark is None:
                 first_pred_dark = pred_dark.detach().clone()
 
-            rows.append(
+            rows_gt_dark.append(
                 {
                     "t": i,
                     "pred_bright": pred_bright.cpu(),
                     "pred_dark": pred_dark.cpu(),
-                    "mse_bright_to_first_dark": _mse_01(pred_bright, first_pred_dark),
-                    "lpips_bright_to_first_dark": _lpips_minus1_1(lpips_model, pred_bright, first_pred_dark),
-                    "mse_bright_to_first_bright": _mse_01(pred_bright, first_pred_bright),
-                    "lpips_bright_to_first_bright": _lpips_minus1_1(lpips_model, pred_bright, first_pred_bright),
-                    "mse_dark_to_first_dark": _mse_01(pred_dark, first_pred_dark),
-                    "lpips_dark_to_first_dark": _lpips_minus1_1(lpips_model, pred_dark, first_pred_dark),
-                    "mse_dark_to_first_bright": _mse_01(pred_dark, first_pred_bright),
-                    "lpips_dark_to_first_bright": _lpips_minus1_1(lpips_model, pred_dark, first_pred_bright),
+                    "mse_bright": _mse_01(pred_bright, gt_dark),
+                    "lpips_bright": _lpips_minus1_1(lpips_model, pred_bright, gt_dark),
+                    "mse_dark": _mse_01(pred_dark, gt_dark),
+                    "lpips_dark": _lpips_minus1_1(lpips_model, pred_dark, gt_dark),
+                }
+            )
+
+            rows_first_dark.append(
+                {
+                    "t": i,
+                    "pred_bright": pred_bright.cpu(),
+                    "pred_dark": pred_dark.cpu(),
+                    "mse_bright": _mse_01(pred_bright, first_pred_dark),
+                    "lpips_bright": _lpips_minus1_1(lpips_model, pred_bright, first_pred_dark),
+                    "mse_dark": _mse_01(pred_dark, first_pred_dark),
+                    "lpips_dark": _lpips_minus1_1(lpips_model, pred_dark, first_pred_dark),
                 }
             )
 
@@ -974,15 +976,37 @@ def eval_single_dark_dominant_path(args):
                 + diffusion.mix_images(predicted_dark_raw, predicted_bright_raw, t - 1)
             )
 
-    save_path = os.path.join(
+    save_path_gt = os.path.join(
         base_dir,
         "samples",
         "eval",
-        f"single_dark_dominant_path_idx{args.single_eval_index}_firstpred_refs.png",
+        f"single_dark_dominant_path_idx{args.single_eval_index}_gtdark.png",
+    )
+    save_path_first = os.path.join(
+        base_dir,
+        "samples",
+        "eval",
+        f"single_dark_dominant_path_idx{args.single_eval_index}_firstdark.png",
     )
 
-    _save_two_prediction_trajectory_grid(rows, save_path)
-    print(f"Saved dark-dominant path trajectory grid to: {save_path}")
+    _save_dark_reference_trajectory_grid(
+        rows=rows_gt_dark,
+        save_path=save_path_gt,
+        title_left="pred bright",
+        title_right="pred dark",
+        ref_tag="GTD",
+    )
+
+    _save_dark_reference_trajectory_grid(
+        rows=rows_first_dark,
+        save_path=save_path_first,
+        title_left="pred bright",
+        title_right="pred dark",
+        ref_tag="D0",
+    )
+
+    print(f"Saved GT-dark reference grid to: {save_path_gt}")
+    print(f"Saved first-dark reference grid to: {save_path_first}")
 
 def launch():
     import argparse
