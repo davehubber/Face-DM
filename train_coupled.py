@@ -992,7 +992,7 @@ def launch():
     parser.add_argument("--val_every", default=1, type=int, help="Run validation every N epochs")
     parser.add_argument("--num_fixed_samples", default=10, type=int, help="Number of fixed validation pairs for previews")
 
-    parser.add_argument("--single_eval_index", default=1, type=int, help="Index of the deterministic validation sample to visualize")
+    parser.add_argument("--single_eval_index", default=0, type=int, help="Index of the deterministic validation sample to visualize")
 
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
