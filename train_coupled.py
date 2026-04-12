@@ -64,7 +64,18 @@ class ColdDiffusion:
 
         predicted_dark = (mixed_image - (1.0 - alpha_init) * x_t) / alpha_init
         return to_uint8(x_t), to_uint8(predicted_dark)
-    
+
+    def _extract_other_from_average(self, average_image, dominant_image, alpha, dominant_is_first):
+        if not (0.0 < alpha < 1.0):
+            raise ValueError(f"alpha must be in (0, 1) for mathematical extraction, got {alpha}")
+
+        if dominant_is_first:
+            # average = dominant * (1 - alpha) + other * alpha
+            return (average_image - (1.0 - alpha) * dominant_image) / alpha
+
+        # average = other * (1 - alpha) + dominant * alpha
+        return (average_image - alpha * dominant_image) / (1.0 - alpha)
+
     def sample_dual_branch_lpips_switch(self, model, mixed_image, alpha_init=0.5, switch_delay=10):
         n = len(mixed_image)
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
@@ -75,7 +86,8 @@ class ColdDiffusion:
         lpips_model = self._get_lpips_model()
 
         with torch.no_grad():
-            x_start = mixed_image.to(self.device)
+            average_ref = mixed_image.to(self.device)
+            x_start = average_ref.clone()
 
             t0 = torch.full((n,), init_timestep, device=self.device, dtype=torch.long)
             model_out0 = model(x_start, t0).sample
@@ -84,18 +96,36 @@ class ColdDiffusion:
 
             first_dark_ref = pred_dark_0.detach().clamp(-1, 1)
 
-            # Regular bright branch
-            x_bright = (
-                x_start
-                - self.mix_images(pred_bright_0, pred_dark_0, t0)
-                + self.mix_images(pred_bright_0, pred_dark_0, t0 - 1)
+            # Bright branch:
+            # target = predicted bright from model
+            # auxiliary dark is mathematically extracted from the fixed GT average
+            dark_aux_0 = self._extract_other_from_average(
+                average_image=average_ref,
+                dominant_image=pred_bright_0,
+                alpha=alpha_init,
+                dominant_is_first=True,
             )
 
-            # Dark-dominant branch
+            x_bright = (
+                x_start
+                - self.mix_images(pred_bright_0, dark_aux_0, t0)
+                + self.mix_images(pred_bright_0, dark_aux_0, t0 - 1)
+            )
+
+            # Dark branch:
+            # initial target = predicted dark from model
+            # auxiliary bright is mathematically extracted from the fixed GT average
+            bright_aux_0 = self._extract_other_from_average(
+                average_image=average_ref,
+                dominant_image=pred_dark_0,
+                alpha=alpha_init,
+                dominant_is_first=False,
+            )
+
             x_dark = (
                 x_start
-                - self.mix_images(pred_dark_0, pred_bright_0, t0)
-                + self.mix_images(pred_dark_0, pred_bright_0, t0 - 1)
+                - self.mix_images(pred_dark_0, bright_aux_0, t0)
+                + self.mix_images(pred_dark_0, bright_aux_0, t0 - 1)
             )
 
             switch_detect_step = torch.full((n,), -1, device=self.device, dtype=torch.long)
@@ -104,18 +134,26 @@ class ColdDiffusion:
             for i in reversed(range(1, init_timestep)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
 
-                # Bright branch: always standard
+                # Bright branch:
+                # use predicted bright as target, extract dark mathematically from GT average
                 model_out_bright = model(x_bright, t).sample
                 pred_bright_branch = model_out_bright[:, :3]
-                pred_dark_aux = model_out_bright[:, 3:]
+
+                dark_aux = self._extract_other_from_average(
+                    average_image=average_ref,
+                    dominant_image=pred_bright_branch,
+                    alpha=alpha_init,
+                    dominant_is_first=True,
+                )
 
                 x_bright = (
                     x_bright
-                    - self.mix_images(pred_bright_branch, pred_dark_aux, t)
-                    + self.mix_images(pred_bright_branch, pred_dark_aux, t - 1)
+                    - self.mix_images(pred_bright_branch, dark_aux, t)
+                    + self.mix_images(pred_bright_branch, dark_aux, t - 1)
                 )
 
-                # Dark branch: LPIPS-based switch detection
+                # Dark branch:
+                # detect switch using raw model predictions against first dark prediction
                 model_out_dark = model(x_dark, t).sample
                 pred_first = model_out_dark[:, :3].clamp(-1, 1)
                 pred_second = model_out_dark[:, 3:].clamp(-1, 1)
@@ -134,10 +172,12 @@ class ColdDiffusion:
                     pred_first,
                     pred_second,
                 )
-                bright_aux = torch.where(
-                    switch_active[:, None, None, None],
-                    pred_second,
-                    pred_first,
+
+                bright_aux = self._extract_other_from_average(
+                    average_image=average_ref,
+                    dominant_image=dark_pred,
+                    alpha=alpha_init,
+                    dominant_is_first=False,
                 )
 
                 x_dark = (
@@ -149,7 +189,7 @@ class ColdDiffusion:
         if was_training:
             model.train()
 
-        return to_uint8(x_bright), to_uint8(x_dark)
+        return to_uint8(x_bright), to_uint8(x_dark)         
 
 
 def get_unet(image_size):
@@ -418,7 +458,12 @@ def eval(args):
 
     for bright_images, dark_images in val_dataloader:
         mixed_images = bright_images * (1 - args.alpha_init) + dark_images * args.alpha_init
-        predicted_bright, predicted_dark = diffusion.sample(model, mixed_images, args.alpha_init)
+        predicted_bright, predicted_dark = diffusion.sample_dual_branch_lpips_switch(
+            model,
+            mixed_images,
+            alpha_init=args.alpha_init,
+            switch_delay=10,
+        )	
 
         bright_uint8 = to_uint8(bright_images)
         dark_uint8 = to_uint8(dark_images)
@@ -474,7 +519,7 @@ def eval(args):
             torch.cat(grid_predicted_dark)[:50],
             torch.cat(grid_bright)[:50],
             torch.cat(grid_dark)[:50],
-            os.path.join(base_dir, "samples", "eval", "eval_grid_50.jpg"),
+            os.path.join(base_dir, "samples", "eval", "eval_grid_50_2.jpg"),
             input_images=torch.cat(grid_mixed)[:50],
         )
 
