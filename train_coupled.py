@@ -827,29 +827,16 @@ def eval_single_dark_trajectory(args):
 
     print(f"Saved single-image dark trajectory grid to: {save_path}")
 
-def _tensor_to_pil_image(tensor):
-    tensor = tensor.detach().cpu().clamp(-1, 1)
-    tensor_uint8 = to_uint8(tensor.unsqueeze(0))[0]
-    array = tensor_uint8.permute(1, 2, 0).numpy()
-    return Image.fromarray(array)
+def _mse_01(pred, target):
+    pred_01 = (pred.detach().clamp(-1, 1) + 1.0) / 2.0
+    target_01 = (target.detach().clamp(-1, 1) + 1.0) / 2.0
+    return F.mse_loss(pred_01, target_01).item()
 
 
-def _get_single_val_pair(dataloader, sample_index, device):
-    if sample_index < 0:
-        raise ValueError(f"sample_index must be >= 0, got {sample_index}")
-
-    running_index = 0
-    for bright_batch, dark_batch in dataloader:
-        batch_size = bright_batch.shape[0]
-        if running_index + batch_size > sample_index:
-            local_index = sample_index - running_index
-            return (
-                bright_batch[local_index : local_index + 1].to(device),
-                dark_batch[local_index : local_index + 1].to(device),
-            )
-        running_index += batch_size
-
-    raise IndexError(f"sample_index={sample_index} is out of range for the validation set")
+def _lpips_minus1_1(lpips_model, pred, target):
+    pred = pred.detach().clamp(-1, 1).unsqueeze(0)
+    target = target.detach().clamp(-1, 1).unsqueeze(0)
+    return lpips_model(pred, target).item()
 
 
 def _save_two_prediction_trajectory_grid(rows, save_path):
@@ -859,8 +846,8 @@ def _save_two_prediction_trajectory_grid(rows, save_path):
     image_w, image_h = sample_img.size
 
     label_w = 58
-    cell_w = image_w
-    text_h = 14
+    cell_w = max(image_w, 92)
+    text_h = 26
     row_h = image_h + text_h
     col_gap = 12
     row_gap = 6
@@ -884,13 +871,28 @@ def _save_two_prediction_trajectory_grid(rows, save_path):
         draw.text((outer_pad, y0 + image_h // 2 - 5), f"t={row['t']}", fill="black", font=font)
 
         entries = [
-            _tensor_to_pil_image(row["pred_bright"]),
-            _tensor_to_pil_image(row["pred_dark"]),
+            (
+                _tensor_to_pil_image(row["pred_bright"]),
+                f"MSE: {row['mse_bright_to_dark']:.4f}\nLPIPS: {row['lpips_bright_to_dark']:.4f}",
+            ),
+            (
+                _tensor_to_pil_image(row["pred_dark"]),
+                f"MSE: {row['mse_dark_to_dark']:.4f}\nLPIPS: {row['lpips_dark_to_dark']:.4f}",
+            ),
         ]
 
-        for col, img in enumerate(entries):
+        for col, (img, text) in enumerate(entries):
             x0 = outer_pad + label_w + col * (cell_w + col_gap)
-            canvas.paste(img, (x0, y0))
+            img_x = x0 + (cell_w - img.width) // 2
+
+            canvas.paste(img, (img_x, y0))
+            draw.multiline_text(
+                (x0, y0 + image_h + 2),
+                text,
+                fill="black",
+                font=font,
+                spacing=0,
+            )
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     canvas.save(save_path)
@@ -913,13 +915,15 @@ def eval_single_dark_dominant_path(args):
         device=device,
     )
 
+    lpips_model = lpips.LPIPS(net="alex").to(device)
+    lpips_model.eval()
+
     bright_image, dark_image = _get_single_val_pair(
         val_dataloader,
         args.single_eval_index,
         device,
     )
 
-    # Dark-dominant corrupted input: dark is passed first to mix_images.
     full_t = torch.tensor([diffusion.max_timesteps], device=device, dtype=torch.long)
     x_t = diffusion.mix_images(dark_image, bright_image, full_t).clone()
 
@@ -933,15 +937,22 @@ def eval_single_dark_dominant_path(args):
             predicted_bright_raw = model_out[:, :3]
             predicted_dark_raw = model_out[:, 3:]
 
+            pred_bright = predicted_bright_raw[0].clamp(-1, 1)
+            pred_dark = predicted_dark_raw[0].clamp(-1, 1)
+            gt_dark = dark_image[0]
+
             rows.append(
                 {
                     "t": i,
-                    "pred_bright": predicted_bright_raw[0].cpu(),
-                    "pred_dark": predicted_dark_raw[0].cpu(),
+                    "pred_bright": pred_bright.cpu(),
+                    "pred_dark": pred_dark.cpu(),
+                    "mse_bright_to_dark": _mse_01(pred_bright, gt_dark),
+                    "lpips_bright_to_dark": _lpips_minus1_1(lpips_model, pred_bright, gt_dark),
+                    "mse_dark_to_dark": _mse_01(pred_dark, gt_dark),
+                    "lpips_dark_to_dark": _lpips_minus1_1(lpips_model, pred_dark, gt_dark),
                 }
             )
 
-            # Reverse path now treats predicted dark as the anchor / dominant image.
             x_t = (
                 x_t
                 - diffusion.mix_images(predicted_dark_raw, predicted_bright_raw, t)
@@ -952,7 +963,7 @@ def eval_single_dark_dominant_path(args):
         base_dir,
         "samples",
         "eval",
-        f"single_dark_dominant_path_idx{args.single_eval_index}.png",
+        f"single_dark_dominant_path_idx{args.single_eval_index}_metrics.png",
     )
 
     _save_two_prediction_trajectory_grid(rows, save_path)
@@ -981,13 +992,13 @@ def launch():
     parser.add_argument("--val_every", default=1, type=int, help="Run validation every N epochs")
     parser.add_argument("--num_fixed_samples", default=10, type=int, help="Number of fixed validation pairs for previews")
 
-    parser.add_argument("--single_eval_index", default=0, type=int, help="Index of the deterministic validation sample to visualize")
+    parser.add_argument("--single_eval_index", default=1, type=int, help="Index of the deterministic validation sample to visualize")
 
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
 
     eval_single_dark_dominant_path(args)
-    eval_single_dark_trajectory(args)
+    #eval_single_dark_trajectory(args)
     #eval_fixed_50(args)
     #train(args)
     #eval(args)
