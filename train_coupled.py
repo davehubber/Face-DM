@@ -19,10 +19,19 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 class ColdDiffusion:
-    def __init__(self, max_timesteps=250, alpha_max=0.5, device="cuda"):
+    def __init__(self, max_timesteps=250, alpha_max=0.5, device="cuda", lpips_net="alex"):
         self.max_timesteps = max_timesteps
         self.device = device
         self.alteration_per_t = alpha_max / max_timesteps
+
+        self.lpips_net = lpips_net
+        self.lpips_model = None
+
+    def _get_lpips_model(self):
+        if self.lpips_model is None:
+            self.lpips_model = lpips.LPIPS(net=self.lpips_net).to(self.device)
+            self.lpips_model.eval()
+        return self.lpips_model
 
     def mix_images(self, bright_image, dark_image, t):
         weight = (self.alteration_per_t * t)[:, None, None, None]
@@ -54,6 +63,92 @@ class ColdDiffusion:
 
         predicted_dark = (mixed_image - (1.0 - alpha_init) * x_t) / alpha_init
         return to_uint8(x_t), to_uint8(predicted_dark)
+    
+    def sample_dual_branch_lpips_switch(self, model, mixed_image, alpha_init=0.5, switch_delay=10):
+        n = len(mixed_image)
+        init_timestep = math.ceil(alpha_init / self.alteration_per_t)
+
+        was_training = model.training
+        model.eval()
+
+        lpips_model = self._get_lpips_model()
+
+        with torch.no_grad():
+            x_start = mixed_image.to(self.device)
+
+            t0 = torch.full((n,), init_timestep, device=self.device, dtype=torch.long)
+            model_out0 = model(x_start, t0).sample
+            pred_bright_0 = model_out0[:, :3]
+            pred_dark_0 = model_out0[:, 3:]
+
+            first_dark_ref = pred_dark_0.detach().clamp(-1, 1)
+
+            # Regular bright branch
+            x_bright = (
+                x_start
+                - self.mix_images(pred_bright_0, pred_dark_0, t0)
+                + self.mix_images(pred_bright_0, pred_dark_0, t0 - 1)
+            )
+
+            # Dark-dominant branch
+            x_dark = (
+                x_start
+                - self.mix_images(pred_dark_0, pred_bright_0, t0)
+                + self.mix_images(pred_dark_0, pred_bright_0, t0 - 1)
+            )
+
+            switch_detect_step = torch.full((n,), -1, device=self.device, dtype=torch.long)
+            switch_apply_step = torch.full((n,), -1, device=self.device, dtype=torch.long)
+
+            for i in reversed(range(1, init_timestep)):
+                t = torch.full((n,), i, device=self.device, dtype=torch.long)
+
+                # Bright branch: always standard
+                model_out_bright = model(x_bright, t).sample
+                pred_bright_branch = model_out_bright[:, :3]
+                pred_dark_aux = model_out_bright[:, 3:]
+
+                x_bright = (
+                    x_bright
+                    - self.mix_images(pred_bright_branch, pred_dark_aux, t)
+                    + self.mix_images(pred_bright_branch, pred_dark_aux, t - 1)
+                )
+
+                # Dark branch: LPIPS-based switch detection
+                model_out_dark = model(x_dark, t).sample
+                pred_first = model_out_dark[:, :3].clamp(-1, 1)
+                pred_second = model_out_dark[:, 3:].clamp(-1, 1)
+
+                lpips_first = lpips_model(pred_first, first_dark_ref).reshape(-1)
+                lpips_second = lpips_model(pred_second, first_dark_ref).reshape(-1)
+
+                just_detected = (switch_detect_step < 0) & (lpips_first < lpips_second)
+                switch_detect_step[just_detected] = i
+                switch_apply_step[just_detected] = i - switch_delay
+
+                switch_active = (switch_apply_step >= 1) & (i <= switch_apply_step)
+
+                dark_pred = torch.where(
+                    switch_active[:, None, None, None],
+                    pred_first,
+                    pred_second,
+                )
+                bright_aux = torch.where(
+                    switch_active[:, None, None, None],
+                    pred_second,
+                    pred_first,
+                )
+
+                x_dark = (
+                    x_dark
+                    - self.mix_images(dark_pred, bright_aux, t)
+                    + self.mix_images(dark_pred, bright_aux, t - 1)
+                )
+
+        if was_training:
+            model.train()
+
+        return to_uint8(x_bright), to_uint8(x_dark)
 
 
 def get_unet(image_size):
@@ -398,133 +493,6 @@ def eval(args):
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
-def _run_iterative_eval(args, max_items=None, grid_filename="eval_grid_50.jpg", metrics_filename="final_metrics.txt", title_suffix="Entire Validation Set"):
-    accelerator = Accelerator()
-    device = accelerator.device
-    base_dir = os.path.join("experiments", args.run_name)
-
-    val_dataloader = get_data(args, "val")
-    model = get_unet(args.image_size)
-
-    model, val_dataloader = accelerator.prepare(model, val_dataloader)
-
-    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
-    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-
-    diffusion = ColdDiffusion(
-        max_timesteps=args.max_timesteps,
-        alpha_max=args.alpha_max,
-        device=device,
-    )
-    lpips_model = lpips.LPIPS(net="alex").to(device)
-
-    ssim_bright, ssim_dark, lpips_bright, lpips_dark, psnr_bright, psnr_dark = [], [], [], [], [], []
-    success_count_bright = 0
-    success_count_dark = 0
-    total_items = 0
-
-    grid_predicted_bright, grid_predicted_dark, grid_bright, grid_dark, grid_mixed = [], [], [], [], []
-    collected_for_grid = 0
-    limit = float("inf") if max_items is None else int(max_items)
-
-    for bright_images, dark_images in val_dataloader:
-        if total_items >= limit:
-            break
-
-        remaining = limit - total_items
-        if remaining < len(bright_images):
-            bright_images = bright_images[:remaining]
-            dark_images = dark_images[:remaining]
-
-        mixed_images = bright_images * (1 - args.alpha_init) + dark_images * args.alpha_init
-        predicted_bright, predicted_dark = diffusion.sample(model, mixed_images, args.alpha_init)
-
-        bright_uint8 = to_uint8(bright_images)
-        dark_uint8 = to_uint8(dark_images)
-        mixed_uint8 = to_uint8(mixed_images)
-
-        if collected_for_grid < min(50, limit):
-            grid_predicted_bright.append(predicted_bright.cpu())
-            grid_predicted_dark.append(predicted_dark.cpu())
-            grid_bright.append(bright_uint8.cpu())
-            grid_dark.append(dark_uint8.cpu())
-            grid_mixed.append(mixed_uint8.cpu())
-            collected_for_grid += len(bright_uint8)
-
-        bright_np = bright_uint8.cpu().permute(0, 2, 3, 1).numpy()
-        predicted_bright_np = predicted_bright.cpu().permute(0, 2, 3, 1).numpy()
-        dark_np = dark_uint8.cpu().permute(0, 2, 3, 1).numpy()
-        predicted_dark_np = predicted_dark.cpu().permute(0, 2, 3, 1).numpy()
-        mixed_np = mixed_uint8.cpu().permute(0, 2, 3, 1).numpy()
-
-        with torch.no_grad():
-            for k in range(len(bright_np)):
-                sb, sd, pb, pd, lb, ld = calculate_permutation_invariant_metrics(
-                    bright_np[k],
-                    dark_np[k],
-                    predicted_bright_np[k],
-                    predicted_dark_np[k],
-                    bright_uint8[k],
-                    dark_uint8[k],
-                    predicted_bright[k],
-                    predicted_dark[k],
-                    lpips_model,
-                )
-
-                ssim_mixed_bright = structural_similarity(bright_np[k], mixed_np[k], data_range=255, channel_axis=-1)
-                ssim_mixed_dark = structural_similarity(dark_np[k], mixed_np[k], data_range=255, channel_axis=-1)
-
-                if sb > ssim_mixed_bright:
-                    success_count_bright += 1
-                if sd > ssim_mixed_dark:
-                    success_count_dark += 1
-                total_items += 1
-
-                ssim_bright.append(sb)
-                ssim_dark.append(sd)
-                psnr_bright.append(pb)
-                psnr_dark.append(pd)
-                lpips_bright.append(lb)
-                lpips_dark.append(ld)
-
-    if collected_for_grid > 0:
-        n_grid = min(50, len(ssim_bright))
-        save_images(
-            torch.cat(grid_predicted_bright)[:n_grid],
-            torch.cat(grid_predicted_dark)[:n_grid],
-            torch.cat(grid_bright)[:n_grid],
-            torch.cat(grid_dark)[:n_grid],
-            os.path.join(base_dir, "samples", "eval", grid_filename),
-            input_images=torch.cat(grid_mixed)[:n_grid],
-        )
-
-    metrics_report = (
-        f"--- Iterative Evaluation Metrics ({title_suffix}) ---\n"
-        f"SSIM Bright: {np.average(ssim_bright):.4f}\n"
-        f"SSIM Dark: {np.average(ssim_dark):.4f}\n"
-        f"PSNR Bright: {np.average(psnr_bright):.4f}\n"
-        f"PSNR Dark: {np.average(psnr_dark):.4f}\n"
-        f"LPIPS Bright: {np.average(lpips_bright):.4f}\n"
-        f"LPIPS Dark: {np.average(lpips_dark):.4f}\n"
-        f"Success Rate Bright (%S): {(success_count_bright / total_items) * 100:.2f}%\n"
-        f"Success Rate Dark (%S): {(success_count_dark / total_items) * 100:.2f}%\n"
-    )
-    print(f"\n{metrics_report}")
-
-    with open(os.path.join(base_dir, "results", metrics_filename), "w") as f:
-        f.write(metrics_report)
-
-
-def eval_fixed_50(args):
-    _run_iterative_eval(
-        args,
-        max_items=50,
-        grid_filename="eval_grid_fixed50.jpg",
-        metrics_filename="final_metrics_fixed50.txt",
-        title_suffix="Fixed 50 Validation Images",
-    )
-
 def one_shot_eval(args):
     accelerator = Accelerator()
     device = accelerator.device
@@ -646,19 +614,6 @@ def _tensor_to_pil_image(tensor):
     array = tensor_uint8.permute(1, 2, 0).numpy()
     return Image.fromarray(array)
 
-
-def _mse_01(pred, target):
-    pred_01 = (pred.detach().clamp(-1, 1) + 1.0) / 2.0
-    target_01 = (target.detach().clamp(-1, 1) + 1.0) / 2.0
-    return F.mse_loss(pred_01, target_01).item()
-
-
-def _lpips_minus1_1(lpips_model, pred, target):
-    pred = pred.detach().clamp(-1, 1).unsqueeze(0)
-    target = target.detach().clamp(-1, 1).unsqueeze(0)
-    return lpips_model(pred, target).item()
-
-
 def _get_single_val_pair(dataloader, sample_index, device):
     if sample_index < 0:
         raise ValueError(f"sample_index must be >= 0, got {sample_index}")
@@ -676,168 +631,15 @@ def _get_single_val_pair(dataloader, sample_index, device):
 
     raise IndexError(f"sample_index={sample_index} is out of range for the validation set")
 
-
-def _save_single_dark_trajectory_grid(rows, gt_dark_tensor, save_path):
-    font = ImageFont.load_default()
-
-    gt_pil = _tensor_to_pil_image(gt_dark_tensor)
-    image_w, image_h = gt_pil.size
-
-    label_w = 58
-    cell_w = max(image_w, 92)
-    text_h = 26
-    row_h = image_h + text_h
-    col_gap = 12
-    row_gap = 6
-    header_h = 18
-    outer_pad = 8
-
-    width = outer_pad * 2 + label_w + (3 * cell_w) + (2 * col_gap)
-    height = outer_pad * 2 + header_h + len(rows) * row_h + max(0, len(rows) - 1) * row_gap
-
-    canvas = Image.new("RGB", (width, height), "white")
-    draw = ImageDraw.Draw(canvas)
-
-    headers = ["model dark", "bright->dark", "GT dark"]
-    for col, title in enumerate(headers):
-        x0 = outer_pad + label_w + col * (cell_w + col_gap)
-        draw.text((x0, outer_pad), title, fill="black", font=font)
-
-    gt_text = "MSE: 0.0000\nLPIPS: 0.0000"
-
-    for row_idx, row in enumerate(rows):
-        y0 = outer_pad + header_h + row_idx * (row_h + row_gap)
-
-        draw.text((outer_pad, y0 + image_h // 2 - 5), f"t={row['t']}", fill="black", font=font)
-
-        entries = [
-            (
-                _tensor_to_pil_image(row["pred_dark_model"]),
-                f"MSE: {row['mse_model']:.4f}\nLPIPS: {row['lpips_model']:.4f}",
-            ),
-            (
-                _tensor_to_pil_image(row["pred_dark_math"]),
-                f"MSE: {row['mse_math']:.4f}\nLPIPS: {row['lpips_math']:.4f}",
-            ),
-            (
-                gt_pil,
-                gt_text,
-            ),
-        ]
-
-        for col, (img, text) in enumerate(entries):
-            x0 = outer_pad + label_w + col * (cell_w + col_gap)
-            img_x = x0 + (cell_w - img.width) // 2
-
-            canvas.paste(img, (img_x, y0))
-            draw.multiline_text(
-                (x0, y0 + image_h + 2),
-                text,
-                fill="black",
-                font=font,
-                spacing=0,
-            )
-
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    canvas.save(save_path)
-
-
-def eval_single_dark_trajectory(args):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    base_dir = os.path.join("experiments", args.run_name)
-
-    val_dataloader = get_data(args, "val")
-
-    model = get_unet(args.image_size).to(device)
-    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
-    model.load_state_dict(torch.load(model_path, map_location="cpu"))
-    model.eval()
-
-    diffusion = ColdDiffusion(
-        max_timesteps=args.max_timesteps,
-        alpha_max=args.alpha_max,
-        device=device,
-    )
-
-    lpips_model = lpips.LPIPS(net="alex").to(device)
-    lpips_model.eval()
-
-    bright_image, dark_image = _get_single_val_pair(
-        val_dataloader,
-        args.single_eval_index,
-        device,
-    )
-
-    # Start from the final timestep so you always get one row per timestep.
-    full_t = torch.tensor([diffusion.max_timesteps], device=device, dtype=torch.long)
-    mixed_image = diffusion.mix_images(bright_image, dark_image, full_t)
-    alpha_eval = diffusion.alteration_per_t * diffusion.max_timesteps
-
-    if alpha_eval <= 0:
-        raise ValueError(f"alpha_eval must be > 0, got {alpha_eval}")
-
-    rows = []
-    x_t = mixed_image.clone()
-
-    with torch.no_grad():
-        for i in reversed(range(1, diffusion.max_timesteps + 1)):
-            t = torch.tensor([i], device=device, dtype=torch.long)
-
-            model_out = model(x_t, t).sample
-            predicted_bright_raw = model_out[:, :3]
-            predicted_dark_model_raw = model_out[:, 3:]
-
-            predicted_dark_math_raw = (
-                mixed_image - (1.0 - alpha_eval) * predicted_bright_raw
-            ) / alpha_eval
-
-            predicted_dark_model = predicted_dark_model_raw.clamp(-1, 1)
-            predicted_dark_math = predicted_dark_math_raw.clamp(-1, 1)
-
-            rows.append(
-                {
-                    "t": i,
-                    "pred_dark_model": predicted_dark_model[0].cpu(),
-                    "pred_dark_math": predicted_dark_math[0].cpu(),
-                    "mse_model": _mse_01(predicted_dark_model[0], dark_image[0]),
-                    "mse_math": _mse_01(predicted_dark_math[0], dark_image[0]),
-                    "lpips_model": _lpips_minus1_1(lpips_model, predicted_dark_model[0], dark_image[0]),
-                    "lpips_math": _lpips_minus1_1(lpips_model, predicted_dark_math[0], dark_image[0]),
-                }
-            )
-
-            x_t = (
-                x_t
-                - diffusion.mix_images(predicted_bright_raw, predicted_dark_model_raw, t)
-                + diffusion.mix_images(predicted_bright_raw, predicted_dark_model_raw, t - 1)
-            )
-
-    save_path = os.path.join(
-        base_dir,
-        "samples",
-        "eval",
-        f"single_dark_trajectory_idx{args.single_eval_index}.png",
-    )
-
-    _save_single_dark_trajectory_grid(
-        rows=rows,
-        gt_dark_tensor=dark_image[0].cpu(),
-        save_path=save_path,
-    )
-
-    print(f"Saved single-image dark trajectory grid to: {save_path}")
-
 def _mse_01(pred, target):
     pred_01 = (pred.detach().clamp(-1, 1) + 1.0) / 2.0
     target_01 = (target.detach().clamp(-1, 1) + 1.0) / 2.0
     return F.mse_loss(pred_01, target_01).item()
 
-
 def _lpips_minus1_1(lpips_model, pred, target):
     pred = pred.detach().clamp(-1, 1).unsqueeze(0)
     target = target.detach().clamp(-1, 1).unsqueeze(0)
     return lpips_model(pred, target).item()
-
 
 def _save_dark_reference_trajectory_grid(rows, save_path, title_left, title_right, ref_tag):
     font = ImageFont.load_default()
@@ -1036,11 +838,8 @@ def launch():
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
 
-    eval_single_dark_dominant_path(args)
-    #eval_single_dark_trajectory(args)
-    #eval_fixed_50(args)
     #train(args)
-    #eval(args)
+    eval(args)
     #one_shot_eval(args)
 
 
