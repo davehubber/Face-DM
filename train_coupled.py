@@ -53,7 +53,6 @@ class ColdDiffusion:
 
                 model_out = model(x_t, t).sample
                 predicted_bright = model_out[:, :3]
-                #predicted_dark = model_out[:, 3:]
                 predicted_dark = (mixed_image - (1.0 - alpha_init) * predicted_bright) / alpha_init
 
                 x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
@@ -63,133 +62,7 @@ class ColdDiffusion:
         model.train()
 
         predicted_dark = (mixed_image - (1.0 - alpha_init) * x_t) / alpha_init
-        return to_uint8(x_t), to_uint8(predicted_dark)
-
-    def _extract_other_from_average(self, average_image, dominant_image, alpha, dominant_is_first):
-        if not (0.0 < alpha < 1.0):
-            raise ValueError(f"alpha must be in (0, 1) for mathematical extraction, got {alpha}")
-
-        if dominant_is_first:
-            # average = dominant * (1 - alpha) + other * alpha
-            return (average_image - (1.0 - alpha) * dominant_image) / alpha
-
-        # average = other * (1 - alpha) + dominant * alpha
-        return (average_image - alpha * dominant_image) / (1.0 - alpha)
-
-    def sample_dual_branch_lpips_switch(self, model, mixed_image, alpha_init=0.5, switch_delay=10):
-        n = len(mixed_image)
-        init_timestep = math.ceil(alpha_init / self.alteration_per_t)
-
-        was_training = model.training
-        model.eval()
-
-        lpips_model = self._get_lpips_model()
-
-        with torch.no_grad():
-            average_ref = mixed_image.to(self.device)
-            x_start = average_ref.clone()
-
-            t0 = torch.full((n,), init_timestep, device=self.device, dtype=torch.long)
-            model_out0 = model(x_start, t0).sample
-            pred_bright_0 = model_out0[:, :3]
-            pred_dark_0 = model_out0[:, 3:]
-
-            first_dark_ref = pred_dark_0.detach().clamp(-1, 1)
-
-            # Bright branch:
-            # target = predicted bright from model
-            # auxiliary dark is mathematically extracted from the fixed GT average
-            dark_aux_0 = self._extract_other_from_average(
-                average_image=average_ref,
-                dominant_image=pred_bright_0,
-                alpha=alpha_init,
-                dominant_is_first=True,
-            )
-
-            x_bright = (
-                x_start
-                - self.mix_images(pred_bright_0, dark_aux_0, t0)
-                + self.mix_images(pred_bright_0, dark_aux_0, t0 - 1)
-            )
-
-            # Dark branch:
-            # initial target = predicted dark from model
-            # auxiliary bright is mathematically extracted from the fixed GT average
-            bright_aux_0 = self._extract_other_from_average(
-                average_image=average_ref,
-                dominant_image=pred_dark_0,
-                alpha=alpha_init,
-                dominant_is_first=False,
-            )
-
-            x_dark = (
-                x_start
-                - self.mix_images(pred_dark_0, bright_aux_0, t0)
-                + self.mix_images(pred_dark_0, bright_aux_0, t0 - 1)
-            )
-
-            switch_detect_step = torch.full((n,), -1, device=self.device, dtype=torch.long)
-            switch_apply_step = torch.full((n,), -1, device=self.device, dtype=torch.long)
-
-            for i in reversed(range(1, init_timestep)):
-                t = torch.full((n,), i, device=self.device, dtype=torch.long)
-
-                # Bright branch:
-                # use predicted bright as target, extract dark mathematically from GT average
-                model_out_bright = model(x_bright, t).sample
-                pred_bright_branch = model_out_bright[:, :3]
-
-                dark_aux = self._extract_other_from_average(
-                    average_image=average_ref,
-                    dominant_image=pred_bright_branch,
-                    alpha=alpha_init,
-                    dominant_is_first=True,
-                )
-
-                x_bright = (
-                    x_bright
-                    - self.mix_images(pred_bright_branch, dark_aux, t)
-                    + self.mix_images(pred_bright_branch, dark_aux, t - 1)
-                )
-
-                # Dark branch:
-                # detect switch using raw model predictions against first dark prediction
-                model_out_dark = model(x_dark, t).sample
-                pred_first = model_out_dark[:, :3].clamp(-1, 1)
-                pred_second = model_out_dark[:, 3:].clamp(-1, 1)
-
-                lpips_first = lpips_model(pred_first, first_dark_ref).reshape(-1)
-                lpips_second = lpips_model(pred_second, first_dark_ref).reshape(-1)
-
-                just_detected = (switch_detect_step < 0) & (lpips_first < lpips_second)
-                switch_detect_step[just_detected] = i
-                switch_apply_step[just_detected] = i - switch_delay
-
-                switch_active = (switch_apply_step >= 1) & (i <= switch_apply_step)
-
-                dark_pred = torch.where(
-                    switch_active[:, None, None, None],
-                    pred_first,
-                    pred_second,
-                )
-
-                bright_aux = self._extract_other_from_average(
-                    average_image=average_ref,
-                    dominant_image=dark_pred,
-                    alpha=alpha_init,
-                    dominant_is_first=False,
-                )
-
-                x_dark = (
-                    x_dark
-                    - self.mix_images(dark_pred, bright_aux, t)
-                    + self.mix_images(dark_pred, bright_aux, t - 1)
-                )
-
-        if was_training:
-            model.train()
-
-        return to_uint8(x_bright), to_uint8(x_dark)         
+        return to_uint8(x_t), to_uint8(predicted_dark)       
 
 
 def get_unet(image_size):
@@ -879,13 +752,14 @@ def launch():
     parser.add_argument("--val_every", default=1, type=int, help="Run validation every N epochs")
     parser.add_argument("--num_fixed_samples", default=10, type=int, help="Number of fixed validation pairs for previews")
 
-    parser.add_argument("--single_eval_index", default=2, type=int, help="Index of the deterministic validation sample to visualize")
+    parser.add_argument("--single_eval_index", default=3, type=int, help="Index of the deterministic validation sample to visualize")
 
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
 
+    eval_single_dark_dominant_path(args)
     #train(args)
-    eval(args)
+    #eval(args)
     #one_shot_eval(args)
 
 
