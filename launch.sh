@@ -8,4 +8,4 @@
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train_semantic.py --run_name "latent_avg_faces" --batch_size 1024
+python train_semantic.py --run_name "latent_avg_faces" --epochs 10 --batch_size 1024
