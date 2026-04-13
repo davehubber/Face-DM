@@ -1,0 +1,4 @@
+--- One-Shot Evaluation (Validation Set) ---
+Dominant MSE: 0.00421178
+Recessive MSE: 0.00421178
+Total MSE: 0.00421178
