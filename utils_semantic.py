@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 SPLIT_SEED = 42
@@ -35,7 +36,8 @@ class SemanticPairsDataset(Dataset):
         self.global_mean = -0.04999
         self.global_std = 0.28236
         self.embeddings = (self.embeddings - self.global_mean) / self.global_std
-        
+        self.reference = F.normalize(self.embeddings.mean(dim=0), dim=0)
+
         self.sample_ids: List[str] = list(pack["sample_ids"])
         self.source_paths: List[str] = list(pack["source_paths"])
         self.relative_paths: List[str] = list(pack.get("relative_paths", [""] * len(self.sample_ids)))
@@ -72,10 +74,11 @@ class SemanticPairsDataset(Dataset):
     def _ordered_pair(self, idx1: int, idx2: int) -> Dict:
         emb1 = self.embeddings[idx1]
         emb2 = self.embeddings[idx2]
-        norm1 = emb1.norm(p=2).item()
-        norm2 = emb2.norm(p=2).item()
 
-        if norm1 >= norm2:
+        sim1 = F.cosine_similarity(emb1.unsqueeze(0), self.reference.unsqueeze(0), dim=1).item()
+        sim2 = F.cosine_similarity(emb2.unsqueeze(0), self.reference.unsqueeze(0), dim=1).item()
+
+        if sim1 >= sim2:
             dominant_idx, recessive_idx = idx1, idx2
             dominant_embedding, recessive_embedding = emb1, emb2
         else:
@@ -93,8 +96,8 @@ class SemanticPairsDataset(Dataset):
             "recessive_source_path": self.source_paths[recessive_idx],
             "dominant_relative_path": self.relative_paths[dominant_idx],
             "recessive_relative_path": self.relative_paths[recessive_idx],
-            "dominant_norm": max(norm1, norm2),
-            "recessive_norm": min(norm1, norm2),
+            "dominant_norm": max(sim1, sim2),   # can keep key names to avoid changing anything else
+            "recessive_norm": min(sim1, sim2),
         }
 
     def __getitem__(self, index: int) -> Dict:
