@@ -31,6 +31,11 @@ class SemanticPairsDataset(Dataset):
 
         pack = torch.load(split_path, map_location="cpu")
         self.embeddings = pack["z_sem"].to(torch.float32)
+
+        self.global_mean = -0.04999
+        self.global_std = 0.28236
+        self.embeddings = (self.embeddings - self.global_mean) / self.global_std
+        
         self.sample_ids: List[str] = list(pack["sample_ids"])
         self.source_paths: List[str] = list(pack["source_paths"])
         self.relative_paths: List[str] = list(pack.get("relative_paths", [""] * len(self.sample_ids)))
