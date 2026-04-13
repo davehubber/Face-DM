@@ -40,7 +40,8 @@ class SemanticPairsDataset(Dataset):
             os.path.join(dataset_root, "semantic_stats", "global_pc1_stats.pt"),
             map_location="cpu",
         )
-        self.reference = F.normalize(stats["mu"].to(torch.float32), dim=0)
+        self.reference_mu = stats["mu"].to(torch.float32)
+        self.reference_pc1 = F.normalize(stats["pc1"].to(torch.float32), dim=0)
 
         self.sample_ids: List[str] = list(pack["sample_ids"])
         self.source_paths: List[str] = list(pack["source_paths"])
@@ -79,10 +80,10 @@ class SemanticPairsDataset(Dataset):
         emb1 = self.embeddings[idx1]
         emb2 = self.embeddings[idx2]
 
-        sim1 = F.cosine_similarity(emb1.unsqueeze(0), self.reference.unsqueeze(0), dim=1).item()
-        sim2 = F.cosine_similarity(emb2.unsqueeze(0), self.reference.unsqueeze(0), dim=1).item()
+        score1 = torch.dot(emb1 - self.reference_mu, self.reference_pc1).item()
+        score2 = torch.dot(emb2 - self.reference_mu, self.reference_pc1).item()
 
-        if sim1 >= sim2:
+        if score1 >= score2:
             dominant_idx, recessive_idx = idx1, idx2
             dominant_embedding, recessive_embedding = emb1, emb2
         else:
@@ -100,8 +101,8 @@ class SemanticPairsDataset(Dataset):
             "recessive_source_path": self.source_paths[recessive_idx],
             "dominant_relative_path": self.relative_paths[dominant_idx],
             "recessive_relative_path": self.relative_paths[recessive_idx],
-            "dominant_norm": max(sim1, sim2),   # can keep key names to avoid changing anything else
-            "recessive_norm": min(sim1, sim2),
+            "dominant_norm": max(score1, score2),
+            "recessive_norm": min(score1, score2),
         }
 
     def __getitem__(self, index: int) -> Dict:
