@@ -1,0 +1,23 @@
+{
+  "model_name": "ffhq256_autoenc",
+  "checkpoint": "/nas-ctm01/homes/dacordeiro/Face-DM/ffhq256_autoenc/last.ckpt",
+  "images_root": "/nas-ctm01/datasets/public/ffhq256",
+  "num_images_total": 10,
+  "num_train": 9,
+  "num_val": 1,
+  "val_ratio": 0.1,
+  "split_seed": 0,
+  "image_size": 256,
+  "semantic_dtype": "float32",
+  "normalization": "images normalized to [-1,1] with mean=std=0.5 per channel",
+  "files": {
+    "train_embeddings": "semantic/train_zsem.pt",
+    "val_embeddings": "semantic/val_zsem.pt",
+    "manifest": "manifest.csv"
+  },
+  "notes": [
+    "Only semantic embeddings are stored.",
+    "Stochastic code x_T should be computed on demand from the original image.",
+    "semantic_row is the row inside the corresponding split file."
+  ]
+}
