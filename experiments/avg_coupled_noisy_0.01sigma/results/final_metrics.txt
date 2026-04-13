@@ -1,9 +1,0 @@
---- TACoS Sampling Evaluation Metrics (Entire Test Set) ---
-SSIM Target: 0.3922
-SSIM Deduced: 0.3909
-PSNR Target: 15.2101
-PSNR Deduced: 15.2053
-LPIPS Target: 0.2967
-LPIPS Deduced: 0.2981
-Success Rate of Reversal Target (%S): 1.72%
-Success Rate of Reversal Deduced (%S): 1.54%

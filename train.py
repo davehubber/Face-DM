@@ -1,444 +1,554 @@
-import os, torch, numpy as np, math
+import math
+import os
+
+import lpips
+import numpy as np
+import torch
 import torch.nn.functional as F
 import wandb
-import lpips
-from torch import optim
-from utils import *
-
 from accelerate import Accelerator
 from diffusers import UNet2DModel
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from diffusers.training_utils import EMAModel
-from skimage.metrics import structural_similarity, peak_signal_noise_ratio
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+from torch import optim
+
+from utils import get_data, save_images, setup_logging, to_uint8
+
+from PIL import Image, ImageDraw, ImageFont
+
 
 class ColdDiffusion:
-    def __init__(self, max_timesteps=250, alpha_start=0., alpha_max=0.5, img_size=256, device="cuda"):
+    def __init__(self, max_timesteps=250, alpha_max=0.5, device="cuda", lpips_net="alex"):
         self.max_timesteps = max_timesteps
-        self.img_size = img_size
         self.device = device
-        self.alteration_per_t = (alpha_max - alpha_start) / max_timesteps
+        self.alteration_per_t = alpha_max / max_timesteps
 
-    def mix_images(self, image_1, image_2, t):
-        return image_1 * (1. - self.alteration_per_t * t)[:, None, None, None] + image_2 * (self.alteration_per_t * t)[:, None, None, None]
+        self.lpips_net = lpips_net
+        self.lpips_model = None
+
+    def _get_lpips_model(self):
+        if self.lpips_model is None:
+            self.lpips_model = lpips.LPIPS(net=self.lpips_net).to(self.device)
+            self.lpips_model.eval()
+        return self.lpips_model
+
+    def mix_images(self, bright_image, dark_image, t):
+        weight = (self.alteration_per_t * t)[:, None, None, None]
+        return bright_image * (1.0 - weight) + dark_image * weight
 
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
 
-    def sample(self, model, superimposed_image, alpha_init=0.5):
-        n = len(superimposed_image)
+    def sample(self, model, mixed_image, alpha_init=0.5):
+        n = len(mixed_image)
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
+
         model.eval()
         with torch.no_grad():
-            x_t = superimposed_image.to(self.device)
+            x_t = mixed_image.to(self.device)
 
             for i in reversed(range(1, init_timestep + 1)):
-                t = (torch.ones(n) * i).long().to(self.device)
+                t = torch.full((n,), i, device=self.device, dtype=torch.long)
 
-                predicted_image = model(x_t, t).sample
-                
-                other_image = (superimposed_image - (1. - alpha_init) * predicted_image) / alpha_init
+                model_out = model(x_t, t).sample
+                predicted_bright = model_out[:, :3]
+                predicted_dark = (mixed_image - (1.0 - alpha_init) * predicted_bright) / alpha_init
 
-                x_t = x_t - self.mix_images(predicted_image, other_image, t) + self.mix_images(predicted_image, other_image, t-1)
-        
+                x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
+                    predicted_bright, predicted_dark, t - 1
+                )
+
         model.train()
 
-        other_image = (superimposed_image - (1 - alpha_init) * x_t) / alpha_init
-        other_image = (other_image.clamp(-1, 1) + 1) / 2
-        other_image = (other_image * 255).type(torch.uint8)
+        predicted_dark = (mixed_image - (1.0 - alpha_init) * x_t) / alpha_init
+        return to_uint8(x_t), to_uint8(predicted_dark)       
 
-        x_t = (x_t.clamp(-1, 1) + 1) / 2
-        x_t = (x_t * 255).type(torch.uint8)
-
-        return x_t, other_image
 
 def get_unet(image_size):
     resolution = image_size[0] if isinstance(image_size, tuple) else image_size
     return UNet2DModel(
         sample_size=resolution,
         in_channels=3,
-        out_channels=3,
+        out_channels=6,
         layers_per_block=2,
         block_out_channels=(64, 128, 256, 512),
-        down_block_types=(
-            "DownBlock2D",
-            "DownBlock2D",
-            "AttnDownBlock2D",
-            "DownBlock2D",
-        ),
-        up_block_types=(
-            "UpBlock2D",
-            "AttnUpBlock2D",
-            "UpBlock2D",
-            "UpBlock2D",
-        ),
+        down_block_types=("DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "DownBlock2D"),
+        up_block_types=("UpBlock2D", "AttnUpBlock2D", "UpBlock2D", "UpBlock2D"),
     )
+
+
+def build_fixed_validation_timesteps(batch_size, batch_idx, max_timesteps, device):
+    base = torch.arange(batch_size, device=device, dtype=torch.long)
+    return ((base + batch_idx * batch_size) % max_timesteps) + 1
+
+
+def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
+    model.eval()
+    loss_sum = torch.zeros(1, device=accelerator.device)
+    loss_count = torch.zeros(1, device=accelerator.device)
+
+    with torch.no_grad():
+        for batch_idx, (bright_images, dark_images) in enumerate(dataloader):
+            t = build_fixed_validation_timesteps(
+                batch_size=bright_images.shape[0],
+                batch_idx=batch_idx,
+                max_timesteps=diffusion.max_timesteps,
+                device=accelerator.device,
+            )
+            x_t = diffusion.mix_images(bright_images, dark_images, t)
+
+            model_out = model(x_t, t).sample
+            predicted_bright = model_out[:, :3]
+            predicted_dark = model_out[:, 3:]
+
+            loss_bright = F.mse_loss(predicted_bright, bright_images, reduction="sum")
+            loss_dark = F.mse_loss(predicted_dark, dark_images, reduction="sum")
+
+            loss_sum += (loss_bright + loss_dark).detach()
+            loss_count += bright_images.numel() + dark_images.numel()
+
+    avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(loss_count).sum()).item()
+    model.train()
+    return avg_val_loss
+
+
+def save_training_preview(unet, diffusion, fixed_bright_images, fixed_dark_images, alpha_init, save_dir, is_best=False):
+    fixed_mixed = fixed_bright_images * (1 - alpha_init) + fixed_dark_images * alpha_init
+    predicted_bright, predicted_dark = diffusion.sample(unet, fixed_mixed, alpha_init)
+
+    save_path = os.path.join(save_dir, "best.jpg" if is_best else "latest.jpg")
+    save_images(
+        predicted_bright,
+        predicted_dark,
+        to_uint8(fixed_bright_images),
+        to_uint8(fixed_dark_images),
+        save_path,
+        input_images=to_uint8(fixed_mixed),
+    )
+
 
 def train(args):
     base_dir = setup_logging(args.run_name)
-    
+
     accelerator = Accelerator(
         mixed_precision="fp16",
-        gradient_accumulation_steps=1,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
     device = accelerator.device
 
-    train_dataloader = get_data(args, 'train')
-    test_dataloader = get_data(args, 'test')
+    train_dataloader = get_data(args, "train")
+    val_dataloader = get_data(args, "val")
 
     model = get_unet(args.image_size)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    
+
+    steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     lr_scheduler = get_cosine_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=500,
-        num_training_steps=(len(train_dataloader) * args.epochs),
+        num_training_steps=steps_per_epoch * args.epochs,
     )
-    
-    diffusion = ColdDiffusion(img_size=args.image_size, device=device)
 
-    ema_model = EMAModel(
-        model.parameters(),
-        inv_gamma=1.0,
-        power=0.75,
-        max_value=0.9999,
+    diffusion = ColdDiffusion(
+        max_timesteps=args.max_timesteps,
+        alpha_max=args.alpha_max,
+        device=device,
     )
+
+    ema_model = EMAModel(model.parameters(), inv_gamma=1.0, power=0.75, max_value=0.9999)
     ema_model.to(device)
 
     if accelerator.is_main_process:
         wandb.init(project="Face-DM", name=args.run_name, config=vars(args))
-    
-    global_step = 0
 
-    model, optimizer, train_dataloader, test_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, test_dataloader, lr_scheduler
+    model, optimizer, train_dataloader, val_dataloader, lr_scheduler = accelerator.prepare(
+        model, optimizer, train_dataloader, val_dataloader, lr_scheduler
     )
 
-    fixed_val_images, fixed_val_images_add = [], []
-    for val_img, val_img_add in test_dataloader:
-        fixed_val_images.append(val_img)
-        fixed_val_images_add.append(val_img_add)
-        if sum(x.shape[0] for x in fixed_val_images) >= 10:
+    fixed_bright_images, fixed_dark_images = [], []
+    for bright_images, dark_images in val_dataloader:
+        fixed_bright_images.append(bright_images)
+        fixed_dark_images.append(dark_images)
+        if sum(batch.shape[0] for batch in fixed_bright_images) >= args.num_fixed_samples:
             break
-    fixed_val_images = torch.cat(fixed_val_images)[:10].to(device)
-    fixed_val_images_add = torch.cat(fixed_val_images_add)[:10].to(device)
+    fixed_bright_images = torch.cat(fixed_bright_images)[: args.num_fixed_samples].to(device)
+    fixed_dark_images = torch.cat(fixed_dark_images)[: args.num_fixed_samples].to(device)
+
+    best_val_loss = float("inf")
 
     for epoch in range(args.epochs):
         model.train()
-        for _, (images, images_add) in enumerate(train_dataloader):
-            t = diffusion.sample_timesteps(images.shape[0]).to(device)
+        epoch_train_loss_sum = 0.0
+        epoch_train_loss_count = 0
+
+        for bright_images, dark_images in train_dataloader:
+            t = diffusion.sample_timesteps(bright_images.shape[0]).to(device)
 
             with accelerator.accumulate(model):
-                x_t = diffusion.mix_images(images, images_add, t)
-                predicted_image = model(x_t, t).sample
+                x_t = diffusion.mix_images(bright_images, dark_images, t)
 
-                loss = F.mse_loss(predicted_image, images)
+                model_out = model(x_t, t).sample
+                predicted_bright = model_out[:, :3]
+                predicted_dark = model_out[:, 3:]
+
+                loss_bright = F.mse_loss(predicted_bright, bright_images)
+                loss_dark = F.mse_loss(predicted_dark, dark_images)
+                loss = 0.5 * (loss_bright + loss_dark)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), 1.0)
-                
+
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
 
             if accelerator.sync_gradients:
                 ema_model.step(model.parameters())
+                synced_loss = accelerator.gather(loss.detach()).mean().item()
+                epoch_train_loss_sum += synced_loss
+                epoch_train_loss_count += 1
 
-            global_step += 1
-            if global_step % 1000 == 0 and accelerator.is_main_process:
-                wandb.log({
-                    "train_loss": loss.item(),
-                    "step": global_step,
-                    "lr": lr_scheduler.get_last_lr()[0]
-                })
+        accelerator.wait_for_everyone()
 
-        if (epoch + 1) % 5 == 0:
-            model.eval()
-            val_loss = 0.0
-            val_steps = 0
-            
-            with torch.no_grad():
-                for val_images, val_images_add in test_dataloader:
-                    val_t = diffusion.sample_timesteps(val_images.shape[0]).to(device)
-                    val_x_t = diffusion.mix_images(val_images, val_images_add, val_t)
-                    
-                    val_pred = model(val_x_t, val_t).sample
-                    v_loss = F.mse_loss(val_pred, val_images)
-                    
-                    v_loss = accelerator.gather(v_loss).mean()
-                    
-                    val_loss += v_loss.detach() 
-                    val_steps += 1
-                    
-            avg_val_loss = val_loss.item() / val_steps
-            
-            if accelerator.is_main_process:
-                wandb.log({
-                    "val_loss": avg_val_loss,
-                    "epoch": epoch
-                })
+        if (epoch + 1) % args.val_every != 0:
+            continue
 
-        if (epoch + 1) % 50 == 0 and accelerator.is_main_process:
-            unet = accelerator.unwrap_model(model)
-            
-            torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "unet_active.pt"))
+        epoch_train_loss = epoch_train_loss_sum / max(epoch_train_loss_count, 1)
+        unet = accelerator.unwrap_model(model)
 
-            ema_model.store(unet.parameters())
-            ema_model.copy_to(unet.parameters())
+        ema_model.store(unet.parameters())
+        ema_model.copy_to(unet.parameters())
+        val_loss = evaluate_validation_loss(model, val_dataloader, diffusion, accelerator)
+        is_best = val_loss < best_val_loss
 
-            sampled_images, other_images = diffusion.sample(unet, (fixed_val_images + fixed_val_images_add) / 2.)
+        if is_best:
+            best_val_loss = val_loss
 
-            f_images = (fixed_val_images.clamp(-1, 1) + 1) / 2
-            f_images = (f_images * 255).type(torch.uint8)
-            f_images_add = (fixed_val_images_add.clamp(-1, 1) + 1) / 2
-            f_images_add = (f_images_add * 255).type(torch.uint8)
-            
-            save_path = os.path.join(base_dir, "samples", "train_fixed", f"epoch_{epoch+1}.jpg")
-            save_images(sampled_images, other_images, f_images, f_images_add, save_path)
-            
+        if accelerator.is_main_process:
+            wandb.log({"train_loss": epoch_train_loss, "val_loss": val_loss}, step=epoch + 1)
+
             torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "unet_ema.pt"))
-            
-            ema_model.restore(unet.parameters())
+            save_training_preview(
+                unet=unet,
+                diffusion=diffusion,
+                fixed_bright_images=fixed_bright_images,
+                fixed_dark_images=fixed_dark_images,
+                alpha_init=args.alpha_init,
+                save_dir=os.path.join(base_dir, "samples", "train_fixed"),
+                is_best=False,
+            )
+
+            if is_best:
+                torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "unet_ema_best.pt"))
+                save_training_preview(
+                    unet=unet,
+                    diffusion=diffusion,
+                    fixed_bright_images=fixed_bright_images,
+                    fixed_dark_images=fixed_dark_images,
+                    alpha_init=args.alpha_init,
+                    save_dir=os.path.join(base_dir, "samples", "train_fixed"),
+                    is_best=True,
+                )
+
+        ema_model.restore(unet.parameters())
+        accelerator.wait_for_everyone()
 
 
-def calculate_metrics(image, add_image, result_ori_image, result_add_image):
-    ssim_original = structural_similarity(image, result_ori_image, data_range=255, channel_axis=-1)
-    ssim_added = structural_similarity(add_image, result_add_image, data_range=255, channel_axis=-1)
-    psnr_original = peak_signal_noise_ratio(image, result_ori_image, data_range=255)
-    psnr_added = peak_signal_noise_ratio(add_image, result_add_image, data_range=255)
-    return ssim_original, ssim_added, psnr_original, psnr_added
+def calculate_metrics(target_1, target_2, pred_1, pred_2):
+    ssim_1 = structural_similarity(target_1, pred_1, data_range=255, channel_axis=-1)
+    ssim_2 = structural_similarity(target_2, pred_2, data_range=255, channel_axis=-1)
+    psnr_1 = peak_signal_noise_ratio(target_1, pred_1, data_range=255)
+    psnr_2 = peak_signal_noise_ratio(target_2, pred_2, data_range=255)
+    return ssim_1, ssim_2, psnr_1, psnr_2
+
+
+def calculate_lpips(lpips_model, target_tensor, pred_tensor):
+    return lpips_model(
+        (target_tensor.unsqueeze(0).float() - 127.5) / 127.5,
+        (pred_tensor.unsqueeze(0).float() - 127.5) / 127.5,
+    ).item()
+
+
+def calculate_permutation_invariant_metrics(
+    bright_image,
+    dark_image,
+    predicted_bright_image,
+    predicted_dark_image,
+    bright_tensor,
+    dark_tensor,
+    predicted_bright_tensor,
+    predicted_dark_tensor,
+    lpips_model,
+):
+    sb_direct, sd_direct, pb_direct, pd_direct = calculate_metrics(
+        bright_image, dark_image, predicted_bright_image, predicted_dark_image
+    )
+    lb_direct = calculate_lpips(lpips_model, bright_tensor, predicted_bright_tensor)
+    ld_direct = calculate_lpips(lpips_model, dark_tensor, predicted_dark_tensor)
+
+    sb_swap, sd_swap, pb_swap, pd_swap = calculate_metrics(
+        bright_image, dark_image, predicted_dark_image, predicted_bright_image
+    )
+    lb_swap = calculate_lpips(lpips_model, bright_tensor, predicted_dark_tensor)
+    ld_swap = calculate_lpips(lpips_model, dark_tensor, predicted_bright_tensor)
+
+    if (sb_swap + sd_swap) > (sb_direct + sd_direct):
+        return sb_swap, sd_swap, pb_swap, pd_swap, lb_swap, ld_swap
+
+    return sb_direct, sd_direct, pb_direct, pd_direct, lb_direct, ld_direct
+
 
 def eval(args):
     accelerator = Accelerator()
     device = accelerator.device
     base_dir = os.path.join("experiments", args.run_name)
 
-    test_dataloader = get_data(args, 'test')
+    val_dataloader = get_data(args, "val")
     model = get_unet(args.image_size)
-    
-    model, test_dataloader = accelerator.prepare(model, test_dataloader)
-    
+
+    model, val_dataloader = accelerator.prepare(model, val_dataloader)
+
     model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
     accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
-    diffusion = ColdDiffusion(img_size=args.image_size, device=device)
-    lpips_model = lpips.LPIPS(net='alex').to(device)
+    diffusion = ColdDiffusion(
+        max_timesteps=args.max_timesteps,
+        alpha_max=args.alpha_max,
+        device=device,
+    )
+    lpips_model = lpips.LPIPS(net="alex").to(device)
 
-    ssim_o, ssim_a, lpips_o, lpips_a, psnr_o, psnr_a = [], [], [], [], [], []
-    success_count_target = 0
-    success_count_deduced = 0
+    ssim_bright, ssim_dark, lpips_bright, lpips_dark, psnr_bright, psnr_dark = [], [], [], [], [], []
+    success_count_bright = 0
+    success_count_dark = 0
     total_items = 0
-    
-    grid_si, grid_soi, grid_i, grid_ia = [], [], [], []
+
+    grid_predicted_bright, grid_predicted_dark, grid_bright, grid_dark, grid_mixed = [], [], [], [], []
     collected_for_grid = 0
 
-    for i, (images, images_add) in enumerate(test_dataloader):
-        superimposed = images * (1 - args.alpha_init) + images_add * args.alpha_init
-        sampled_images, sampled_other_image = diffusion.sample(model, superimposed, args.alpha_init)
-        
-        images = (images.clamp(-1, 1) + 1) / 2
-        images = (images * 255).type(torch.uint8)
-        
-        images_add = (images_add.clamp(-1, 1) + 1) / 2
-        images_add = (images_add * 255).type(torch.uint8)
-        
-        superimposed = (superimposed.clamp(-1, 1) + 1) / 2
-        superimposed = (superimposed * 255).type(torch.uint8)
+    for bright_images, dark_images in val_dataloader:
+        mixed_images = bright_images * (1 - args.alpha_init) + dark_images * args.alpha_init
+        predicted_bright, predicted_dark = diffusion.sample_dual_branch_lpips_switch(
+            model,
+            mixed_images,
+            alpha_init=args.alpha_init,
+            switch_delay=10,
+        )	
+
+        bright_uint8 = to_uint8(bright_images)
+        dark_uint8 = to_uint8(dark_images)
+        mixed_uint8 = to_uint8(mixed_images)
 
         if collected_for_grid < 50:
-            grid_si.append(sampled_images.cpu())
-            grid_soi.append(sampled_other_image.cpu())
-            grid_i.append(images.cpu())
-            grid_ia.append(images_add.cpu())
-            collected_for_grid += len(images)
+            grid_predicted_bright.append(predicted_bright.cpu())
+            grid_predicted_dark.append(predicted_dark.cpu())
+            grid_bright.append(bright_uint8.cpu())
+            grid_dark.append(dark_uint8.cpu())
+            grid_mixed.append(mixed_uint8.cpu())
+            collected_for_grid += len(bright_uint8)
 
-        images_np = images.cpu().permute(0, 2, 3, 1).numpy()
-        sampled_images_np = sampled_images.cpu().permute(0, 2, 3, 1).numpy()
-        images_add_np = images_add.cpu().permute(0, 2, 3, 1).numpy()
-        sampled_other_image_np = sampled_other_image.cpu().permute(0, 2, 3, 1).numpy()
-        superimposed_np = superimposed.cpu().permute(0, 2, 3, 1).numpy()
-        
+        bright_np = bright_uint8.cpu().permute(0, 2, 3, 1).numpy()
+        predicted_bright_np = predicted_bright.cpu().permute(0, 2, 3, 1).numpy()
+        dark_np = dark_uint8.cpu().permute(0, 2, 3, 1).numpy()
+        predicted_dark_np = predicted_dark.cpu().permute(0, 2, 3, 1).numpy()
+        mixed_np = mixed_uint8.cpu().permute(0, 2, 3, 1).numpy()
+
         with torch.no_grad():
-            for k in range(len(images_np)):
-                so, sa, po, pa = calculate_metrics(images_np[k], images_add_np[k], sampled_images_np[k], sampled_other_image_np[k])
-                lo = lpips_model((images[k].unsqueeze(0).float() - 127.5) / 127.5, (sampled_images[k].unsqueeze(0).float() - 127.5) / 127.5)
-                la = lpips_model((images_add[k].unsqueeze(0).float() - 127.5) / 127.5, (sampled_other_image[k].unsqueeze(0).float() - 127.5) / 127.5)
-                
-                ssim_s_o = structural_similarity(images_np[k], superimposed_np[k], data_range=255, channel_axis=-1)
-                ssim_s_a = structural_similarity(images_add_np[k], superimposed_np[k], data_range=255, channel_axis=-1)
-                
-                if so > ssim_s_o:
-                    success_count_target += 1
-                if sa > ssim_s_a:
-                    success_count_deduced += 1
+            for k in range(len(bright_np)):
+                sb, sd, pb, pd, lb, ld = calculate_permutation_invariant_metrics(
+                    bright_np[k],
+                    dark_np[k],
+                    predicted_bright_np[k],
+                    predicted_dark_np[k],
+                    bright_uint8[k],
+                    dark_uint8[k],
+                    predicted_bright[k],
+                    predicted_dark[k],
+                    lpips_model,
+                )
+
+                ssim_mixed_bright = structural_similarity(bright_np[k], mixed_np[k], data_range=255, channel_axis=-1)
+                ssim_mixed_dark = structural_similarity(dark_np[k], mixed_np[k], data_range=255, channel_axis=-1)
+
+                if sb > ssim_mixed_bright:
+                    success_count_bright += 1
+                if sd > ssim_mixed_dark:
+                    success_count_dark += 1
                 total_items += 1
 
-                ssim_o.append(so)
-                ssim_a.append(sa)
-                psnr_o.append(po)
-                psnr_a.append(pa)
-                lpips_o.append(lo.detach().cpu().numpy())
-                lpips_a.append(la.detach().cpu().numpy())
+                ssim_bright.append(sb)
+                ssim_dark.append(sd)
+                psnr_bright.append(pb)
+                psnr_dark.append(pd)
+                lpips_bright.append(lb)
+                lpips_dark.append(ld)
 
     if collected_for_grid > 0:
-        grid_si = torch.cat(grid_si)[:50]
-        grid_soi = torch.cat(grid_soi)[:50]
-        grid_i = torch.cat(grid_i)[:50]
-        grid_ia = torch.cat(grid_ia)[:50]
-        save_images(grid_si, grid_soi, grid_i, grid_ia, os.path.join(base_dir, "samples", "eval", "eval_grid_50.jpg"))
-
-    avg_ssim_o = np.average(ssim_o)
-    avg_ssim_a = np.average(ssim_a)
-    avg_psnr_o = np.average(psnr_o)
-    avg_psnr_a = np.average(psnr_a)
-    avg_lpips_o = np.average(lpips_o)
-    avg_lpips_a = np.average(lpips_a)
-    success_rate_target = (success_count_target / total_items) * 100
-    success_rate_deduced = (success_count_deduced / total_items) * 100
+        save_images(
+            torch.cat(grid_predicted_bright)[:50],
+            torch.cat(grid_predicted_dark)[:50],
+            torch.cat(grid_bright)[:50],
+            torch.cat(grid_dark)[:50],
+            os.path.join(base_dir, "samples", "eval", "eval_grid_50_2.jpg"),
+            input_images=torch.cat(grid_mixed)[:50],
+        )
 
     metrics_report = (
-        f"--- One-Shot Evaluation Metrics (Entire Test Set) ---\n"
-        f"SSIM Target: {avg_ssim_o:.4f}\n"
-        f"SSIM Deduced: {avg_ssim_a:.4f}\n"
-        f"PSNR Target: {avg_psnr_o:.4f}\n"
-        f"PSNR Deduced: {avg_psnr_a:.4f}\n"
-        f"LPIPS Target: {avg_lpips_o:.4f}\n"
-        f"LPIPS Deduced: {avg_lpips_a:.4f}\n"
-        f"Success Rate of Reversal Target (%S): {success_rate_target:.2f}%\n"
-        f"Success Rate of Reversal Deduced (%S): {success_rate_deduced:.2f}%\n"
+        f"--- Iterative Evaluation Metrics (Entire Validation Set) ---\n"
+        f"SSIM Bright: {np.average(ssim_bright):.4f}\n"
+        f"SSIM Dark: {np.average(ssim_dark):.4f}\n"
+        f"PSNR Bright: {np.average(psnr_bright):.4f}\n"
+        f"PSNR Dark: {np.average(psnr_dark):.4f}\n"
+        f"LPIPS Bright: {np.average(lpips_bright):.4f}\n"
+        f"LPIPS Dark: {np.average(lpips_dark):.4f}\n"
+        f"Success Rate Bright (%S): {(success_count_bright / total_items) * 100:.2f}%\n"
+        f"Success Rate Dark (%S): {(success_count_dark / total_items) * 100:.2f}%\n"
     )
-    print(f'\n{metrics_report}')
-    
+    print(f"\n{metrics_report}")
+
     with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
         f.write(metrics_report)
-
 
 def one_shot_eval(args):
     accelerator = Accelerator()
     device = accelerator.device
     base_dir = os.path.join("experiments", args.run_name)
 
-    test_dataloader = get_data(args, 'test')
+    val_dataloader = get_data(args, "val")
     model = get_unet(args.image_size)
-    
-    model, test_dataloader = accelerator.prepare(model, test_dataloader)
+
+    model, val_dataloader = accelerator.prepare(model, val_dataloader)
     model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
     accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
-    
-    diffusion = ColdDiffusion(img_size=args.image_size, device=device)
-    lpips_model = lpips.LPIPS(net='alex').to(device)
-    
-    ssim_o, ssim_a, psnr_o, psnr_a, lpips_o, lpips_a = [], [], [], [], [], []
-    success_count_target = 0
-    success_count_deduced = 0
+
+    diffusion = ColdDiffusion(
+        max_timesteps=args.max_timesteps,
+        alpha_max=args.alpha_max,
+        device=device,
+    )
+    lpips_model = lpips.LPIPS(net="alex").to(device)
+
+    ssim_bright, ssim_dark, psnr_bright, psnr_dark, lpips_bright, lpips_dark = [], [], [], [], [], []
+    success_count_bright = 0
+    success_count_dark = 0
     total_items = 0
 
-    grid_si, grid_soi, grid_i, grid_ia = [], [], [], []
+    grid_predicted_bright, grid_predicted_dark, grid_bright, grid_dark, grid_mixed = [], [], [], [], []
     collected_for_grid = 0
-    
-    for images, images_add in test_dataloader:
-        n = len(images)
-        S = images * (1 - args.alpha_init) + images_add * args.alpha_init
-        init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
-        t = (torch.ones(n) * init_timestep).long().to(device)
-        
-        with torch.no_grad():
-            predicted_image = model(S, t).sample
-            sampled_images = predicted_image
-            sampled_other_image = (S - (1 - args.alpha_init) * sampled_images) / args.alpha_init
 
-        images = (images.clamp(-1, 1) + 1) / 2
-        images = (images * 255).type(torch.uint8)
-        images_add = (images_add.clamp(-1, 1) + 1) / 2
-        images_add = (images_add * 255).type(torch.uint8)
-        sampled_images = (sampled_images.clamp(-1, 1) + 1) / 2
-        sampled_images = (sampled_images * 255).type(torch.uint8)
-        sampled_other_image = (sampled_other_image.clamp(-1, 1) + 1) / 2
-        sampled_other_image = (sampled_other_image * 255).type(torch.uint8)
-        
-        S_formatted = (S.clamp(-1, 1) + 1) / 2
-        S_formatted = (S_formatted * 255).type(torch.uint8)
+    for bright_images, dark_images in val_dataloader:
+        n = len(bright_images)
+        mixed_images = bright_images * (1 - args.alpha_init) + dark_images * args.alpha_init
+        init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
+        t = torch.full((n,), init_timestep, device=device, dtype=torch.long)
+
+        with torch.no_grad():
+            model_out = model(mixed_images, t).sample
+            predicted_bright = model_out[:, :3]
+            predicted_dark = (mixed_images - (1 - args.alpha_init) * predicted_bright) / args.alpha_init
+
+        bright_uint8 = to_uint8(bright_images)
+        dark_uint8 = to_uint8(dark_images)
+        predicted_bright = to_uint8(predicted_bright)
+        predicted_dark = to_uint8(predicted_dark)
+        mixed_uint8 = to_uint8(mixed_images)
 
         if collected_for_grid < 50:
-            grid_si.append(sampled_images.cpu())
-            grid_soi.append(sampled_other_image.cpu())
-            grid_i.append(images.cpu())
-            grid_ia.append(images_add.cpu())
+            grid_predicted_bright.append(predicted_bright.cpu())
+            grid_predicted_dark.append(predicted_dark.cpu())
+            grid_bright.append(bright_uint8.cpu())
+            grid_dark.append(dark_uint8.cpu())
+            grid_mixed.append(mixed_uint8.cpu())
             collected_for_grid += n
 
-        images_np = images.cpu().permute(0, 2, 3, 1).numpy()
-        sampled_images_np = sampled_images.cpu().permute(0, 2, 3, 1).numpy()
-        images_add_np = images_add.cpu().permute(0, 2, 3, 1).numpy()
-        sampled_other_image_np = sampled_other_image.cpu().permute(0, 2, 3, 1).numpy()
-        S_np = S_formatted.cpu().permute(0, 2, 3, 1).numpy()
-        
+        bright_np = bright_uint8.cpu().permute(0, 2, 3, 1).numpy()
+        predicted_bright_np = predicted_bright.cpu().permute(0, 2, 3, 1).numpy()
+        dark_np = dark_uint8.cpu().permute(0, 2, 3, 1).numpy()
+        predicted_dark_np = predicted_dark.cpu().permute(0, 2, 3, 1).numpy()
+        mixed_np = mixed_uint8.cpu().permute(0, 2, 3, 1).numpy()
+
         with torch.no_grad():
             for k in range(n):
-                so, sa, po, pa = calculate_metrics(images_np[k], images_add_np[k], sampled_images_np[k], sampled_other_image_np[k])
-                lo = lpips_model((images[k].unsqueeze(0).float() - 127.5) / 127.5, (sampled_images[k].unsqueeze(0).float() - 127.5) / 127.5)
-                la = lpips_model((images_add[k].unsqueeze(0).float() - 127.5) / 127.5, (sampled_other_image[k].unsqueeze(0).float() - 127.5) / 127.5)
-                
-                ssim_s_o = structural_similarity(images_np[k], S_np[k], data_range=255, channel_axis=-1)
-                ssim_s_a = structural_similarity(images_add_np[k], S_np[k], data_range=255, channel_axis=-1)
-                
-                if so > ssim_s_o:
-                    success_count_target += 1
-                if sa > ssim_s_a:
-                    success_count_deduced += 1
+                sb, sd, pb, pd, lb, ld = calculate_permutation_invariant_metrics(
+                    bright_np[k],
+                    dark_np[k],
+                    predicted_bright_np[k],
+                    predicted_dark_np[k],
+                    bright_uint8[k],
+                    dark_uint8[k],
+                    predicted_bright[k],
+                    predicted_dark[k],
+                    lpips_model,
+                )
+
+                ssim_mixed_bright = structural_similarity(bright_np[k], mixed_np[k], data_range=255, channel_axis=-1)
+                ssim_mixed_dark = structural_similarity(dark_np[k], mixed_np[k], data_range=255, channel_axis=-1)
+
+                if sb > ssim_mixed_bright:
+                    success_count_bright += 1
+                if sd > ssim_mixed_dark:
+                    success_count_dark += 1
                 total_items += 1
-                
-                ssim_o.append(so)
-                ssim_a.append(sa)
-                psnr_o.append(po)
-                psnr_a.append(pa)
-                lpips_o.append(lo.detach().cpu().numpy())
-                lpips_a.append(la.detach().cpu().numpy())
+
+                ssim_bright.append(sb)
+                ssim_dark.append(sd)
+                psnr_bright.append(pb)
+                psnr_dark.append(pd)
+                lpips_bright.append(lb)
+                lpips_dark.append(ld)
 
     if collected_for_grid > 0:
-        grid_si = torch.cat(grid_si)[:50]
-        grid_soi = torch.cat(grid_soi)[:50]
-        grid_i = torch.cat(grid_i)[:50]
-        grid_ia = torch.cat(grid_ia)[:50]
-        save_images(grid_si, grid_soi, grid_i, grid_ia, os.path.join(base_dir, "samples", "one_shot", "one_shot_grid_50.jpg"))
-
-    avg_ssim_o, avg_ssim_a = np.average(ssim_o), np.average(ssim_a)
-    avg_psnr_o, avg_psnr_a = np.average(psnr_o), np.average(psnr_a)
-    avg_lpips_o, avg_lpips_a = np.average(lpips_o), np.average(lpips_a)
-    success_rate_target = (success_count_target / total_items) * 100
-    success_rate_deduced = (success_count_deduced / total_items) * 100
+        save_images(
+            torch.cat(grid_predicted_bright)[:50],
+            torch.cat(grid_predicted_dark)[:50],
+            torch.cat(grid_bright)[:50],
+            torch.cat(grid_dark)[:50],
+            os.path.join(base_dir, "samples", "one_shot", "one_shot_grid_50.jpg"),
+            input_images=torch.cat(grid_mixed)[:50],
+        )
 
     metrics_report = (
-        f"--- One-Shot Evaluation Metrics (Entire Test Set) ---\n"
-        f"SSIM Target: {avg_ssim_o:.4f}\n"
-        f"SSIM Deduced: {avg_ssim_a:.4f}\n"
-        f"PSNR Target: {avg_psnr_o:.4f}\n"
-        f"PSNR Deduced: {avg_psnr_a:.4f}\n"
-        f"LPIPS Target: {avg_lpips_o:.4f}\n"
-        f"LPIPS Deduced: {avg_lpips_a:.4f}\n"
-        f"Success Rate of Reversal Target (%S): {success_rate_target:.2f}%\n"
-        f"Success Rate of Reversal Deduced (%S): {success_rate_deduced:.2f}%\n"
+        f"--- One-Shot Evaluation Metrics (Entire Validation Set) ---\n"
+        f"SSIM Bright: {np.average(ssim_bright):.4f}\n"
+        f"SSIM Dark: {np.average(ssim_dark):.4f}\n"
+        f"PSNR Bright: {np.average(psnr_bright):.4f}\n"
+        f"PSNR Dark: {np.average(psnr_dark):.4f}\n"
+        f"LPIPS Bright: {np.average(lpips_bright):.4f}\n"
+        f"LPIPS Dark: {np.average(lpips_dark):.4f}\n"
+        f"Success Rate Bright (%S): {(success_count_bright / total_items) * 100:.2f}%\n"
+        f"Success Rate Dark (%S): {(success_count_dark / total_items) * 100:.2f}%\n"
     )
-    
     print(f"\n{metrics_report}")
-    
+
     with open(os.path.join(base_dir, "results", "one_shot_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
 def launch():
     import argparse
+
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_path', help='Path to dataset', required=True)
-    parser.add_argument('--run_name', help='Name of the experiment for saving models and results', required=True)
-    parser.add_argument('--partition_file', help='CSV file with test indexes', required=True)
-    parser.add_argument('--alpha_max', default=0.5, type=float, help='Maximum weight of the added image at the last time step of the forward diffusion process: alpha_max', required=False)
-    parser.add_argument('--alpha_init', default=0.5, type=float, help='Weight of the added image: alpha_init', required=False)
-    parser.add_argument('--image_size', default=64, type=int, help='Dimension of the images', required=False)
-    parser.add_argument('--batch_size', default=16, help='Batch size', type=int, required=False)
-    parser.add_argument('--epochs', default=1000, help='Number of epochs', type=int, required=False)
-    parser.add_argument('--lr', default=3e-4, help='Learning rate', type=float, required=False)
-    parser.add_argument('--device', default='cuda', help='Device, choose between [cuda, cpu]', required=False)
+    parser.add_argument("--dataset_path", required=True, help="Path to the image dataset")
+    parser.add_argument("--run_name", required=True, help="Name of the experiment folder")
+
+    parser.add_argument("--train_fraction", default=0.8, type=float, help="Fraction of source images used for training")
+    parser.add_argument("--train_samples_per_epoch", default=None, type=int, help="Number of random train pairs per epoch")
+    parser.add_argument("--val_samples", default=None, type=int, help="Number of deterministic validation pairs")
+    parser.add_argument("--num_workers", default=None, type=int, help="DataLoader worker count")
+
+    parser.add_argument("--alpha_max", default=0.5, type=float, help="Maximum dark-image weight at the last timestep")
+    parser.add_argument("--alpha_init", default=0.5, type=float, help="Dark-image weight used for previews and evaluation")
+    parser.add_argument("--max_timesteps", default=300, type=int, help="Number of diffusion timesteps")
+    parser.add_argument("--image_size", default=64, type=int, help="Square image size")
+    parser.add_argument("--batch_size", default=16, type=int, help="Batch size")
+    parser.add_argument("--epochs", default=150, type=int, help="Number of training epochs")
+    parser.add_argument("--lr", default=3e-4, type=float, help="Learning rate")
+    parser.add_argument("--gradient_accumulation_steps", default=1, type=int, help="Gradient accumulation steps")
+    parser.add_argument("--val_every", default=1, type=int, help="Run validation every N epochs")
+    parser.add_argument("--num_fixed_samples", default=10, type=int, help="Number of fixed validation pairs for previews")
 
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
@@ -447,5 +557,6 @@ def launch():
     eval(args)
     one_shot_eval(args)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     launch()
