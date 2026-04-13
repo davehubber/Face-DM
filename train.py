@@ -15,8 +15,6 @@ from torch import optim
 
 from utils import get_data, save_images, setup_logging, to_uint8
 
-from PIL import Image, ImageDraw, ImageFont
-
 
 class ColdDiffusion:
     def __init__(self, max_timesteps=250, alpha_max=0.5, device="cuda", lpips_net="alex"):
