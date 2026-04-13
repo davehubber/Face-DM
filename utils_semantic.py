@@ -36,7 +36,11 @@ class SemanticPairsDataset(Dataset):
         self.global_mean = -0.04999
         self.global_std = 0.28236
         self.embeddings = (self.embeddings - self.global_mean) / self.global_std
-        self.reference = F.normalize(self.embeddings.mean(dim=0), dim=0)
+        stats = torch.load(
+            os.path.join(dataset_root, "semantic_stats", "global_pc1_stats.pt"),
+            map_location="cpu",
+        )
+        self.reference = F.normalize(stats["mu"].to(torch.float32), dim=0)
 
         self.sample_ids: List[str] = list(pack["sample_ids"])
         self.source_paths: List[str] = list(pack["source_paths"])
