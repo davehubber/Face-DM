@@ -298,7 +298,7 @@ def train(args):
     val_dataloader = get_data(args, "val")
 
     sample_pack = torch.load(os.path.join(args.dataset_root, "semantic", "train_zsem.pt"), map_location="cpu")
-    embedding_dim = sample_pack["z_sem"].shape
+    embedding_dim = sample_pack["z_sem"].shape[1]
 
     model = DualMLPSkipNet(
         embedding_dim=embedding_dim,
@@ -403,7 +403,7 @@ def eval_model(args, one_shot: bool = False):
 
     val_dataloader = get_data(args, "val")
     sample_pack = torch.load(os.path.join(args.dataset_root, "semantic", "train_zsem.pt"), map_location="cpu")
-    embedding_dim = sample_pack["z_sem"].shape
+    embedding_dim = sample_pack["z_sem"].shape[1]
 
     model = DualMLPSkipNet(
         embedding_dim=embedding_dim,
