@@ -1,0 +1,5 @@
+column,description,sample_id,source_path
+0,original dominant image,08006,/nas-ctm01/datasets/public/ffhq256/08006.png
+1,original recessive image,09878,/nas-ctm01/datasets/public/ffhq256/09878.png
+2,decoded predicted dominant embedding,08006,/nas-ctm01/datasets/public/ffhq256/08006.png
+3,decoded mathematically extracted recessive embedding,09878,/nas-ctm01/datasets/public/ffhq256/09878.png
