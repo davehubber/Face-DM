@@ -4,11 +4,10 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-SPLIT_SEED = 42
 VAL_PAIR_SEED = 1234
+_ZSCORE_CACHE: Dict[str, Tuple[torch.Tensor, torch.Tensor]] = {}
 
 
 def setup_logging(run_name: str) -> str:
@@ -17,6 +16,24 @@ def setup_logging(run_name: str) -> str:
     os.makedirs(os.path.join(base_dir, "results"), exist_ok=True)
     os.makedirs(os.path.join(base_dir, "samples", "decode"), exist_ok=True)
     return base_dir
+
+
+def load_zscore_stats(dataset_root: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    cached = _ZSCORE_CACHE.get(dataset_root)
+    if cached is not None:
+        return cached
+
+    train_split_path = os.path.join(dataset_root, "semantic", "train_zsem.pt")
+    if not os.path.exists(train_split_path):
+        raise FileNotFoundError(f"Could not find semantic train split file: {train_split_path}")
+
+    train_pack = torch.load(train_split_path, map_location="cpu")
+    train_embeddings = train_pack["z_sem"].to(torch.float32)
+    mean = train_embeddings.mean(dim=0)
+    std = train_embeddings.std(dim=0, unbiased=False).clamp_min(1e-6)
+
+    _ZSCORE_CACHE[dataset_root] = (mean, std)
+    return mean, std
 
 
 class SemanticPairsDataset(Dataset):
@@ -31,17 +48,8 @@ class SemanticPairsDataset(Dataset):
             raise FileNotFoundError(f"Could not find semantic split file: {split_path}")
 
         pack = torch.load(split_path, map_location="cpu")
-        self.embeddings = pack["z_sem"].to(torch.float32)
-
-        self.global_mean = -0.04999
-        self.global_std = 0.28236
-        self.embeddings = (self.embeddings - self.global_mean) / self.global_std
-        stats = torch.load(
-            os.path.join(dataset_root, "semantic_stats", "global_pc1_stats.pt"),
-            map_location="cpu",
-        )
-        self.reference_mu = stats["mu"].to(torch.float32)
-        self.reference_pc1 = F.normalize(stats["pc1"].to(torch.float32), dim=0)
+        self.mean, self.std = load_zscore_stats(dataset_root)
+        self.embeddings = (pack["z_sem"].to(torch.float32) - self.mean) / self.std
 
         self.sample_ids: List[str] = list(pack["sample_ids"])
         self.source_paths: List[str] = list(pack["source_paths"])
@@ -52,8 +60,6 @@ class SemanticPairsDataset(Dataset):
         if len(self.embeddings) < 2:
             raise ValueError(f"Split must contain at least 2 embeddings; found {len(self.embeddings)}")
 
-        self.dataset_root = dataset_root
-        self.split = split
         self.num_pairs = int(num_pairs)
         self.deterministic = deterministic
 
@@ -80,15 +86,17 @@ class SemanticPairsDataset(Dataset):
         emb1 = self.embeddings[idx1]
         emb2 = self.embeddings[idx2]
 
-        score1 = torch.dot(emb1 - self.reference_mu, self.reference_pc1).item()
-        score2 = torch.dot(emb2 - self.reference_mu, self.reference_pc1).item()
+        norm1 = torch.linalg.vector_norm(emb1).item()
+        norm2 = torch.linalg.vector_norm(emb2).item()
 
-        if score1 >= score2:
+        if norm1 >= norm2:
             dominant_idx, recessive_idx = idx1, idx2
             dominant_embedding, recessive_embedding = emb1, emb2
+            dominant_norm, recessive_norm = norm1, norm2
         else:
             dominant_idx, recessive_idx = idx2, idx1
             dominant_embedding, recessive_embedding = emb2, emb1
+            dominant_norm, recessive_norm = norm2, norm1
 
         return {
             "dominant_embedding": dominant_embedding,
@@ -101,8 +109,8 @@ class SemanticPairsDataset(Dataset):
             "recessive_source_path": self.source_paths[recessive_idx],
             "dominant_relative_path": self.relative_paths[dominant_idx],
             "recessive_relative_path": self.relative_paths[recessive_idx],
-            "dominant_norm": max(score1, score2),
-            "recessive_norm": min(score1, score2),
+            "dominant_norm": dominant_norm,
+            "recessive_norm": recessive_norm,
         }
 
     def __getitem__(self, index: int) -> Dict:

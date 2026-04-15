@@ -1,7 +1,6 @@
 import argparse
 import math
 import os
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -27,9 +26,8 @@ class TimeEmbedding(nn.Module):
 
     def forward(self, timesteps: torch.Tensor) -> torch.Tensor:
         half = self.num_time_emb_channels // 2
-        device = timesteps.device
         freqs = torch.exp(
-            -math.log(10000) * torch.arange(0, half, device=device, dtype=torch.float32) / max(half - 1, 1)
+            -math.log(10000) * torch.arange(0, half, device=timesteps.device, dtype=torch.float32) / max(half - 1, 1)
         )
         args = timesteps.float()[:, None] * freqs[None]
         emb = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
@@ -38,61 +36,28 @@ class TimeEmbedding(nn.Module):
         return self.net(emb)
 
 
-class MLPLNAct(nn.Module):
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        use_norm: bool,
-        use_cond: bool,
-        condition_channels: int,
-        condition_bias: float = 1.0,
-        dropout: float = 0.0,
-        use_activation: bool = True,
-    ):
+class MLPSkipBlock(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, condition_channels: int, use_condition: bool, use_activation: bool):
         super().__init__()
-        self.use_cond = use_cond
-        self.condition_bias = condition_bias
+        self.use_condition = use_condition
         self.linear = nn.Linear(in_channels, out_channels)
+        self.norm = nn.LayerNorm(out_channels) if use_activation else nn.Identity()
         self.act = nn.SiLU() if use_activation else nn.Identity()
-        self.norm = nn.LayerNorm(out_channels) if use_norm else nn.Identity()
-        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-        if use_cond:
-            self.cond_layers = nn.Sequential(
-                nn.SiLU(),
-                nn.Linear(condition_channels, out_channels),
-            )
+        self.time_scale = nn.Sequential(nn.SiLU(), nn.Linear(condition_channels, out_channels)) if use_condition else None
 
-    def forward(self, x: torch.Tensor, cond: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         x = self.linear(x)
-        if self.use_cond:
-            if cond is None:
-                raise ValueError("Conditional layer received cond=None")
-            cond_proj = self.cond_layers(cond)
-            x = x * (self.condition_bias + cond_proj)
+        if self.use_condition:
+            x = x * (1.0 + self.time_scale(cond))
         x = self.norm(x)
-        x = self.act(x)
-        x = self.dropout(x)
-        return x
+        return self.act(x)
 
 
-class DualMLPSkipNet(nn.Module):
-    def __init__(
-        self,
-        embedding_dim: int = 512,
-        hidden_dim: int = 2048,
-        num_layers: int = 10,
-        num_time_emb_channels: int = 64,
-        condition_bias: float = 1.0,
-        skip_layers=None,
-        dropout: float = 0.0,
-    ):
+class MLPSkipNet(nn.Module):
+    def __init__(self, embedding_dim: int = 512, hidden_dim: int = 2048, num_layers: int = 10, num_time_emb_channels: int = 64):
         super().__init__()
-        if skip_layers is None:
-            skip_layers = list(range(1, num_layers))
-
         self.embedding_dim = embedding_dim
-        self.skip_layers = set(skip_layers)
+        self.skip_layers = set(range(1, num_layers))
         self.time_embed = TimeEmbedding(num_time_emb_channels=num_time_emb_channels, out_channels=embedding_dim)
 
         layers = []
@@ -100,40 +65,29 @@ class DualMLPSkipNet(nn.Module):
             if i == 0:
                 in_dim = embedding_dim
                 out_dim = hidden_dim
-                use_norm = True
-                use_cond = True
+                use_condition = True
                 use_activation = True
-                layer_dropout = dropout
             elif i == num_layers - 1:
-                in_dim = hidden_dim
-                out_dim = 2 * embedding_dim
-                use_norm = False
-                use_cond = False
+                in_dim = hidden_dim + embedding_dim
+                out_dim = embedding_dim
+                use_condition = False
                 use_activation = False
-                layer_dropout = 0.0
             else:
-                in_dim = hidden_dim
+                in_dim = hidden_dim + embedding_dim
                 out_dim = hidden_dim
-                use_norm = True
-                use_cond = True
+                use_condition = True
                 use_activation = True
-                layer_dropout = dropout
-
-            if i in self.skip_layers:
-                in_dim += embedding_dim
 
             layers.append(
-                MLPLNAct(
+                MLPSkipBlock(
                     in_channels=in_dim,
                     out_channels=out_dim,
-                    use_norm=use_norm,
-                    use_cond=use_cond,
                     condition_channels=embedding_dim,
-                    condition_bias=condition_bias,
-                    dropout=layer_dropout,
+                    use_condition=use_condition,
                     use_activation=use_activation,
                 )
             )
+
         self.layers = nn.ModuleList(layers)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
@@ -142,8 +96,8 @@ class DualMLPSkipNet(nn.Module):
         for i, layer in enumerate(self.layers):
             if i in self.skip_layers:
                 h = torch.cat([h, x], dim=1)
-            h = layer(h, cond if getattr(layer, "use_cond", False) else None)
-        return h.view(x.shape[0], 2, self.embedding_dim)
+            h = layer(h, cond)
+        return h
 
 
 class ColdDiffusionEmbeddings:
@@ -176,8 +130,7 @@ class ColdDiffusionEmbeddings:
             x_t = mixed_embedding.to(self.device)
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((batch_size,), i, device=self.device, dtype=torch.long)
-                model_out = model(x_t, t)
-                predicted_dominant = model_out[:, 0, :]
+                predicted_dominant = model(x_t, t)
                 extracted_recessive = self.extract_recessive(mixed_embedding, predicted_dominant, alpha_init)
                 x_t = x_t - self.mix_embeddings(predicted_dominant, extracted_recessive, t) + self.mix_embeddings(
                     predicted_dominant, extracted_recessive, t - 1
@@ -186,11 +139,6 @@ class ColdDiffusionEmbeddings:
         model.train()
         predicted_recessive = self.extract_recessive(mixed_embedding, x_t, alpha_init)
         return x_t, predicted_recessive
-
-
-def build_fixed_validation_timesteps(batch_size: int, batch_idx: int, max_timesteps: int, device: torch.device) -> torch.Tensor:
-    base = torch.arange(batch_size, device=device, dtype=torch.long)
-    return ((base + batch_idx * batch_size) % max_timesteps) + 1
 
 
 @torch.no_grad()
@@ -202,22 +150,13 @@ def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: ColdDiffus
     for batch_idx, batch in enumerate(dataloader):
         dominant_embeddings = batch["dominant_embedding"]
         recessive_embeddings = batch["recessive_embedding"]
+        t = ((torch.arange(dominant_embeddings.shape[0], device=accelerator.device) + batch_idx * dominant_embeddings.shape[0]) % diffusion.max_timesteps) + 1
 
-        t = build_fixed_validation_timesteps(
-            batch_size=dominant_embeddings.shape[0],
-            batch_idx=batch_idx,
-            max_timesteps=diffusion.max_timesteps,
-            device=accelerator.device,
-        )
         x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
-        model_out = model(x_t, t)
-        predicted_dominant = model_out[:, 0, :]
-        predicted_recessive = model_out[:, 1, :]
+        predicted_dominant = model(x_t, t)
 
-        loss_dominant = F.mse_loss(predicted_dominant, dominant_embeddings, reduction="sum")
-        loss_recessive = F.mse_loss(predicted_recessive, recessive_embeddings, reduction="sum")
-        loss_sum += (loss_dominant + loss_recessive).detach()
-        loss_count += dominant_embeddings.numel() + recessive_embeddings.numel()
+        loss_sum += F.mse_loss(predicted_dominant, dominant_embeddings, reduction="sum").detach()
+        loss_count += dominant_embeddings.numel()
 
     avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(loss_count).sum()).item()
     model.train()
@@ -245,8 +184,7 @@ def evaluate_embedding_mse(model: nn.Module, dataloader, diffusion: ColdDiffusio
 
         if one_shot:
             t = torch.full((dominant_embeddings.shape[0],), init_timestep, device=accelerator.device, dtype=torch.long)
-            model_out = model(mixed_embeddings, t)
-            predicted_dominant = model_out[:, 0, :]
+            predicted_dominant = model(mixed_embeddings, t)
             predicted_recessive = diffusion.extract_recessive(mixed_embeddings, predicted_dominant, alpha_init)
         else:
             predicted_dominant, predicted_recessive = diffusion.sample(model, mixed_embeddings, alpha_init=alpha_init)
@@ -300,14 +238,11 @@ def train(args):
     sample_pack = torch.load(os.path.join(args.dataset_root, "semantic", "train_zsem.pt"), map_location="cpu")
     embedding_dim = sample_pack["z_sem"].shape[1]
 
-    model = DualMLPSkipNet(
+    model = MLPSkipNet(
         embedding_dim=embedding_dim,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         num_time_emb_channels=args.num_time_emb_channels,
-        condition_bias=args.condition_bias,
-        skip_layers=list(range(1, args.num_layers)),
-        dropout=args.dropout,
     )
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
@@ -348,13 +283,8 @@ def train(args):
 
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
-                model_out = model(x_t, t)
-                predicted_dominant = model_out[:, 0, :]
-                predicted_recessive = model_out[:, 1, :]
-
-                loss_dominant = F.mse_loss(predicted_dominant, dominant_embeddings)
-                loss_recessive = F.mse_loss(predicted_recessive, recessive_embeddings)
-                loss = 0.5 * (loss_dominant + loss_recessive)
+                predicted_dominant = model(x_t, t)
+                loss = F.mse_loss(predicted_dominant, dominant_embeddings)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -366,8 +296,7 @@ def train(args):
 
             if accelerator.sync_gradients:
                 ema_model.step(model.parameters())
-                synced_loss = accelerator.gather(loss.detach()).mean().item()
-                epoch_train_loss_sum += synced_loss
+                epoch_train_loss_sum += accelerator.gather(loss.detach()).mean().item()
                 epoch_train_loss_count += 1
 
         accelerator.wait_for_everyone()
@@ -405,14 +334,11 @@ def eval_model(args, one_shot: bool = False):
     sample_pack = torch.load(os.path.join(args.dataset_root, "semantic", "train_zsem.pt"), map_location="cpu")
     embedding_dim = sample_pack["z_sem"].shape[1]
 
-    model = DualMLPSkipNet(
+    model = MLPSkipNet(
         embedding_dim=embedding_dim,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         num_time_emb_channels=args.num_time_emb_channels,
-        condition_bias=args.condition_bias,
-        skip_layers=list(range(1, args.num_layers)),
-        dropout=args.dropout,
     )
 
     model, val_dataloader = accelerator.prepare(model, val_dataloader)
@@ -440,7 +366,7 @@ def eval_model(args, one_shot: bool = False):
         report = (
             f"--- {label} Evaluation (Validation Set) ---\n"
             f"Dominant MSE: {metrics['dominant_mse']:.8f}\n"
-            f"Recessive MSE: {metrics['recessive_mse']:.8f}\n"
+            f"Recovered Recessive MSE: {metrics['recessive_mse']:.8f}\n"
             f"Total MSE: {metrics['total_mse']:.8f}\n"
         )
         print(f"\n{report}")
@@ -449,7 +375,6 @@ def eval_model(args, one_shot: bool = False):
         with open(os.path.join(base_dir, "results", out_name), "w", encoding="utf-8") as f:
             f.write(report)
 
-        # Save embeddings to disk so the standalone decoder script can load them later
         if not one_shot and metrics["first_item"] is not None:
             save_path = os.path.join(base_dir, "results", "decode_pair_data.pt")
             torch.save(metrics["first_item"], save_path)
@@ -482,8 +407,6 @@ def launch():
     parser.add_argument("--hidden_dim", default=2048, type=int, help="Hidden width of the latent MLP")
     parser.add_argument("--num_layers", default=10, type=int, help="Number of MLP layers")
     parser.add_argument("--num_time_emb_channels", default=64, type=int, help="Sinusoidal timestep embedding width")
-    parser.add_argument("--condition_bias", default=1.0, type=float, help="Condition bias used by the latent MLP")
-    parser.add_argument("--dropout", default=0.0, type=float, help="MLP dropout")
 
     args = parser.parse_args()
 
