@@ -389,7 +389,7 @@ def eval_simulated_error_sampling(args):
     # 1. Setup Data and Model
     val_dataloader = get_data(args, "val")
     sample_pack = torch.load(os.path.join(args.dataset_root, "semantic", "train_zsem.pt"), map_location="cpu")
-    embedding_dim = sample_pack["z_sem"].shape
+    embedding_dim = sample_pack["z_sem"].shape[1]
 
     model = MLPSkipNet(
         embedding_dim=embedding_dim,
@@ -428,7 +428,7 @@ def eval_simulated_error_sampling(args):
     for batch in val_dataloader:
         dominant_embeddings = batch["dominant_embedding"]
         recessive_embeddings = batch["recessive_embedding"]
-        batch_size = dominant_embeddings.shape
+        batch_size = dominant_embeddings.shape[0]
 
         # Standard cold diffusion starting point
         mixed_embeddings = dominant_embeddings * (1.0 - args.alpha_init) + recessive_embeddings * args.alpha_init
