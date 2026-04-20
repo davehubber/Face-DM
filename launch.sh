@@ -8,4 +8,4 @@
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train_semantic.py --run_name "lt_avg_mag" --epochs 20 --batch_size 8192 --alpha_init 0.1
+python train_semantic.py --run_name "lt_avg_mag" --epochs 20 --batch_size 8192 --injected_mse 0.5 --simulated_sampling_steps 30

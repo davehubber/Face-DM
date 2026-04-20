@@ -400,7 +400,7 @@ def eval_simulated_error_sampling(args):
 
     model, val_dataloader = accelerator.prepare(model, val_dataloader)
     model_path = os.path.join(base_dir, "checkpoints", "mlp_ema.pt")
-    
+
     if not os.path.exists(model_path):
         print(f"Checkpoint not found at {model_path}. Please train the model first.")
         return
@@ -421,8 +421,27 @@ def eval_simulated_error_sampling(args):
     init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
     init_timestep = max(1, min(init_timestep, diffusion.max_timesteps))
 
+    # Build the coarse reverse-time schedule
+    requested_steps = args.simulated_sampling_steps
+    if requested_steps is None or requested_steps <= 0:
+        step_stride = 1
+        source_timesteps = list(range(init_timestep, 0, -1))
+    else:
+        if requested_steps > init_timestep:
+            raise ValueError(
+                f"simulated_sampling_steps ({requested_steps}) cannot be larger than init_timestep ({init_timestep})."
+            )
+        if init_timestep % requested_steps != 0:
+            raise ValueError(
+                f"init_timestep={init_timestep} is not divisible by simulated_sampling_steps={requested_steps}. "
+                f"For exact jumps, choose a divisor of {init_timestep}."
+            )
+        step_stride = init_timestep // requested_steps
+        source_timesteps = list(range(init_timestep, 0, -step_stride))
+
+    effective_steps = len(source_timesteps)
+
     # Calculate standard deviation for the noise to achieve the target MSE
-    # If target MSE is E, we need variance to be E, so std_dev is sqrt(E).
     std_dev = math.sqrt(args.injected_mse)
 
     for batch in val_dataloader:
@@ -434,39 +453,36 @@ def eval_simulated_error_sampling(args):
         mixed_embeddings = dominant_embeddings * (1.0 - args.alpha_init) + recessive_embeddings * args.alpha_init
         x_t = mixed_embeddings.to(device)
 
-        # ---------------------------------------------------------
-        # STEP A: Simulate the prediction at the top timestep (T)
-        # ---------------------------------------------------------
-        # Inject Gaussian noise into the clean dominant embedding
-        noise = torch.randn_like(dominant_embeddings) * std_dev
-        simulated_pred_dominant = dominant_embeddings + noise
+        final_pred_dominant = None
 
-        # Extract the resulting recessive based on our faulty dominant prediction
-        extracted_recessive = diffusion.extract_recessive(mixed_embeddings, simulated_pred_dominant, args.alpha_init)
-        
-        t_tensor = torch.full((batch_size,), init_timestep, device=device, dtype=torch.long)
+        # Reverse process using either full sampling or coarse jumps
+        for step_idx, t_value in enumerate(source_timesteps):
+            t = torch.full((batch_size,), t_value, device=device, dtype=torch.long)
 
-        # Transition to T-1
-        x_t = x_t - diffusion.mix_embeddings(simulated_pred_dominant, extracted_recessive, t_tensor) + \
-              diffusion.mix_embeddings(simulated_pred_dominant, extracted_recessive, t_tensor - 1)
+            if step_idx == 0:
+                # Inject Gaussian noise into the clean dominant embedding only at the top step
+                noise = torch.randn_like(dominant_embeddings) * std_dev
+                final_pred_dominant = dominant_embeddings + noise
+            else:
+                # Use the trained model for all remaining reverse steps
+                final_pred_dominant = model(x_t, t)
 
-        # ---------------------------------------------------------
-        # STEP B: Fully sample from T-1 down to 1 using the model
-        # ---------------------------------------------------------
-        final_pred_dominant = simulated_pred_dominant # Fallback if init_timestep == 1
-        
-        for i in reversed(range(1, init_timestep)):
-            t = torch.full((batch_size,), i, device=device, dtype=torch.long)
-            
-            # Use the actual trained model for the rest of the sequence
-            final_pred_dominant = model(x_t, t)
-            
-            extracted_recessive = diffusion.extract_recessive(mixed_embeddings, final_pred_dominant, args.alpha_init)
-            
+            extracted_recessive = diffusion.extract_recessive(
+                mixed_embeddings, final_pred_dominant, args.alpha_init
+            )
+
+            # Jump directly to the next coarse timestep, or to t=0 at the end
+            if step_idx == effective_steps - 1:
+                prev_t_value = 0
+            else:
+                prev_t_value = source_timesteps[step_idx + 1]
+
+            prev_t = torch.full((batch_size,), prev_t_value, device=device, dtype=torch.long)
+
             x_t = x_t - diffusion.mix_embeddings(final_pred_dominant, extracted_recessive, t) + \
-                  diffusion.mix_embeddings(final_pred_dominant, extracted_recessive, t - 1)
+                  diffusion.mix_embeddings(final_pred_dominant, extracted_recessive, prev_t)
 
-        # Accumulate metrics based on the final prediction at t=1
+        # Measure the last dominant prediction produced by the schedule
         total_mse_sum += F.mse_loss(final_pred_dominant, dominant_embeddings, reduction="sum")
         total_count += dominant_embeddings.numel()
 
@@ -477,10 +493,12 @@ def eval_simulated_error_sampling(args):
         report = (
             f"--- Simulated Error Injection Evaluation ---\n"
             f"Injected MSE at T={init_timestep}: {args.injected_mse:.8f}\n"
+            f"Sampling steps used: {effective_steps}\n"
+            f"Timestep stride: {step_stride}\n"
             f"Final Recovered Dominant MSE: {avg_mse:.8f}\n"
         )
         print(f"\n{report}")
-        
+
         with open(os.path.join(base_dir, "results", "simulated_error_metrics.txt"), "w", encoding="utf-8") as f:
             f.write(report)
 
@@ -511,14 +529,16 @@ def launch():
     parser.add_argument("--num_layers", default=10, type=int, help="Number of MLP layers")
     parser.add_argument("--num_time_emb_channels", default=64, type=int, help="Sinusoidal timestep embedding width")
 
-    parser.add_argument("--injected_mse", default=0.1, type=float, help="Amount of MSE error to inject at the initial timestep")
+    parser.add_argument("--injected_mse", default=0.5, type=float, help="Amount of MSE error to inject at the initial timestep")
+
+    parser.add_argument("--simulated_sampling_steps", default=None, type=int, help="Number of reverse sampling steps for eval_simulated_error_sampling.")
 
     args = parser.parse_args()
 
     #train(args)
     #eval_model(args, one_shot=False)
-    eval_model(args, one_shot=True)
-    #eval_simulated_error_sampling(args)
+    #eval_model(args, one_shot=True)
+    eval_simulated_error_sampling(args)
 
 
 if __name__ == "__main__":
