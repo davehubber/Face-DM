@@ -386,8 +386,8 @@ def launch():
     parser.add_argument("--dataset_root", default="encoded_ffhq256_semantic_split", help="Folder containing semantic/train_zsem.pt and semantic/val_zsem.pt")
     parser.add_argument("--run_name", required=True, help="Name of the experiment folder")
 
-    parser.add_argument("--train_samples_per_epoch", default=50000, type=int, help="Number of random train pairs per epoch")
-    parser.add_argument("--val_samples", default=10000, type=int, help="Number of deterministic validation pairs")
+    parser.add_argument("--train_samples_per_epoch", default=1000000, type=int, help="Number of random train pairs per epoch")
+    parser.add_argument("--val_samples", default=100000, type=int, help="Number of deterministic validation pairs")
     parser.add_argument("--num_workers", default=4, type=int, help="DataLoader worker count")
 
     parser.add_argument("--alpha_max", default=0.5, type=float, help="Maximum recessive weight at the last timestep")
