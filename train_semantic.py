@@ -380,6 +380,109 @@ def eval_model(args, one_shot: bool = False):
             torch.save(metrics["first_item"], save_path)
             print(f"Saved evaluation embeddings for visual decoding to: {save_path}")
 
+@torch.no_grad()
+def eval_simulated_error_sampling(args):
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
+
+    # 1. Setup Data and Model
+    val_dataloader = get_data(args, "val")
+    sample_pack = torch.load(os.path.join(args.dataset_root, "semantic", "train_zsem.pt"), map_location="cpu")
+    embedding_dim = sample_pack["z_sem"].shape
+
+    model = MLPSkipNet(
+        embedding_dim=embedding_dim,
+        hidden_dim=args.hidden_dim,
+        num_layers=args.num_layers,
+        num_time_emb_channels=args.num_time_emb_channels,
+    )
+
+    model, val_dataloader = accelerator.prepare(model, val_dataloader)
+    model_path = os.path.join(base_dir, "checkpoints", "mlp_ema.pt")
+    
+    if not os.path.exists(model_path):
+        print(f"Checkpoint not found at {model_path}. Please train the model first.")
+        return
+
+    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+
+    diffusion = ColdDiffusionEmbeddings(
+        max_timesteps=args.max_timesteps,
+        alpha_max=args.alpha_max,
+        device=device,
+    )
+
+    total_mse_sum = torch.zeros(1, device=device)
+    total_count = torch.zeros(1, device=device)
+
+    # Determine the initial timestep based on alpha_init
+    init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
+    init_timestep = max(1, min(init_timestep, diffusion.max_timesteps))
+
+    # Calculate standard deviation for the noise to achieve the target MSE
+    # If target MSE is E, we need variance to be E, so std_dev is sqrt(E).
+    std_dev = math.sqrt(args.injected_mse)
+
+    for batch in val_dataloader:
+        dominant_embeddings = batch["dominant_embedding"]
+        recessive_embeddings = batch["recessive_embedding"]
+        batch_size = dominant_embeddings.shape
+
+        # Standard cold diffusion starting point
+        mixed_embeddings = dominant_embeddings * (1.0 - args.alpha_init) + recessive_embeddings * args.alpha_init
+        x_t = mixed_embeddings.to(device)
+
+        # ---------------------------------------------------------
+        # STEP A: Simulate the prediction at the top timestep (T)
+        # ---------------------------------------------------------
+        # Inject Gaussian noise into the clean dominant embedding
+        noise = torch.randn_like(dominant_embeddings) * std_dev
+        simulated_pred_dominant = dominant_embeddings + noise
+
+        # Extract the resulting recessive based on our faulty dominant prediction
+        extracted_recessive = diffusion.extract_recessive(mixed_embeddings, simulated_pred_dominant, args.alpha_init)
+        
+        t_tensor = torch.full((batch_size,), init_timestep, device=device, dtype=torch.long)
+
+        # Transition to T-1
+        x_t = x_t - diffusion.mix_embeddings(simulated_pred_dominant, extracted_recessive, t_tensor) + \
+              diffusion.mix_embeddings(simulated_pred_dominant, extracted_recessive, t_tensor - 1)
+
+        # ---------------------------------------------------------
+        # STEP B: Fully sample from T-1 down to 1 using the model
+        # ---------------------------------------------------------
+        final_pred_dominant = simulated_pred_dominant # Fallback if init_timestep == 1
+        
+        for i in reversed(range(1, init_timestep)):
+            t = torch.full((batch_size,), i, device=device, dtype=torch.long)
+            
+            # Use the actual trained model for the rest of the sequence
+            final_pred_dominant = model(x_t, t)
+            
+            extracted_recessive = diffusion.extract_recessive(mixed_embeddings, final_pred_dominant, args.alpha_init)
+            
+            x_t = x_t - diffusion.mix_embeddings(final_pred_dominant, extracted_recessive, t) + \
+                  diffusion.mix_embeddings(final_pred_dominant, extracted_recessive, t - 1)
+
+        # Accumulate metrics based on the final prediction at t=1
+        total_mse_sum += F.mse_loss(final_pred_dominant, dominant_embeddings, reduction="sum")
+        total_count += dominant_embeddings.numel()
+
+    # Aggregate across distributed processes (if any)
+    avg_mse = (accelerator.gather(total_mse_sum).sum() / accelerator.gather(total_count).sum()).item()
+
+    if accelerator.is_main_process:
+        report = (
+            f"--- Simulated Error Injection Evaluation ---\n"
+            f"Injected MSE at T={init_timestep}: {args.injected_mse:.8f}\n"
+            f"Final Recovered Dominant MSE: {avg_mse:.8f}\n"
+        )
+        print(f"\n{report}")
+        
+        with open(os.path.join(base_dir, "results", "simulated_error_metrics.txt"), "w", encoding="utf-8") as f:
+            f.write(report)
 
 def launch():
     parser = argparse.ArgumentParser()
@@ -408,11 +511,14 @@ def launch():
     parser.add_argument("--num_layers", default=10, type=int, help="Number of MLP layers")
     parser.add_argument("--num_time_emb_channels", default=64, type=int, help="Sinusoidal timestep embedding width")
 
+    parser.add_argument("--injected_mse", default=0.4, type=float, help="Amount of MSE error to inject at the initial timestep")
+
     args = parser.parse_args()
 
-    train(args)
-    eval_model(args, one_shot=False)
-    eval_model(args, one_shot=True)
+    #train(args)
+    #eval_model(args, one_shot=False)
+    #eval_model(args, one_shot=True)
+    eval_simulated_error_sampling(args)
 
 
 if __name__ == "__main__":

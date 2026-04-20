@@ -1,5 +1,0 @@
-column,description,sample_id,source_path
-0,original dominant image,09878,/nas-ctm01/datasets/public/ffhq256/09878.png
-1,original recessive image,08006,/nas-ctm01/datasets/public/ffhq256/08006.png
-2,decoded predicted dominant embedding with GT stochastic code,09878,/nas-ctm01/datasets/public/ffhq256/09878.png
-3,decoded predicted recessive embedding with GT stochastic code,08006,/nas-ctm01/datasets/public/ffhq256/08006.png
