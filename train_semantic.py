@@ -517,8 +517,8 @@ def launch():
 
     #train(args)
     #eval_model(args, one_shot=False)
-    #eval_model(args, one_shot=True)
-    eval_simulated_error_sampling(args)
+    eval_model(args, one_shot=True)
+    #eval_simulated_error_sampling(args)
 
 
 if __name__ == "__main__":

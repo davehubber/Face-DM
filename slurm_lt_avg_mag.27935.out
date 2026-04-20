@@ -1,4 +1,7 @@
+Loaded val split: 7000 embeddings, 100000 deterministic pairs
+
 --- One-Shot Evaluation (Validation Set) ---
 Dominant MSE: 0.01776236
 Recovered Recessive MSE: 1.43875158
 Total MSE: 0.72825688
+
