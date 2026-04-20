@@ -1,0 +1,3 @@
+--- Simulated Error Injection Evaluation ---
+Injected MSE at T=300: 0.10000000
+Final Recovered Dominant MSE: 0.51825273

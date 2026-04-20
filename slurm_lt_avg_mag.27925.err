@@ -1,0 +1,19 @@
+Traceback (most recent call last):
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_semantic.py", line 525, in <module>
+    launch()
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_semantic.py", line 521, in launch
+    eval_simulated_error_sampling(args)
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/test/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_semantic.py", line 394, in eval_simulated_error_sampling
+    model = MLPSkipNet(
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_semantic.py", line 61, in __init__
+    self.time_embed = TimeEmbedding(num_time_emb_channels=num_time_emb_channels, out_channels=embedding_dim)
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_semantic.py", line 22, in __init__
+    nn.Linear(num_time_emb_channels, out_channels),
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/test/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 106, in __init__
+    torch.empty((out_features, in_features), **factory_kwargs)
+TypeError: empty() received an invalid combination of arguments - got (tuple, dtype=NoneType, device=NoneType), but expected one of:
+ * (tuple of ints size, *, tuple of names names, torch.memory_format memory_format = None, torch.dtype dtype = None, torch.layout layout = None, torch.device device = None, bool pin_memory = False, bool requires_grad = False)
+ * (tuple of ints size, *, torch.memory_format memory_format = None, Tensor out = None, torch.dtype dtype = None, torch.layout layout = None, torch.device device = None, bool pin_memory = False, bool requires_grad = False)
+

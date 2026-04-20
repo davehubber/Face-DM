@@ -511,7 +511,7 @@ def launch():
     parser.add_argument("--num_layers", default=10, type=int, help="Number of MLP layers")
     parser.add_argument("--num_time_emb_channels", default=64, type=int, help="Sinusoidal timestep embedding width")
 
-    parser.add_argument("--injected_mse", default=0.4, type=float, help="Amount of MSE error to inject at the initial timestep")
+    parser.add_argument("--injected_mse", default=0.1, type=float, help="Amount of MSE error to inject at the initial timestep")
 
     args = parser.parse_args()
 
