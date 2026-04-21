@@ -1,8 +1,5 @@
-Loaded val split: 7000 embeddings, 100000 deterministic pairs
-
 --- Simulated Error Injection Evaluation ---
 Injected MSE at T=300: 0.50000000
 Sampling steps used: 5
 Timestep stride: 60
-Final Recovered Dominant MSE: 0.24186549
-
+Final Recovered Dominant MSE: 0.24184535
