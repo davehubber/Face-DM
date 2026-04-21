@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 VAL_PAIR_SEED = 1234
@@ -49,7 +50,9 @@ class SemanticPairsDataset(Dataset):
 
         pack = torch.load(split_path, map_location="cpu")
         self.mean, self.std = load_zscore_stats(dataset_root)
-        self.embeddings = (pack["z_sem"].to(torch.float32) - self.mean) / self.std
+
+        self.raw_embeddings = pack["z_sem"].to(torch.float32)
+        self.embeddings = (self.raw_embeddings - self.mean) / self.std
 
         self.sample_ids: List[str] = list(pack["sample_ids"])
         self.source_paths: List[str] = list(pack["source_paths"])
@@ -86,10 +89,24 @@ class SemanticPairsDataset(Dataset):
         emb1 = self.embeddings[idx1]
         emb2 = self.embeddings[idx2]
 
+        raw_emb1 = self.raw_embeddings[idx1]
+        raw_emb2 = self.raw_embeddings[idx2]
+
+        cos1 = F.cosine_similarity(
+            raw_emb1.unsqueeze(0),
+            self.mean.unsqueeze(0),
+            dim=1,
+        ).item()
+        cos2 = F.cosine_similarity(
+            raw_emb2.unsqueeze(0),
+            self.mean.unsqueeze(0),
+            dim=1,
+        ).item()
+
         norm1 = torch.linalg.vector_norm(emb1).item()
         norm2 = torch.linalg.vector_norm(emb2).item()
 
-        if norm1 >= norm2:
+        if cos1 >= cos2:
             dominant_idx, recessive_idx = idx1, idx2
             dominant_embedding, recessive_embedding = emb1, emb2
             dominant_norm, recessive_norm = norm1, norm2
@@ -112,10 +129,6 @@ class SemanticPairsDataset(Dataset):
             "dominant_norm": dominant_norm,
             "recessive_norm": recessive_norm,
         }
-
-    def __getitem__(self, index: int) -> Dict:
-        idx1, idx2 = self._sample_pair_indices(index)
-        return self._ordered_pair(idx1, idx2)
 
 
 def _seed_worker(worker_id: int):
