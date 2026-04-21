@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 
 VAL_PAIR_SEED = 1234
 _ZSCORE_CACHE: Dict[str, Tuple[torch.Tensor, torch.Tensor]] = {}
+_PCA_CACHE: Dict[str, Dict[str, torch.Tensor]] = {}
 
 
 def setup_logging(run_name: str) -> str:
@@ -36,6 +37,47 @@ def load_zscore_stats(dataset_root: str) -> Tuple[torch.Tensor, torch.Tensor]:
     _ZSCORE_CACHE[dataset_root] = (mean, std)
     return mean, std
 
+def load_pca_stats(dataset_root: str) -> Dict[str, torch.Tensor]:
+    cached = _PCA_CACHE.get(dataset_root)
+    if cached is not None:
+        return cached
+
+    pca_stats_path = os.path.join(
+        dataset_root,
+        "semantic",
+        "pca_analysis",
+        "semantic_pca_stats.pt",
+    )
+    if not os.path.exists(pca_stats_path):
+        raise FileNotFoundError(
+            f"Could not find PCA stats file: {pca_stats_path}. "
+            f"Run the PCA analysis script first."
+        )
+
+    pack = torch.load(pca_stats_path, map_location="cpu")
+
+    if "pca_center_standardized" not in pack:
+        raise KeyError("PCA stats file is missing key 'pca_center_standardized'")
+    if "components_standardized" not in pack:
+        raise KeyError("PCA stats file is missing key 'components_standardized'")
+
+    components = pack["components_standardized"].to(torch.float32)
+    if components.ndim != 2 or components.shape[0] < 1:
+        raise ValueError(
+            f"Expected components_standardized to have shape [K, D] with K >= 1, got {tuple(components.shape)}"
+        )
+
+    pc1 = components[0]
+    pc1 = pc1 / pc1.norm().clamp_min(1e-12)
+
+    stats = {
+        "pca_center_standardized": pack["pca_center_standardized"].to(torch.float32),
+        "pc1_standardized": pc1,
+    }
+
+    _PCA_CACHE[dataset_root] = stats
+    return stats
+
 
 class SemanticPairsDataset(Dataset):
     def __init__(self, dataset_root: str, split: str, num_pairs: int, deterministic: bool = False):
@@ -50,9 +92,11 @@ class SemanticPairsDataset(Dataset):
 
         pack = torch.load(split_path, map_location="cpu")
         self.mean, self.std = load_zscore_stats(dataset_root)
+        self.embeddings = (pack["z_sem"].to(torch.float32) - self.mean) / self.std
 
-        self.raw_embeddings = pack["z_sem"].to(torch.float32)
-        self.embeddings = (self.raw_embeddings - self.mean) / self.std
+        pca_stats = load_pca_stats(dataset_root)
+        self.pca_center = pca_stats["pca_center_standardized"]
+        self.pc1 = pca_stats["pc1_standardized"]
 
         self.sample_ids: List[str] = list(pack["sample_ids"])
         self.source_paths: List[str] = list(pack["source_paths"])
@@ -89,31 +133,22 @@ class SemanticPairsDataset(Dataset):
         emb1 = self.embeddings[idx1]
         emb2 = self.embeddings[idx2]
 
-        raw_emb1 = self.raw_embeddings[idx1]
-        raw_emb2 = self.raw_embeddings[idx2]
-
-        cos1 = F.cosine_similarity(
-            raw_emb1.unsqueeze(0),
-            self.mean.unsqueeze(0),
-            dim=1,
-        ).item()
-        cos2 = F.cosine_similarity(
-            raw_emb2.unsqueeze(0),
-            self.mean.unsqueeze(0),
-            dim=1,
-        ).item()
+        score1 = torch.dot(emb1 - self.pca_center, self.pc1).item()
+        score2 = torch.dot(emb2 - self.pca_center, self.pc1).item()
 
         norm1 = torch.linalg.vector_norm(emb1).item()
         norm2 = torch.linalg.vector_norm(emb2).item()
 
-        if cos1 >= cos2:
+        if score1 >= score2:
             dominant_idx, recessive_idx = idx1, idx2
             dominant_embedding, recessive_embedding = emb1, emb2
             dominant_norm, recessive_norm = norm1, norm2
+            dominant_pc1_score, recessive_pc1_score = score1, score2
         else:
             dominant_idx, recessive_idx = idx2, idx1
             dominant_embedding, recessive_embedding = emb2, emb1
             dominant_norm, recessive_norm = norm2, norm1
+            dominant_pc1_score, recessive_pc1_score = score2, score1
 
         return {
             "dominant_embedding": dominant_embedding,
@@ -128,6 +163,8 @@ class SemanticPairsDataset(Dataset):
             "recessive_relative_path": self.relative_paths[recessive_idx],
             "dominant_norm": dominant_norm,
             "recessive_norm": recessive_norm,
+            "dominant_pc1_score": dominant_pc1_score,
+            "recessive_pc1_score": recessive_pc1_score,
         }
 
     def __getitem__(self, index: int) -> Dict:
@@ -152,6 +189,8 @@ def collate_semantic_pairs(batch: List[Dict]) -> Dict:
         "recessive_idx": torch.tensor([item["recessive_idx"] for item in batch], dtype=torch.long),
         "dominant_norm": torch.tensor([item["dominant_norm"] for item in batch], dtype=torch.float32),
         "recessive_norm": torch.tensor([item["recessive_norm"] for item in batch], dtype=torch.float32),
+        "dominant_pc1_score": torch.tensor([item["dominant_pc1_score"] for item in batch], dtype=torch.float32),
+        "recessive_pc1_score": torch.tensor([item["recessive_pc1_score"] for item in batch], dtype=torch.float32),
         "dominant_sample_id": [item["dominant_sample_id"] for item in batch],
         "recessive_sample_id": [item["recessive_sample_id"] for item in batch],
         "dominant_source_path": [item["dominant_source_path"] for item in batch],
