@@ -1,0 +1,9 @@
+Loaded val split: 7000 embeddings, 100000 deterministic pairs
+
+--- Iterative Evaluation (Validation Set) ---
+Dominant MSE: 0.49818280
+Recovered Recessive MSE: 0.49818280
+Total MSE: 0.49818280
+Sampling timestep stride: 60
+
+Saved evaluation embeddings for visual decoding to: experiments/lt_avg_mag/results/decode_pair_data.pt
