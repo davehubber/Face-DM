@@ -130,6 +130,10 @@ class SemanticPairsDataset(Dataset):
             "recessive_norm": recessive_norm,
         }
 
+    def __getitem__(self, index: int) -> Dict:
+        idx1, idx2 = self._sample_pair_indices(index)
+        return self._ordered_pair(idx1, idx2)
+
 
 def _seed_worker(worker_id: int):
     worker_seed = torch.initial_seed() % 2**32
