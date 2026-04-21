@@ -1,0 +1,48 @@
+Semantic Embedding PCA Analysis
+===============================
+
+Dataset root: /nas-ctm01/homes/dacordeiro/Face-DM/encoded_ffhq256_semantic_split
+Number of samples: 63000
+Embedding dimension: 512
+Selected sample index: 50997
+Selected sample id: 56648
+Selected source path: /nas-ctm01/datasets/public/ffhq256/56648.png
+Sigma multipliers used for grids: [1.0, 2.0, 3.0]
+Direction used for grids: 1.0
+
+Global reconstruction metrics in standardized PCA space
+------------------------------------------------------
+Total centered embedding MSE: 1.00000000
+Top-1 reconstruction residual MSE: 0.97529387 | captured variance fraction: 0.02470613
+Top-2 reconstruction residual MSE: 0.95409030 | captured variance fraction: 0.04590970
+Top-3 reconstruction residual MSE: 0.93420905 | captured variance fraction: 0.06579095
+
+Per-component metrics
+---------------------
+PC1
+  eigenvalue: 12.64972973
+  explained variance ratio: 0.02470611
+  cumulative explained variance ratio: 0.02470611
+  projection score std: 3.55664585
+  mean absolute projection score: 2.88609385
+  95th percentile absolute projection score: 6.83629179
+  selected sample projection score: 4.59467220
+
+PC2
+  eigenvalue: 10.85641384
+  explained variance ratio: 0.02120359
+  cumulative explained variance ratio: 0.04590970
+  projection score std: 3.29490726
+  mean absolute projection score: 2.68952966
+  95th percentile absolute projection score: 6.26812935
+  selected sample projection score: 6.26832390
+
+PC3
+  eigenvalue: 10.17932796
+  explained variance ratio: 0.01988118
+  cumulative explained variance ratio: 0.06579088
+  projection score std: 3.19050591
+  mean absolute projection score: 2.53494453
+  95th percentile absolute projection score: 6.34807205
+  selected sample projection score: 2.00527954
+
