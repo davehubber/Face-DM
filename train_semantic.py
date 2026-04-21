@@ -595,9 +595,9 @@ def launch():
 
     args = parser.parse_args()
 
-    #train(args)
+    train(args)
     eval_model(args, one_shot=False)
-    #eval_model(args, one_shot=True)
+    eval_model(args, one_shot=True)
     #eval_simulated_error_sampling(args)
 
 
