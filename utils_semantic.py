@@ -67,7 +67,7 @@ def load_pca_stats(dataset_root: str) -> Dict[str, torch.Tensor]:
             f"Expected components_standardized to have shape [K, D] with K >= 1, got {tuple(components.shape)}"
         )
 
-    pc1 = components[0]
+    pc1 = components[2]
     pc1 = pc1 / pc1.norm().clamp_min(1e-12)
 
     stats = {
