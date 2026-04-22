@@ -54,11 +54,22 @@ class MLPSkipBlock(nn.Module):
 
 
 class MLPSkipNet(nn.Module):
-    def __init__(self, embedding_dim: int = 512, hidden_dim: int = 2048, num_layers: int = 10, num_time_emb_channels: int = 64):
+    def __init__(
+        self,
+        embedding_dim: int = 512,
+        hidden_dim: int = 2048,
+        num_layers: int = 10,
+        num_time_emb_channels: int = 64,
+        num_outputs: int = 2,
+    ):
         super().__init__()
         self.embedding_dim = embedding_dim
+        self.num_outputs = num_outputs
         self.skip_layers = set(range(1, num_layers))
-        self.time_embed = TimeEmbedding(num_time_emb_channels=num_time_emb_channels, out_channels=embedding_dim)
+        self.time_embed = TimeEmbedding(
+            num_time_emb_channels=num_time_emb_channels,
+            out_channels=embedding_dim,
+        )
 
         layers = []
         for i in range(num_layers):
@@ -69,7 +80,7 @@ class MLPSkipNet(nn.Module):
                 use_activation = True
             elif i == num_layers - 1:
                 in_dim = hidden_dim + embedding_dim
-                out_dim = embedding_dim
+                out_dim = embedding_dim * num_outputs
                 use_condition = False
                 use_activation = False
             else:
@@ -97,7 +108,8 @@ class MLPSkipNet(nn.Module):
             if i in self.skip_layers:
                 h = torch.cat([h, x], dim=1)
             h = layer(h, cond)
-        return h
+
+        return h.reshape(x.shape[0], self.num_outputs, self.embedding_dim)
 
 
 class ColdDiffusionEmbeddings:
@@ -176,42 +188,54 @@ class ColdDiffusionEmbeddings:
         return x_t, predicted_recessive
 
 
-def mse_per_sample(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    return F.mse_loss(pred, target, reduction="none").reshape(pred.shape[0], -1).mean(dim=1)
+def mse_per_sample(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    return F.mse_loss(a, b, reduction="none").reshape(a.shape[0], -1).mean(dim=1)
 
 
-def permutation_invariant_single_output_loss(
-    predicted_embedding: torch.Tensor,
-    embedding_1: torch.Tensor,
-    embedding_2: torch.Tensor,
-) -> torch.Tensor:
-    loss_1 = mse_per_sample(predicted_embedding, embedding_1)
-    loss_2 = mse_per_sample(predicted_embedding, embedding_2)
-    return torch.minimum(loss_1, loss_2).mean()
-
-
-def permutation_invariant_pair_mse(
-    pred_1: torch.Tensor,
-    pred_2: torch.Tensor,
+def permutation_invariant_pair_loss(
+    pred_pair: torch.Tensor,
     gt_1: torch.Tensor,
     gt_2: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
+    pred_1 = pred_pair[:, 0, :]
+    pred_2 = pred_pair[:, 1, :]
+
+    direct = 0.5 * (
+        mse_per_sample(pred_1, gt_1) +
+        mse_per_sample(pred_2, gt_2)
+    )
+
+    swapped = 0.5 * (
+        mse_per_sample(pred_1, gt_2) +
+        mse_per_sample(pred_2, gt_1)
+    )
+
+    return torch.minimum(direct, swapped).mean()
+
+
+def permutation_invariant_pair_metrics(
+    pred_pair: torch.Tensor,
+    gt_1: torch.Tensor,
+    gt_2: torch.Tensor,
+):
+    pred_1 = pred_pair[:, 0, :]
+    pred_2 = pred_pair[:, 1, :]
+
     direct_1 = mse_per_sample(pred_1, gt_1)
     direct_2 = mse_per_sample(pred_2, gt_2)
+    direct_total = 0.5 * (direct_1 + direct_2)
 
     swapped_1 = mse_per_sample(pred_1, gt_2)
     swapped_2 = mse_per_sample(pred_2, gt_1)
-
-    direct_total = direct_1 + direct_2
-    swapped_total = swapped_1 + swapped_2
+    swapped_total = 0.5 * (swapped_1 + swapped_2)
 
     use_direct = direct_total <= swapped_total
 
     chosen_1 = torch.where(use_direct, direct_1, swapped_1)
     chosen_2 = torch.where(use_direct, direct_2, swapped_2)
-    chosen_total = 0.5 * torch.where(use_direct, direct_total, swapped_total)
+    chosen_total = torch.where(use_direct, direct_total, swapped_total)
 
-    return chosen_1, chosen_2, chosen_total
+    return chosen_1, chosen_2, chosen_total, use_direct
 
 @torch.no_grad()
 def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: ColdDiffusionEmbeddings, accelerator: Accelerator):
@@ -220,24 +244,25 @@ def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: ColdDiffus
     loss_count = torch.zeros(1, device=accelerator.device)
 
     for batch_idx, batch in enumerate(dataloader):
-        dominant_embeddings = batch["dominant_embedding"]
-        recessive_embeddings = batch["recessive_embedding"]
+        embedding_1 = batch["dominant_embedding"]
+        embedding_2 = batch["recessive_embedding"]
 
         t = (
-            (torch.arange(dominant_embeddings.shape[0], device=accelerator.device)
-             + batch_idx * dominant_embeddings.shape[0]) % diffusion.max_timesteps
+            (torch.arange(embedding_1.shape[0], device=accelerator.device)
+             + batch_idx * embedding_1.shape[0]) % diffusion.max_timesteps
         ) + 1
 
-        x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
-        predicted_embedding = model(x_t, t)
+        x_t = diffusion.mix_embeddings(embedding_1, embedding_2, t)
+        pred_pair = model(x_t, t)
 
-        batch_loss = torch.minimum(
-            mse_per_sample(predicted_embedding, dominant_embeddings),
-            mse_per_sample(predicted_embedding, recessive_embeddings),
+        batch_loss = permutation_invariant_pair_loss(
+            pred_pair,
+            embedding_1,
+            embedding_2,
         )
 
-        loss_sum += batch_loss.sum().detach()
-        loss_count += torch.tensor(batch_loss.shape[0], device=accelerator.device)
+        loss_sum += batch_loss.detach() * embedding_1.shape[0]
+        loss_count += torch.tensor(embedding_1.shape[0], device=accelerator.device)
 
     avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(loss_count).sum()).item()
     model.train()
@@ -254,17 +279,11 @@ def evaluate_embedding_mse(
     timestep_stride: int = 1,
 ):
     if not one_shot:
-        raise RuntimeError("Iterative evaluation is not valid for the unordered permutation-invariant experiment.")
-
-    if abs(alpha_init - 0.5) > 1e-8:
-        raise ValueError(
-            "For unordered one-shot PI evaluation with analytical recovery of the second embedding, "
-            "alpha_init must be 0.5."
-        )
+        raise RuntimeError("This PI two-output experiment should only use one-shot evaluation.")
 
     model.eval()
-    first_sum = torch.zeros(1, device=accelerator.device)
-    second_sum = torch.zeros(1, device=accelerator.device)
+    pred1_sum = torch.zeros(1, device=accelerator.device)
+    pred2_sum = torch.zeros(1, device=accelerator.device)
     total_sum = torch.zeros(1, device=accelerator.device)
     count = torch.zeros(1, device=accelerator.device)
 
@@ -286,40 +305,46 @@ def evaluate_embedding_mse(
             dtype=torch.long,
         )
 
-        predicted_1 = model(mixed_embeddings, t)
-        predicted_2 = diffusion.extract_recessive(mixed_embeddings, predicted_1, alpha_init)
+        pred_pair = model(mixed_embeddings, t)
 
-        mse_1, mse_2, mse_total = permutation_invariant_pair_mse(
-            predicted_1,
-            predicted_2,
+        mse_1, mse_2, mse_total, use_direct = permutation_invariant_pair_metrics(
+            pred_pair,
             embedding_1,
             embedding_2,
         )
 
-        first_sum += mse_1.sum()
-        second_sum += mse_2.sum()
+        pred1_sum += mse_1.sum()
+        pred2_sum += mse_2.sum()
         total_sum += mse_total.sum()
         count += torch.tensor(embedding_1.shape[0], device=accelerator.device)
 
         if first_item is None:
+            pred_a = pred_pair[0, 0].detach().cpu()
+            pred_b = pred_pair[0, 1].detach().cpu()
+
+            if bool(use_direct[0].item()):
+                matched_1, matched_2 = pred_a, pred_b
+            else:
+                matched_1, matched_2 = pred_b, pred_a
+
             first_item = {
                 "mixed_embedding": mixed_embeddings[0].detach().cpu(),
-                "predicted_embedding_1": predicted_1[0].detach().cpu(),
-                "predicted_embedding_2": predicted_2[0].detach().cpu(),
+                "predicted_embedding_1": matched_1,
+                "predicted_embedding_2": matched_2,
                 "source_path_1": batch["dominant_source_path"][0],
                 "source_path_2": batch["recessive_source_path"][0],
                 "sample_id_1": batch["dominant_sample_id"][0],
                 "sample_id_2": batch["recessive_sample_id"][0],
             }
 
-    first_mse = (accelerator.gather(first_sum).sum() / accelerator.gather(count).sum()).item()
-    second_mse = (accelerator.gather(second_sum).sum() / accelerator.gather(count).sum()).item()
+    pred1_mse = (accelerator.gather(pred1_sum).sum() / accelerator.gather(count).sum()).item()
+    pred2_mse = (accelerator.gather(pred2_sum).sum() / accelerator.gather(count).sum()).item()
     total_mse = (accelerator.gather(total_sum).sum() / accelerator.gather(count).sum()).item()
 
     model.train()
     return {
-        "first_mse": first_mse,
-        "second_mse": second_mse,
+        "pred1_mse": pred1_mse,
+        "pred2_mse": pred2_mse,
         "total_mse": total_mse,
         "first_item": first_item,
     }
@@ -344,6 +369,7 @@ def train(args):
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         num_time_emb_channels=args.num_time_emb_channels,
+        num_outputs=2,
     )
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
@@ -384,9 +410,9 @@ def train(args):
 
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
-                predicted_embedding = model(x_t, t)
-                loss = permutation_invariant_single_output_loss(
-                    predicted_embedding,
+                pred_pair = model(x_t, t)
+                loss = permutation_invariant_pair_loss(
+                    pred_pair,
                     dominant_embeddings,
                     recessive_embeddings,
                 )
@@ -444,6 +470,7 @@ def eval_model(args, one_shot: bool = False):
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         num_time_emb_channels=args.num_time_emb_channels,
+        num_outputs=2,
     )
 
     model, val_dataloader = accelerator.prepare(model, val_dataloader)
@@ -469,9 +496,9 @@ def eval_model(args, one_shot: bool = False):
 
     if accelerator.is_main_process:
         report = (
-            f"--- One-Shot Permutation-Invariant Evaluation (Validation Set) ---\n"
-            f"Matched Prediction 1 MSE: {metrics['first_mse']:.8f}\n"
-            f"Matched Prediction 2 MSE: {metrics['second_mse']:.8f}\n"
+            f"--- One-Shot PI Two-Output Evaluation (Validation Set) ---\n"
+            f"Matched Prediction 1 MSE: {metrics['pred1_mse']:.8f}\n"
+            f"Matched Prediction 2 MSE: {metrics['pred2_mse']:.8f}\n"
             f"Permutation-Invariant Total MSE: {metrics['total_mse']:.8f}\n"
         )
         print(f"\n{report}")
@@ -500,6 +527,7 @@ def eval_simulated_error_sampling(args):
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         num_time_emb_channels=args.num_time_emb_channels,
+        num_outputs=2,
     )
 
     model, val_dataloader = accelerator.prepare(model, val_dataloader)
