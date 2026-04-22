@@ -2,10 +2,10 @@
   deprecate("max_value", "1.0.0", deprecation_message, standard_warn=False)
 wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /nas-ctm01/homes/dacordeiro/.netrc.
 wandb: Currently logged in as: davcordeiro03 (davcordeiro03-inesc-tec) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
-wandb: setting up run om71i427
+wandb: setting up run rqp3qkui
 wandb: Tracking run with wandb version 0.26.0
-wandb: Run data is saved locally in /nas-ctm01/homes/dacordeiro/Face-DM/wandb/run-20260421_202240-om71i427
+wandb: Run data is saved locally in /nas-ctm01/homes/dacordeiro/Face-DM/wandb/run-20260422_140447-rqp3qkui
 wandb: Run `wandb offline` to turn off syncing.
-wandb: Syncing run lt_avg_pc3
+wandb: Syncing run lt_avg_pit
 wandb: ⭐️ View project at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM
-wandb: 🚀 View run at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/om71i427
+wandb: 🚀 View run at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/rqp3qkui

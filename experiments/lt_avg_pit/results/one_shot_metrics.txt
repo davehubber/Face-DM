@@ -1,0 +1,4 @@
+--- One-Shot Permutation-Invariant Evaluation (Validation Set) ---
+Matched Prediction 1 MSE: 0.45109937
+Matched Prediction 2 MSE: 0.45109937
+Permutation-Invariant Total MSE: 0.45109937
