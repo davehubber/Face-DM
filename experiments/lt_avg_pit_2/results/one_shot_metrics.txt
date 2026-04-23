@@ -1,0 +1,4 @@
+--- One-Shot PI Two-Output Evaluation (Validation Set) ---
+Matched Prediction 1 MSE: 0.44734195
+Matched Prediction 2 MSE: 0.45081601
+Permutation-Invariant Total MSE: 0.44907904
