@@ -1,0 +1,7 @@
+pair_data_path: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/lt_avg_pit/results/decode_pair_data_one_shot.pt
+used_swapped_assignment: False
+direct_total_mse: 0.83998811
+swapped_total_mse: 1.71845067
+decode_t_invert: 100
+decode_t_decode: 100
+alpha_init: 0.5
