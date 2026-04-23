@@ -1,0 +1,5 @@
+--- Iterative Evaluation (Validation Set) ---
+Dominant MSE: 0.52203244
+Recovered Recessive MSE: 0.52203244
+Total MSE: 0.52203244
+Sampling timestep stride: 10

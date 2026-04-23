@@ -8,4 +8,4 @@
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train_semantic.py --run_name "lt_avg_cos_tf" --epochs 10 --batch_size 512 --eval_sampling_stride 10
+python train_semantic.py --run_name "lt_avg_cos_tf" --epochs 10 --batch_size 8192 --eval_sampling_stride 10
