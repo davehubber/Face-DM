@@ -4,11 +4,11 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 VAL_PAIR_SEED = 1234
 _ZSCORE_CACHE: Dict[str, Tuple[torch.Tensor, torch.Tensor]] = {}
+
 
 def setup_logging(run_name: str) -> str:
     base_dir = os.path.join("experiments", run_name)
@@ -82,31 +82,40 @@ class SemanticPairsDataset(Dataset):
             return self._pair_from_rng(random.Random(VAL_PAIR_SEED + index))
         return self._pair_from_rng(random)
 
-    def _unordered_pair(self, idx1: int, idx2: int) -> Dict:
+    def _ordered_pair(self, idx1: int, idx2: int) -> Dict:
         emb1 = self.embeddings[idx1]
         emb2 = self.embeddings[idx2]
 
         norm1 = torch.linalg.vector_norm(emb1).item()
         norm2 = torch.linalg.vector_norm(emb2).item()
 
+        if norm1 >= norm2:
+            dominant_idx, recessive_idx = idx1, idx2
+            dominant_embedding, recessive_embedding = emb1, emb2
+            dominant_norm, recessive_norm = norm1, norm2
+        else:
+            dominant_idx, recessive_idx = idx2, idx1
+            dominant_embedding, recessive_embedding = emb2, emb1
+            dominant_norm, recessive_norm = norm2, norm1
+
         return {
-            "dominant_embedding": emb1,   # now just arbitrary slot 1
-            "recessive_embedding": emb2,  # now just arbitrary slot 2
-            "dominant_idx": idx1,
-            "recessive_idx": idx2,
-            "dominant_sample_id": self.sample_ids[idx1],
-            "recessive_sample_id": self.sample_ids[idx2],
-            "dominant_source_path": self.source_paths[idx1],
-            "recessive_source_path": self.source_paths[idx2],
-            "dominant_relative_path": self.relative_paths[idx1],
-            "recessive_relative_path": self.relative_paths[idx2],
-            "dominant_norm": norm1,
-            "recessive_norm": norm2,
+            "dominant_embedding": dominant_embedding,
+            "recessive_embedding": recessive_embedding,
+            "dominant_idx": dominant_idx,
+            "recessive_idx": recessive_idx,
+            "dominant_sample_id": self.sample_ids[dominant_idx],
+            "recessive_sample_id": self.sample_ids[recessive_idx],
+            "dominant_source_path": self.source_paths[dominant_idx],
+            "recessive_source_path": self.source_paths[recessive_idx],
+            "dominant_relative_path": self.relative_paths[dominant_idx],
+            "recessive_relative_path": self.relative_paths[recessive_idx],
+            "dominant_norm": dominant_norm,
+            "recessive_norm": recessive_norm,
         }
 
     def __getitem__(self, index: int) -> Dict:
         idx1, idx2 = self._sample_pair_indices(index)
-        return self._unordered_pair(idx1, idx2)
+        return self._ordered_pair(idx1, idx2)
 
 
 def _seed_worker(worker_id: int):
