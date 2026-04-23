@@ -120,26 +120,98 @@ class ColdDiffusionEmbeddings:
     def sample_timesteps(self, batch_size: int) -> torch.Tensor:
         return torch.randint(1, self.max_timesteps + 1, (batch_size,), device=self.device, dtype=torch.long)
 
-    def sample(self, model: nn.Module, mixed_embedding: torch.Tensor, alpha_init: float = 0.5) -> tuple[torch.Tensor, torch.Tensor]:
+    def sample(
+        self,
+        model: nn.Module,
+        mixed_embedding: torch.Tensor,
+        alpha_init: float = 0.5,
+        timestep_stride: int = 1,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size = mixed_embedding.shape[0]
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
         init_timestep = max(1, min(init_timestep, self.max_timesteps))
 
+        timestep_stride = int(timestep_stride)
+        if timestep_stride <= 0:
+            raise ValueError(f"timestep_stride must be >= 1, got {timestep_stride}")
+        if timestep_stride > init_timestep:
+            raise ValueError(
+                f"timestep_stride ({timestep_stride}) cannot be larger than init_timestep ({init_timestep})"
+            )
+
+        source_timesteps = list(range(init_timestep, 0, -timestep_stride))
+        effective_steps = len(source_timesteps)
+
+        was_training = model.training
         model.eval()
+
         with torch.no_grad():
             x_t = mixed_embedding.to(self.device)
-            for i in reversed(range(1, init_timestep + 1)):
-                t = torch.full((batch_size,), i, device=self.device, dtype=torch.long)
+
+            for step_idx, t_value in enumerate(source_timesteps):
+                t = torch.full((batch_size,), t_value, device=self.device, dtype=torch.long)
+
                 predicted_dominant = model(x_t, t)
-                extracted_recessive = self.extract_recessive(mixed_embedding, predicted_dominant, alpha_init)
-                x_t = x_t - self.mix_embeddings(predicted_dominant, extracted_recessive, t) + self.mix_embeddings(
-                    predicted_dominant, extracted_recessive, t - 1
+                extracted_recessive = self.extract_recessive(
+                    mixed_embedding, predicted_dominant, alpha_init
                 )
 
-        model.train()
+                if step_idx == effective_steps - 1:
+                    prev_t_value = 0
+                else:
+                    prev_t_value = source_timesteps[step_idx + 1]
+
+                prev_t = torch.full((batch_size,), prev_t_value, device=self.device, dtype=torch.long)
+
+                x_t = (
+                    x_t
+                    - self.mix_embeddings(predicted_dominant, extracted_recessive, t)
+                    + self.mix_embeddings(predicted_dominant, extracted_recessive, prev_t)
+                )
+
+        if was_training:
+            model.train()
+
         predicted_recessive = self.extract_recessive(mixed_embedding, x_t, alpha_init)
         return x_t, predicted_recessive
 
+
+def mse_per_sample(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    return F.mse_loss(pred, target, reduction="none").reshape(pred.shape[0], -1).mean(dim=1)
+
+
+def permutation_invariant_single_output_loss(
+    predicted_embedding: torch.Tensor,
+    embedding_1: torch.Tensor,
+    embedding_2: torch.Tensor,
+) -> torch.Tensor:
+    loss_1 = mse_per_sample(predicted_embedding, embedding_1)
+    loss_2 = mse_per_sample(predicted_embedding, embedding_2)
+    return torch.minimum(loss_1, loss_2).mean()
+
+
+def permutation_invariant_pair_mse(
+    pred_1: torch.Tensor,
+    pred_2: torch.Tensor,
+    gt_1: torch.Tensor,
+    gt_2: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    direct_1 = mse_per_sample(pred_1, gt_1)
+    direct_2 = mse_per_sample(pred_2, gt_2)
+
+    swapped_1 = mse_per_sample(pred_1, gt_2)
+    swapped_2 = mse_per_sample(pred_2, gt_1)
+
+    direct_total = direct_1 + direct_2
+    swapped_total = swapped_1 + swapped_2
+
+    use_direct = direct_total <= swapped_total
+
+    chosen_1 = torch.where(use_direct, direct_1, swapped_1)
+    chosen_2 = torch.where(use_direct, direct_2, swapped_2)
+    chosen_total = 0.5 * torch.where(use_direct, direct_total, swapped_total)
+
+    return chosen_1, chosen_2, chosen_total
 
 @torch.no_grad()
 def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: ColdDiffusionEmbeddings, accelerator: Accelerator):
@@ -150,27 +222,51 @@ def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: ColdDiffus
     for batch_idx, batch in enumerate(dataloader):
         dominant_embeddings = batch["dominant_embedding"]
         recessive_embeddings = batch["recessive_embedding"]
-        t = ((torch.arange(dominant_embeddings.shape[0], device=accelerator.device) + batch_idx * dominant_embeddings.shape[0]) % diffusion.max_timesteps) + 1
+
+        t = (
+            (torch.arange(dominant_embeddings.shape[0], device=accelerator.device)
+             + batch_idx * dominant_embeddings.shape[0]) % diffusion.max_timesteps
+        ) + 1
 
         x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
-        predicted_dominant = model(x_t, t)
+        predicted_embedding = model(x_t, t)
 
-        loss_sum += F.mse_loss(predicted_dominant, dominant_embeddings, reduction="sum").detach()
-        loss_count += dominant_embeddings.numel()
+        batch_loss = torch.minimum(
+            mse_per_sample(predicted_embedding, dominant_embeddings),
+            mse_per_sample(predicted_embedding, recessive_embeddings),
+        )
+
+        loss_sum += batch_loss.sum().detach()
+        loss_count += torch.tensor(batch_loss.shape[0], device=accelerator.device)
 
     avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(loss_count).sum()).item()
     model.train()
     return avg_val_loss
 
-
 @torch.no_grad()
-def evaluate_embedding_mse(model: nn.Module, dataloader, diffusion: ColdDiffusionEmbeddings, accelerator: Accelerator, alpha_init: float, one_shot: bool = False):
+def evaluate_embedding_mse(
+    model: nn.Module,
+    dataloader,
+    diffusion: ColdDiffusionEmbeddings,
+    accelerator: Accelerator,
+    alpha_init: float,
+    one_shot: bool = False,
+    timestep_stride: int = 1,
+):
+    if not one_shot:
+        raise RuntimeError("Iterative evaluation is not valid for the unordered permutation-invariant experiment.")
+
+    if abs(alpha_init - 0.5) > 1e-8:
+        raise ValueError(
+            "For unordered one-shot PI evaluation with analytical recovery of the second embedding, "
+            "alpha_init must be 0.5."
+        )
+
     model.eval()
-    dominant_sum = torch.zeros(1, device=accelerator.device)
-    recessive_sum = torch.zeros(1, device=accelerator.device)
+    first_sum = torch.zeros(1, device=accelerator.device)
+    second_sum = torch.zeros(1, device=accelerator.device)
     total_sum = torch.zeros(1, device=accelerator.device)
-    dominant_count = torch.zeros(1, device=accelerator.device)
-    recessive_count = torch.zeros(1, device=accelerator.device)
+    count = torch.zeros(1, device=accelerator.device)
 
     init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
     init_timestep = max(1, min(init_timestep, diffusion.max_timesteps))
@@ -178,50 +274,55 @@ def evaluate_embedding_mse(model: nn.Module, dataloader, diffusion: ColdDiffusio
     first_item = None
 
     for batch in dataloader:
-        dominant_embeddings = batch["dominant_embedding"]
-        recessive_embeddings = batch["recessive_embedding"]
-        mixed_embeddings = dominant_embeddings * (1.0 - alpha_init) + recessive_embeddings * alpha_init
+        embedding_1 = batch["dominant_embedding"]
+        embedding_2 = batch["recessive_embedding"]
 
-        if one_shot:
-            t = torch.full((dominant_embeddings.shape[0],), init_timestep, device=accelerator.device, dtype=torch.long)
-            predicted_dominant = model(mixed_embeddings, t)
-            predicted_recessive = diffusion.extract_recessive(mixed_embeddings, predicted_dominant, alpha_init)
-        else:
-            predicted_dominant, predicted_recessive = diffusion.sample(model, mixed_embeddings, alpha_init=alpha_init)
+        mixed_embeddings = embedding_1 * (1.0 - alpha_init) + embedding_2 * alpha_init
 
-        dominant_sum += F.mse_loss(predicted_dominant, dominant_embeddings, reduction="sum")
-        recessive_sum += F.mse_loss(predicted_recessive, recessive_embeddings, reduction="sum")
-        total_sum += (
-            F.mse_loss(predicted_dominant, dominant_embeddings, reduction="sum")
-            + F.mse_loss(predicted_recessive, recessive_embeddings, reduction="sum")
+        t = torch.full(
+            (embedding_1.shape[0],),
+            init_timestep,
+            device=accelerator.device,
+            dtype=torch.long,
         )
-        dominant_count += dominant_embeddings.numel()
-        recessive_count += recessive_embeddings.numel()
+
+        predicted_1 = model(mixed_embeddings, t)
+        predicted_2 = diffusion.extract_recessive(mixed_embeddings, predicted_1, alpha_init)
+
+        mse_1, mse_2, mse_total = permutation_invariant_pair_mse(
+            predicted_1,
+            predicted_2,
+            embedding_1,
+            embedding_2,
+        )
+
+        first_sum += mse_1.sum()
+        second_sum += mse_2.sum()
+        total_sum += mse_total.sum()
+        count += torch.tensor(embedding_1.shape[0], device=accelerator.device)
 
         if first_item is None:
             first_item = {
                 "mixed_embedding": mixed_embeddings[0].detach().cpu(),
-                "predicted_dominant": predicted_dominant[0].detach().cpu(),
-                "predicted_recessive": predicted_recessive[0].detach().cpu(),
-                "dominant_source_path": batch["dominant_source_path"][0],
-                "recessive_source_path": batch["recessive_source_path"][0],
-                "dominant_sample_id": batch["dominant_sample_id"][0],
-                "recessive_sample_id": batch["recessive_sample_id"][0],
+                "predicted_embedding_1": predicted_1[0].detach().cpu(),
+                "predicted_embedding_2": predicted_2[0].detach().cpu(),
+                "source_path_1": batch["dominant_source_path"][0],
+                "source_path_2": batch["recessive_source_path"][0],
+                "sample_id_1": batch["dominant_sample_id"][0],
+                "sample_id_2": batch["recessive_sample_id"][0],
             }
 
-    dominant_mse = (accelerator.gather(dominant_sum).sum() / accelerator.gather(dominant_count).sum()).item()
-    recessive_mse = (accelerator.gather(recessive_sum).sum() / accelerator.gather(recessive_count).sum()).item()
-    total_mse = (
-        accelerator.gather(total_sum).sum() / (accelerator.gather(dominant_count).sum() + accelerator.gather(recessive_count).sum())
-    ).item()
+    first_mse = (accelerator.gather(first_sum).sum() / accelerator.gather(count).sum()).item()
+    second_mse = (accelerator.gather(second_sum).sum() / accelerator.gather(count).sum()).item()
+    total_mse = (accelerator.gather(total_sum).sum() / accelerator.gather(count).sum()).item()
+
     model.train()
     return {
-        "dominant_mse": dominant_mse,
-        "recessive_mse": recessive_mse,
+        "first_mse": first_mse,
+        "second_mse": second_mse,
         "total_mse": total_mse,
         "first_item": first_item,
     }
-
 
 def train(args):
     base_dir = setup_logging(args.run_name)
@@ -283,8 +384,12 @@ def train(args):
 
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
-                predicted_dominant = model(x_t, t)
-                loss = F.mse_loss(predicted_dominant, dominant_embeddings)
+                predicted_embedding = model(x_t, t)
+                loss = permutation_invariant_single_output_loss(
+                    predicted_embedding,
+                    dominant_embeddings,
+                    recessive_embeddings,
+                )
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -359,24 +464,24 @@ def eval_model(args, one_shot: bool = False):
         accelerator=accelerator,
         alpha_init=args.alpha_init,
         one_shot=one_shot,
+        timestep_stride=args.eval_sampling_stride,
     )
 
     if accelerator.is_main_process:
-        label = "One-Shot" if one_shot else "Iterative"
         report = (
-            f"--- {label} Evaluation (Validation Set) ---\n"
-            f"Dominant MSE: {metrics['dominant_mse']:.8f}\n"
-            f"Recovered Recessive MSE: {metrics['recessive_mse']:.8f}\n"
-            f"Total MSE: {metrics['total_mse']:.8f}\n"
+            f"--- One-Shot Permutation-Invariant Evaluation (Validation Set) ---\n"
+            f"Matched Prediction 1 MSE: {metrics['first_mse']:.8f}\n"
+            f"Matched Prediction 2 MSE: {metrics['second_mse']:.8f}\n"
+            f"Permutation-Invariant Total MSE: {metrics['total_mse']:.8f}\n"
         )
         print(f"\n{report}")
 
-        out_name = "one_shot_metrics.txt" if one_shot else "final_metrics.txt"
-        with open(os.path.join(base_dir, "results", out_name), "w", encoding="utf-8") as f:
+        with open(os.path.join(base_dir, "results", "one_shot_metrics.txt"), "w", encoding="utf-8") as f:
             f.write(report)
 
-        if not one_shot and metrics["first_item"] is not None:
-            save_path = os.path.join(base_dir, "results", "decode_pair_data.pt")
+        if metrics["first_item"] is not None:
+            save_name = "decode_pair_data_one_shot.pt" if one_shot else "decode_pair_data.pt"
+            save_path = os.path.join(base_dir, "results", save_name)
             torch.save(metrics["first_item"], save_path)
             print(f"Saved evaluation embeddings for visual decoding to: {save_path}")
 
@@ -529,14 +634,16 @@ def launch():
     parser.add_argument("--num_layers", default=10, type=int, help="Number of MLP layers")
     parser.add_argument("--num_time_emb_channels", default=64, type=int, help="Sinusoidal timestep embedding width")
 
+    parser.add_argument("--eval_sampling_stride", default=1, type=int, help="Reverse-sampling timestep stride for iterative eval. ")
+
     parser.add_argument("--injected_mse", default=0.5, type=float, help="Amount of MSE error to inject at the initial timestep")
 
     parser.add_argument("--simulated_sampling_steps", default=None, type=int, help="Number of reverse sampling steps for eval_simulated_error_sampling.")
 
     args = parser.parse_args()
 
-    train(args)
-    eval_model(args, one_shot=False)
+    #train(args)
+    #eval_model(args, one_shot=False)
     eval_model(args, one_shot=True)
     #eval_simulated_error_sampling(args)
 
