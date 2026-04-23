@@ -1,0 +1,5 @@
+column,description,sample_id,source_path,pair_data_path
+0,original dominant image,63817,/nas-ctm01/datasets/public/ffhq256/63817.png,/nas-ctm01/homes/dacordeiro/Face-DM/experiments/lt_avg_pc2/results/decode_pair_data.pt
+1,original recessive image,36238,/nas-ctm01/datasets/public/ffhq256/36238.png,/nas-ctm01/homes/dacordeiro/Face-DM/experiments/lt_avg_pc2/results/decode_pair_data.pt
+2,decoded predicted dominant embedding with GT stochastic code,63817,/nas-ctm01/datasets/public/ffhq256/63817.png,/nas-ctm01/homes/dacordeiro/Face-DM/experiments/lt_avg_pc2/results/decode_pair_data.pt
+3,decoded predicted recessive embedding with GT stochastic code,36238,/nas-ctm01/datasets/public/ffhq256/36238.png,/nas-ctm01/homes/dacordeiro/Face-DM/experiments/lt_avg_pc2/results/decode_pair_data.pt
