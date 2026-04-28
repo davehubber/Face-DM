@@ -389,6 +389,19 @@ def launch():
     parser.add_argument("--train_samples_per_epoch", default=1000000, type=int, help="Number of random train pairs per epoch")
     parser.add_argument("--val_samples", default=100000, type=int, help="Number of deterministic validation pairs")
     parser.add_argument("--num_workers", default=4, type=int, help="DataLoader worker count")
+    parser.add_argument(
+        "--pair_ordering",
+        default="norm",
+        choices=["norm", "cosine_mean"],
+        help="How to order each embedding pair before training/evaluation.",
+    )
+
+    parser.add_argument(
+        "--cosine_mean_source",
+        default="train_val",
+        choices=["train", "train_val"],
+        help="Which embeddings to use to compute the raw mean for cosine_mean ordering.",
+    )
 
     parser.add_argument("--alpha_max", default=0.5, type=float, help="Maximum recessive weight at the last timestep")
     parser.add_argument("--alpha_init", default=0.5, type=float, help="Recessive weight used for evaluation sampling")
