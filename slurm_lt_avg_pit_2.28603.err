@@ -1,8 +1,0 @@
-Traceback (most recent call last):
-  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_semantic.py", line 679, in <module>
-    launch()
-  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_semantic.py", line 674, in launch
-    eval_model(args, one_shot=True)
-  File "/nas-ctm01/homes/dacordeiro/Face-DM/train_semantic.py", line 499, in eval_model
-    f"Matched Prediction 1 MSE: {metrics['first_mse']:.8f}\n"
-KeyError: 'first_mse'

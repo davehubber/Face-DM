@@ -1,0 +1,20 @@
+Loaded train split: 63000 embeddings, 1000000 random pairs
+Loaded val split: 7000 embeddings, 100000 deterministic pairs
+Loaded val split: 7000 embeddings, 100000 deterministic pairs
+
+--- Iterative Evaluation (Validation Set) ---
+Dominant MSE: 0.51217502
+Recovered Recessive MSE: 0.51217502
+Total MSE: 0.51217502
+
+Saved evaluation embeddings for visual decoding to: experiments/lt_avg_mag/results/decode_pair_data.pt
+Loaded val split: 7000 embeddings, 100000 deterministic pairs
+
+--- One-Shot Evaluation (Validation Set) ---
+Dominant MSE: 0.47873801
+Recovered Recessive MSE: 0.47873801
+Total MSE: 0.47873801
+
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mlt_avg_mag[0m at: [34mhttps://wandb.ai/davcordeiro03-inesc-tec/Face-DM/runs/kuziae67[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb/run-20260428_115251-kuziae67/logs[0m
