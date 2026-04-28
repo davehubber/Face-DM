@@ -69,7 +69,7 @@ class MLPSkipNet(nn.Module):
                 use_activation = True
             elif i == num_layers - 1:
                 in_dim = hidden_dim + embedding_dim
-                out_dim = embedding_dim
+                out_dim = embedding_dim * 2
                 use_condition = False
                 use_activation = False
             else:
@@ -100,6 +100,14 @@ class MLPSkipNet(nn.Module):
         return h
 
 
+def split_predicted_embeddings(predicted_embeddings: torch.Tensor):
+    if predicted_embeddings.shape[1] % 2 != 0:
+        raise ValueError(
+            f"Expected model output dimension to be even, got shape {tuple(predicted_embeddings.shape)}"
+        )
+    return predicted_embeddings.chunk(2, dim=1)
+
+
 class ColdDiffusionEmbeddings:
     def __init__(self, max_timesteps: int = 300, alpha_max: float = 0.5, device: str = "cuda"):
         self.max_timesteps = int(max_timesteps)
@@ -117,9 +125,6 @@ class ColdDiffusionEmbeddings:
             raise ValueError("alpha must be > 0 to extract the second embedding")
         return (mixed_embedding - (1.0 - alpha) * dominant_embedding) / alpha
 
-    def sample_timesteps(self, batch_size: int) -> torch.Tensor:
-        return torch.randint(1, self.max_timesteps + 1, (batch_size,), device=self.device, dtype=torch.long)
-
     def sample(self, model: nn.Module, mixed_embedding: torch.Tensor, alpha_init: float = 0.5) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size = mixed_embedding.shape[0]
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
@@ -130,7 +135,10 @@ class ColdDiffusionEmbeddings:
             x_t = mixed_embedding.to(self.device)
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((batch_size,), i, device=self.device, dtype=torch.long)
-                predicted_dominant = model(x_t, t)
+
+                predicted_embeddings = model(x_t, t)
+                predicted_dominant, _ = split_predicted_embeddings(predicted_embeddings)
+
                 extracted_recessive = self.extract_recessive(mixed_embedding, predicted_dominant, alpha_init)
                 x_t = x_t - self.mix_embeddings(predicted_dominant, extracted_recessive, t) + self.mix_embeddings(
                     predicted_dominant, extracted_recessive, t - 1
@@ -139,6 +147,9 @@ class ColdDiffusionEmbeddings:
         model.train()
         predicted_recessive = self.extract_recessive(mixed_embedding, x_t, alpha_init)
         return x_t, predicted_recessive
+
+    def sample_timesteps(self, batch_size: int) -> torch.Tensor:
+        return torch.randint(1, self.max_timesteps + 1, (batch_size,), device=self.device, dtype=torch.long)
 
 
 @torch.no_grad()
@@ -153,9 +164,17 @@ def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: ColdDiffus
         t = ((torch.arange(dominant_embeddings.shape[0], device=accelerator.device) + batch_idx * dominant_embeddings.shape[0]) % diffusion.max_timesteps) + 1
 
         x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
-        predicted_dominant = model(x_t, t)
 
-        loss_sum += F.mse_loss(predicted_dominant, dominant_embeddings, reduction="sum").detach()
+        predicted_embeddings = model(x_t, t)
+        predicted_dominant, predicted_recessive = split_predicted_embeddings(predicted_embeddings)
+
+        loss_sum += (
+            F.mse_loss(predicted_dominant, dominant_embeddings, reduction="sum")
+            + F.mse_loss(predicted_recessive, recessive_embeddings, reduction="sum")
+        ).detach()
+
+        # This denominator makes val_loss equivalent to:
+        # MSE(predicted_dominant, dominant) + MSE(predicted_recessive, recessive)
         loss_count += dominant_embeddings.numel()
 
     avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(loss_count).sum()).item()
@@ -184,7 +203,10 @@ def evaluate_embedding_mse(model: nn.Module, dataloader, diffusion: ColdDiffusio
 
         if one_shot:
             t = torch.full((dominant_embeddings.shape[0],), init_timestep, device=accelerator.device, dtype=torch.long)
-            predicted_dominant = model(mixed_embeddings, t)
+
+            predicted_embeddings = model(mixed_embeddings, t)
+            predicted_dominant, _ = split_predicted_embeddings(predicted_embeddings)
+
             predicted_recessive = diffusion.extract_recessive(mixed_embeddings, predicted_dominant, alpha_init)
         else:
             predicted_dominant, predicted_recessive = diffusion.sample(model, mixed_embeddings, alpha_init=alpha_init)
@@ -283,8 +305,14 @@ def train(args):
 
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
-                predicted_dominant = model(x_t, t)
-                loss = F.mse_loss(predicted_dominant, dominant_embeddings)
+
+                predicted_embeddings = model(x_t, t)
+                predicted_dominant, predicted_recessive = split_predicted_embeddings(predicted_embeddings)
+
+                loss = (
+                    F.mse_loss(predicted_dominant, dominant_embeddings)
+                    + F.mse_loss(predicted_recessive, recessive_embeddings)
+                )
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -389,19 +417,6 @@ def launch():
     parser.add_argument("--train_samples_per_epoch", default=1000000, type=int, help="Number of random train pairs per epoch")
     parser.add_argument("--val_samples", default=100000, type=int, help="Number of deterministic validation pairs")
     parser.add_argument("--num_workers", default=4, type=int, help="DataLoader worker count")
-    parser.add_argument(
-        "--pair_ordering",
-        default="norm",
-        choices=["norm", "cosine_mean"],
-        help="How to order each embedding pair before training/evaluation.",
-    )
-
-    parser.add_argument(
-        "--cosine_mean_source",
-        default="train_val",
-        choices=["train", "train_val"],
-        help="Which embeddings to use to compute the raw mean for cosine_mean ordering.",
-    )
 
     parser.add_argument("--alpha_max", default=0.5, type=float, help="Maximum recessive weight at the last timestep")
     parser.add_argument("--alpha_init", default=0.5, type=float, help="Recessive weight used for evaluation sampling")
