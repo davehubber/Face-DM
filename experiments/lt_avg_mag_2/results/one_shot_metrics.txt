@@ -1,0 +1,4 @@
+--- One-Shot Evaluation (Validation Set) ---
+Dominant MSE: 0.49122745
+Recovered Recessive MSE: 0.49122745
+Total MSE: 0.49122745

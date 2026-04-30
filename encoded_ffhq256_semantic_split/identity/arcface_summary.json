@@ -1,0 +1,35 @@
+{
+  "dataset_root": "/nas-ctm01/homes/dacordeiro/Face-DM/encoded_ffhq256_semantic_split",
+  "images_root": "/nas-ctm01/datasets/public/ffhq256",
+  "model_name": "buffalo_l",
+  "device": "cuda",
+  "det_size": 512,
+  "splits": [
+    {
+      "split": "train",
+      "num_rows": 10000,
+      "num_valid": 9999,
+      "num_failed": 1,
+      "embedding_dim": 512,
+      "out_path": "/nas-ctm01/homes/dacordeiro/Face-DM/encoded_ffhq256_semantic_split/identity/train_arcface.pt",
+      "failed_rows": [
+        {
+          "row": 9255,
+          "sample_id": "10279",
+          "source_path": "/nas-ctm01/datasets/public/ffhq256/10279.png",
+          "relative_path": "10279.png",
+          "reason": "no_face_detected"
+        }
+      ]
+    },
+    {
+      "split": "val",
+      "num_rows": 7000,
+      "num_valid": 7000,
+      "num_failed": 0,
+      "embedding_dim": 512,
+      "out_path": "/nas-ctm01/homes/dacordeiro/Face-DM/encoded_ffhq256_semantic_split/identity/val_arcface.pt",
+      "failed_rows": []
+    }
+  ]
+}
