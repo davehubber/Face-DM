@@ -1,6 +1,3 @@
 pair_data_path: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/lt_avg_mag_l1/results/decode_pair_data.pt
-used_swapped_assignment: True
-direct_total_mse: 1.79116952
-swapped_total_mse: 1.01962376
 decode_t_invert: 100
 decode_t_decode: 100
