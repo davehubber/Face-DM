@@ -8,4 +8,4 @@
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train_semantic.py --run_name "lt_avg_mag_l1" --max_timesteps 50 --batch-size 16384 --epochs 10
+python train_semantic.py --run_name "lt_avg_mag_l1" --max_timesteps 50 --batch_size 16384 --epochs 20
