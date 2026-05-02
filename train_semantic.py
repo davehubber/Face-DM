@@ -69,7 +69,7 @@ class MLPSkipNet(nn.Module):
                 use_activation = True
             elif i == num_layers - 1:
                 in_dim = hidden_dim + embedding_dim
-                out_dim = embedding_dim * 2
+                out_dim = embedding_dim
                 use_condition = False
                 use_activation = False
             else:
@@ -100,14 +100,6 @@ class MLPSkipNet(nn.Module):
         return h
 
 
-def split_predicted_embeddings(predicted_embeddings: torch.Tensor):
-    if predicted_embeddings.shape[1] % 2 != 0:
-        raise ValueError(
-            f"Expected model output dimension to be even, got shape {tuple(predicted_embeddings.shape)}"
-        )
-    return predicted_embeddings.chunk(2, dim=1)
-
-
 class ColdDiffusionEmbeddings:
     def __init__(self, max_timesteps: int = 300, alpha_max: float = 0.5, device: str = "cuda"):
         self.max_timesteps = int(max_timesteps)
@@ -125,6 +117,9 @@ class ColdDiffusionEmbeddings:
             raise ValueError("alpha must be > 0 to extract the second embedding")
         return (mixed_embedding - (1.0 - alpha) * dominant_embedding) / alpha
 
+    def sample_timesteps(self, batch_size: int) -> torch.Tensor:
+        return torch.randint(1, self.max_timesteps + 1, (batch_size,), device=self.device, dtype=torch.long)
+
     def sample(self, model: nn.Module, mixed_embedding: torch.Tensor, alpha_init: float = 0.5) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size = mixed_embedding.shape[0]
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
@@ -135,10 +130,7 @@ class ColdDiffusionEmbeddings:
             x_t = mixed_embedding.to(self.device)
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((batch_size,), i, device=self.device, dtype=torch.long)
-
-                predicted_embeddings = model(x_t, t)
-                predicted_dominant, _ = split_predicted_embeddings(predicted_embeddings)
-
+                predicted_dominant = model(x_t, t)
                 extracted_recessive = self.extract_recessive(mixed_embedding, predicted_dominant, alpha_init)
                 x_t = x_t - self.mix_embeddings(predicted_dominant, extracted_recessive, t) + self.mix_embeddings(
                     predicted_dominant, extracted_recessive, t - 1
@@ -147,9 +139,6 @@ class ColdDiffusionEmbeddings:
         model.train()
         predicted_recessive = self.extract_recessive(mixed_embedding, x_t, alpha_init)
         return x_t, predicted_recessive
-
-    def sample_timesteps(self, batch_size: int) -> torch.Tensor:
-        return torch.randint(1, self.max_timesteps + 1, (batch_size,), device=self.device, dtype=torch.long)
 
 
 @torch.no_grad()
@@ -164,17 +153,9 @@ def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: ColdDiffus
         t = ((torch.arange(dominant_embeddings.shape[0], device=accelerator.device) + batch_idx * dominant_embeddings.shape[0]) % diffusion.max_timesteps) + 1
 
         x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
+        predicted_dominant = model(x_t, t)
 
-        predicted_embeddings = model(x_t, t)
-        predicted_dominant, predicted_recessive = split_predicted_embeddings(predicted_embeddings)
-
-        loss_sum += (
-            F.mse_loss(predicted_dominant, dominant_embeddings, reduction="sum")
-            + F.mse_loss(predicted_recessive, recessive_embeddings, reduction="sum")
-        ).detach()
-
-        # This denominator makes val_loss equivalent to:
-        # MSE(predicted_dominant, dominant) + MSE(predicted_recessive, recessive)
+        loss_sum += F.l1_loss(predicted_dominant, dominant_embeddings, reduction="sum").detach()
         loss_count += dominant_embeddings.numel()
 
     avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(loss_count).sum()).item()
@@ -183,7 +164,7 @@ def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: ColdDiffus
 
 
 @torch.no_grad()
-def evaluate_embedding_mse(model: nn.Module, dataloader, diffusion: ColdDiffusionEmbeddings, accelerator: Accelerator, alpha_init: float, one_shot: bool = False):
+def evaluate_embedding_l1(model: nn.Module, dataloader, diffusion: ColdDiffusionEmbeddings, accelerator: Accelerator, alpha_init: float, one_shot: bool = False):
     model.eval()
     dominant_sum = torch.zeros(1, device=accelerator.device)
     recessive_sum = torch.zeros(1, device=accelerator.device)
@@ -203,19 +184,16 @@ def evaluate_embedding_mse(model: nn.Module, dataloader, diffusion: ColdDiffusio
 
         if one_shot:
             t = torch.full((dominant_embeddings.shape[0],), init_timestep, device=accelerator.device, dtype=torch.long)
-
-            predicted_embeddings = model(mixed_embeddings, t)
-            predicted_dominant, _ = split_predicted_embeddings(predicted_embeddings)
-
+            predicted_dominant = model(mixed_embeddings, t)
             predicted_recessive = diffusion.extract_recessive(mixed_embeddings, predicted_dominant, alpha_init)
         else:
             predicted_dominant, predicted_recessive = diffusion.sample(model, mixed_embeddings, alpha_init=alpha_init)
 
-        dominant_sum += F.mse_loss(predicted_dominant, dominant_embeddings, reduction="sum")
-        recessive_sum += F.mse_loss(predicted_recessive, recessive_embeddings, reduction="sum")
+        dominant_sum += F.l1_loss(predicted_dominant, dominant_embeddings, reduction="sum")
+        recessive_sum += F.l1_loss(predicted_recessive, recessive_embeddings, reduction="sum")
         total_sum += (
-            F.mse_loss(predicted_dominant, dominant_embeddings, reduction="sum")
-            + F.mse_loss(predicted_recessive, recessive_embeddings, reduction="sum")
+            F.l1_loss(predicted_dominant, dominant_embeddings, reduction="sum")
+            + F.l1_loss(predicted_recessive, recessive_embeddings, reduction="sum")
         )
         dominant_count += dominant_embeddings.numel()
         recessive_count += recessive_embeddings.numel()
@@ -231,16 +209,16 @@ def evaluate_embedding_mse(model: nn.Module, dataloader, diffusion: ColdDiffusio
                 "recessive_sample_id": batch["recessive_sample_id"][0],
             }
 
-    dominant_mse = (accelerator.gather(dominant_sum).sum() / accelerator.gather(dominant_count).sum()).item()
-    recessive_mse = (accelerator.gather(recessive_sum).sum() / accelerator.gather(recessive_count).sum()).item()
-    total_mse = (
+    dominant_l1 = (accelerator.gather(dominant_sum).sum() / accelerator.gather(dominant_count).sum()).item()
+    recessive_l1 = (accelerator.gather(recessive_sum).sum() / accelerator.gather(recessive_count).sum()).item()
+    total_l1 = (
         accelerator.gather(total_sum).sum() / (accelerator.gather(dominant_count).sum() + accelerator.gather(recessive_count).sum())
     ).item()
     model.train()
     return {
-        "dominant_mse": dominant_mse,
-        "recessive_mse": recessive_mse,
-        "total_mse": total_mse,
+        "dominant_l1": dominant_l1,
+        "recessive_l1": recessive_l1,
+        "total_l1": total_l1,
         "first_item": first_item,
     }
 
@@ -305,14 +283,8 @@ def train(args):
 
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
-
-                predicted_embeddings = model(x_t, t)
-                predicted_dominant, predicted_recessive = split_predicted_embeddings(predicted_embeddings)
-
-                loss = (
-                    F.mse_loss(predicted_dominant, dominant_embeddings)
-                    + F.mse_loss(predicted_recessive, recessive_embeddings)
-                )
+                predicted_dominant = model(x_t, t)
+                loss = F.l1_loss(predicted_dominant, dominant_embeddings)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -344,7 +316,7 @@ def train(args):
             best_val_loss = val_loss
 
         if accelerator.is_main_process:
-            wandb.log({"train_mse": epoch_train_loss, "val_mse": val_loss}, step=epoch + 1)
+            wandb.log({"train_l1": epoch_train_loss, "val_l1": val_loss}, step=epoch + 1)
             torch.save(unwrapped_model.state_dict(), os.path.join(base_dir, "checkpoints", "mlp_ema.pt"))
             if is_best:
                 torch.save(unwrapped_model.state_dict(), os.path.join(base_dir, "checkpoints", "mlp_ema_best.pt"))
@@ -380,7 +352,7 @@ def eval_model(args, one_shot: bool = False):
         device=device,
     )
 
-    metrics = evaluate_embedding_mse(
+    metrics = evaluate_embedding_l1(
         model=model,
         dataloader=val_dataloader,
         diffusion=diffusion,
@@ -393,9 +365,9 @@ def eval_model(args, one_shot: bool = False):
         label = "One-Shot" if one_shot else "Iterative"
         report = (
             f"--- {label} Evaluation (Validation Set) ---\n"
-            f"Dominant MSE: {metrics['dominant_mse']:.8f}\n"
-            f"Recovered Recessive MSE: {metrics['recessive_mse']:.8f}\n"
-            f"Total MSE: {metrics['total_mse']:.8f}\n"
+            f"Dominant L1: {metrics['dominant_l1']:.8f}\n"
+            f"Recovered Recessive L1: {metrics['recessive_l1']:.8f}\n"
+            f"Total L1: {metrics['total_l1']:.8f}\n"
         )
         print(f"\n{report}")
 
@@ -407,7 +379,6 @@ def eval_model(args, one_shot: bool = False):
             save_path = os.path.join(base_dir, "results", "decode_pair_data.pt")
             torch.save(metrics["first_item"], save_path)
             print(f"Saved evaluation embeddings for visual decoding to: {save_path}")
-
 
 def launch():
     parser = argparse.ArgumentParser()
