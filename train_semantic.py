@@ -155,8 +155,10 @@ def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: ColdDiffus
         x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
         predicted_dominant = model(x_t, t)
 
-        loss_sum += F.l1_loss(predicted_dominant, dominant_embeddings, reduction="sum").detach()
-        loss_count += dominant_embeddings.numel()
+        cos_sim = F.cosine_similarity(predicted_dominant, dominant_embeddings, dim=-1)
+        loss_sum += (1.0 - cos_sim).sum().detach()
+        
+        loss_count += dominant_embeddings.shape[0]
 
     avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(loss_count).sum()).item()
     model.train()
@@ -284,7 +286,9 @@ def train(args):
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_embeddings(dominant_embeddings, recessive_embeddings, t)
                 predicted_dominant = model(x_t, t)
-                loss = F.l1_loss(predicted_dominant, dominant_embeddings)
+                
+                cos_sim = F.cosine_similarity(predicted_dominant, dominant_embeddings, dim=-1)
+                loss = (1.0 - cos_sim).mean()
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -316,7 +320,7 @@ def train(args):
             best_val_loss = val_loss
 
         if accelerator.is_main_process:
-            wandb.log({"train_l1": epoch_train_loss, "val_l1": val_loss}, step=epoch + 1)
+            wandb.log({"train_cos_loss": epoch_train_loss, "val_cos_loss": val_loss}, step=epoch + 1)
             torch.save(unwrapped_model.state_dict(), os.path.join(base_dir, "checkpoints", "mlp_ema.pt"))
             if is_best:
                 torch.save(unwrapped_model.state_dict(), os.path.join(base_dir, "checkpoints", "mlp_ema_best.pt"))
