@@ -64,7 +64,7 @@ class SemanticPairsDataset(Dataset):
         self.deterministic = deterministic
 
         mode = "deterministic" if deterministic else "random"
-        print(f"Loaded {split} split: {len(self.embeddings)} embeddings, {self.num_pairs} {mode} pairs")
+        print(f"Loaded {split} split: {len(self.embeddings)} embeddings, {self.num_pairs} {mode} unordered pairs")
 
     def __len__(self) -> int:
         return self.num_pairs
@@ -82,40 +82,26 @@ class SemanticPairsDataset(Dataset):
             return self._pair_from_rng(random.Random(VAL_PAIR_SEED + index))
         return self._pair_from_rng(random)
 
-    def _ordered_pair(self, idx1: int, idx2: int) -> Dict:
-        emb1 = self.embeddings[idx1]
-        emb2 = self.embeddings[idx2]
-
-        norm1 = torch.linalg.vector_norm(emb1).item()
-        norm2 = torch.linalg.vector_norm(emb2).item()
-
-        if norm1 >= norm2:
-            dominant_idx, recessive_idx = idx1, idx2
-            dominant_embedding, recessive_embedding = emb1, emb2
-            dominant_norm, recessive_norm = norm1, norm2
-        else:
-            dominant_idx, recessive_idx = idx2, idx1
-            dominant_embedding, recessive_embedding = emb2, emb1
-            dominant_norm, recessive_norm = norm2, norm1
+    def _unordered_pair(self, idx1: int, idx2: int) -> Dict:
+        emb_a = self.embeddings[idx1]
+        emb_b = self.embeddings[idx2]
 
         return {
-            "dominant_embedding": dominant_embedding,
-            "recessive_embedding": recessive_embedding,
-            "dominant_idx": dominant_idx,
-            "recessive_idx": recessive_idx,
-            "dominant_sample_id": self.sample_ids[dominant_idx],
-            "recessive_sample_id": self.sample_ids[recessive_idx],
-            "dominant_source_path": self.source_paths[dominant_idx],
-            "recessive_source_path": self.source_paths[recessive_idx],
-            "dominant_relative_path": self.relative_paths[dominant_idx],
-            "recessive_relative_path": self.relative_paths[recessive_idx],
-            "dominant_norm": dominant_norm,
-            "recessive_norm": recessive_norm,
+            "embedding_a": emb_a,
+            "embedding_b": emb_b,
+            "idx_a": idx1,
+            "idx_b": idx2,
+            "sample_id_a": self.sample_ids[idx1],
+            "sample_id_b": self.sample_ids[idx2],
+            "source_path_a": self.source_paths[idx1],
+            "source_path_b": self.source_paths[idx2],
+            "relative_path_a": self.relative_paths[idx1],
+            "relative_path_b": self.relative_paths[idx2],
         }
 
     def __getitem__(self, index: int) -> Dict:
         idx1, idx2 = self._sample_pair_indices(index)
-        return self._ordered_pair(idx1, idx2)
+        return self._unordered_pair(idx1, idx2)
 
 
 def _seed_worker(worker_id: int):
@@ -125,22 +111,20 @@ def _seed_worker(worker_id: int):
 
 
 def collate_semantic_pairs(batch: List[Dict]) -> Dict:
-    dominant_embedding = torch.stack([item["dominant_embedding"] for item in batch], dim=0)
-    recessive_embedding = torch.stack([item["recessive_embedding"] for item in batch], dim=0)
+    embedding_a = torch.stack([item["embedding_a"] for item in batch], dim=0)
+    embedding_b = torch.stack([item["embedding_b"] for item in batch], dim=0)
 
     return {
-        "dominant_embedding": dominant_embedding,
-        "recessive_embedding": recessive_embedding,
-        "dominant_idx": torch.tensor([item["dominant_idx"] for item in batch], dtype=torch.long),
-        "recessive_idx": torch.tensor([item["recessive_idx"] for item in batch], dtype=torch.long),
-        "dominant_norm": torch.tensor([item["dominant_norm"] for item in batch], dtype=torch.float32),
-        "recessive_norm": torch.tensor([item["recessive_norm"] for item in batch], dtype=torch.float32),
-        "dominant_sample_id": [item["dominant_sample_id"] for item in batch],
-        "recessive_sample_id": [item["recessive_sample_id"] for item in batch],
-        "dominant_source_path": [item["dominant_source_path"] for item in batch],
-        "recessive_source_path": [item["recessive_source_path"] for item in batch],
-        "dominant_relative_path": [item["dominant_relative_path"] for item in batch],
-        "recessive_relative_path": [item["recessive_relative_path"] for item in batch],
+        "embedding_a": embedding_a,
+        "embedding_b": embedding_b,
+        "idx_a": torch.tensor([item["idx_a"] for item in batch], dtype=torch.long),
+        "idx_b": torch.tensor([item["idx_b"] for item in batch], dtype=torch.long),
+        "sample_id_a": [item["sample_id_a"] for item in batch],
+        "sample_id_b": [item["sample_id_b"] for item in batch],
+        "source_path_a": [item["source_path_a"] for item in batch],
+        "source_path_b": [item["source_path_b"] for item in batch],
+        "relative_path_a": [item["relative_path_a"] for item in batch],
+        "relative_path_b": [item["relative_path_b"] for item in batch],
     }
 
 

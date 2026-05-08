@@ -2,10 +2,10 @@
 #
 #SBATCH --partition=gpu_min11gb_ext   # Partition where the job will be run. Check with "$ sinfo".
 #SBATCH --qos=gpu_min11gb_ext         # QoS level. Must match the partition name. External users must add the suffix "_ext". Check with "$sacctmgr show qos".
-#SBATCH --job-name=lt_avg_mag_a0.4    # Job name
+#SBATCH --job-name=lt_avg_pit_1       # Job name
 #SBATCH --output=slurm_%x.%j.out      # File containing STDOUT output
 #SBATCH --error=slurm_%x.%j.err       # File containing STDERR output. If ommited, use STDOUT.
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train_semantic.py --run_name "lt_avg_mag_a0.4" --alpha_max 0.4 --alpha_init 0.4 --max_timesteps 50 --batch_size 16384 --epochs 15
+python train_semantic.py --run_name "lt_avg_pit_1" --max_timesteps 50 --batch_size 16384 --epochs 15
