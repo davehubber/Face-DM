@@ -1,0 +1,2 @@
+--- One-Shot Evaluation (Validation Set) ---
+Permutation-Invariant Min L1 Error: 0.57818359

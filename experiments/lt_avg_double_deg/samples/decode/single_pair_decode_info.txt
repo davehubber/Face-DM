@@ -1,0 +1,4 @@
+pair_data_path: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/lt_avg_double_deg/results/decode_pair_data.pt
+decode_t_invert: 100
+decode_t_decode: 100
+pca_components: 256
