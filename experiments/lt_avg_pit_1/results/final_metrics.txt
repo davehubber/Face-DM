@@ -1,0 +1,5 @@
+--- Iterative Permutation-Invariant Evaluation (Validation Set) ---
+Predicted Embedding L1, best assignment: 0.55198365
+Recovered Other Embedding L1, best assignment: 0.55198365
+Pair L1, best assignment: 0.55198365
+Prediction matched embedding_a fraction: 0.500420
