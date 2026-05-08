@@ -7,7 +7,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 VAL_PAIR_SEED = 1234
-_STATS_CACHE: Dict[str, Tuple[torch.Tensor, torch.Tensor]] = {}
+_ZSCORE_CACHE: Dict[str, Tuple[torch.Tensor, torch.Tensor]] = {}
+
 
 def setup_logging(run_name: str) -> str:
     base_dir = os.path.join("experiments", run_name)
@@ -16,62 +17,60 @@ def setup_logging(run_name: str) -> str:
     os.makedirs(os.path.join(base_dir, "samples", "decode"), exist_ok=True)
     return base_dir
 
-def load_dataset_stats(split_path: str) -> Tuple[torch.Tensor, torch.Tensor]:
-    if split_path in _STATS_CACHE:
-        return _STATS_CACHE[split_path]
 
-    if not os.path.exists(split_path):
-        raise FileNotFoundError(f"Could not find semantic split file: {split_path}")
+def load_zscore_stats(dataset_root: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    cached = _ZSCORE_CACHE.get(dataset_root)
+    if cached is not None:
+        return cached
 
-    pack = torch.load(split_path, map_location="cpu")
-    embeddings = pack["z_sem"].to(torch.float32)
-    mean = embeddings.mean(dim=0)
-    std = embeddings.std(dim=0, unbiased=False).clamp_min(1e-6)
+    train_split_path = os.path.join(dataset_root, "semantic", "train_zsem.pt")
+    if not os.path.exists(train_split_path):
+        raise FileNotFoundError(f"Could not find semantic train split file: {train_split_path}")
 
-    _STATS_CACHE[split_path] = (mean, std)
+    train_pack = torch.load(train_split_path, map_location="cpu")
+    train_embeddings = train_pack["z_sem"].to(torch.float32)
+    mean = train_embeddings.mean(dim=0)
+    std = train_embeddings.std(dim=0, unbiased=False).clamp_min(1e-6)
+
+    _ZSCORE_CACHE[dataset_root] = (mean, std)
     return mean, std
 
+
 class SemanticPairsDataset(Dataset):
-    def __init__(self, dataset_root: str, split: str, num_pairs: int, n_components: int = 256, deterministic: bool = False):
+    def __init__(self, dataset_root: str, split: str, num_pairs: int, deterministic: bool = False):
         if split not in {"train", "val"}:
             raise ValueError(f"Unsupported split: {split}")
         if num_pairs <= 0:
             raise ValueError(f"num_pairs must be positive, got {num_pairs}")
 
-        orig_path = os.path.join(dataset_root, "semantic", f"{split}_zsem.pt")
-        pca_path = os.path.join(dataset_root, "semantic", f"{split}_zsem_pca{n_components}.pt")
-        
-        if not os.path.exists(orig_path):
-            raise FileNotFoundError(f"Missing original file: {orig_path}")
-        if not os.path.exists(pca_path):
-            raise FileNotFoundError(f"Missing PCA file: {pca_path}")
+        split_path = os.path.join(dataset_root, "semantic", f"{split}_zsem.pt")
+        if not os.path.exists(split_path):
+            raise FileNotFoundError(f"Could not find semantic split file: {split_path}")
 
-        orig_pack = torch.load(orig_path, map_location="cpu")
-        pca_pack = torch.load(pca_path, map_location="cpu")
+        pack = torch.load(split_path, map_location="cpu")
+        self.mean, self.std = load_zscore_stats(dataset_root)
+        self.embeddings = (pack["z_sem"].to(torch.float32) - self.mean) / self.std
 
-        # Load stats for z-scoring
-        orig_mean, orig_std = load_dataset_stats(orig_path)
-        pca_mean, pca_std = load_dataset_stats(pca_path)
+        self.sample_ids: List[str] = list(pack["sample_ids"])
+        self.source_paths: List[str] = list(pack["source_paths"])
+        self.relative_paths: List[str] = list(pack.get("relative_paths", [""] * len(self.sample_ids)))
 
-        # Normalize both spaces
-        self.embeddings_orig = (orig_pack["z_sem"].to(torch.float32) - orig_mean) / orig_std
-        self.embeddings_pca = (pca_pack["z_sem"].to(torch.float32) - pca_mean) / pca_std
-
-        self.sample_ids: List[str] = list(orig_pack["sample_ids"])
-        self.source_paths: List[str] = list(orig_pack["source_paths"])
-        self.relative_paths: List[str] = list(orig_pack.get("relative_paths", [""] * len(self.sample_ids)))
+        if self.embeddings.ndim != 2:
+            raise ValueError(f"Expected 2D embeddings tensor, got shape {tuple(self.embeddings.shape)}")
+        if len(self.embeddings) < 2:
+            raise ValueError(f"Split must contain at least 2 embeddings; found {len(self.embeddings)}")
 
         self.num_pairs = int(num_pairs)
         self.deterministic = deterministic
 
         mode = "deterministic" if deterministic else "random"
-        print(f"Loaded {split} split: {len(self.embeddings_orig)} embeddings, {self.num_pairs} {mode} pairs")
+        print(f"Loaded {split} split: {len(self.embeddings)} embeddings, {self.num_pairs} {mode} pairs")
 
     def __len__(self) -> int:
         return self.num_pairs
 
     def _pair_from_rng(self, rng: random.Random) -> Tuple[int, int]:
-        n = len(self.embeddings_orig)
+        n = len(self.embeddings)
         idx1 = rng.randrange(n)
         idx2 = rng.randrange(n - 1)
         if idx2 >= idx1:
@@ -83,52 +82,51 @@ class SemanticPairsDataset(Dataset):
             return self._pair_from_rng(random.Random(VAL_PAIR_SEED + index))
         return self._pair_from_rng(random)
 
-    def __getitem__(self, index: int) -> Dict:
-        idx_A, idx_B = self._sample_pair_indices(index)
-
-        # Build x_0: Concatenated 256-dimensional PCA embeddings -> 512 dimensions total
-        pca_A = self.embeddings_pca[idx_A]
-        pca_B = self.embeddings_pca[idx_B]
-        x_0 = torch.cat([pca_A, pca_B], dim=-1)
-
-        # Build x_T: Averaged 512-dimensional original embeddings -> 512 dimensions total
-        orig_A = self.embeddings_orig[idx_A]
-        orig_B = self.embeddings_orig[idx_B]
-        x_T = (orig_A + orig_B) / 2.0
+    def _get_pair(self, idx1: int, idx2: int) -> Dict:
+        emb1 = self.embeddings[idx1]
+        emb2 = self.embeddings[idx2]
 
         return {
-            "x_0": x_0,
-            "x_T": x_T,
-            "pca_A": pca_A,
-            "pca_B": pca_B,
-            "orig_A": orig_A,
-            "orig_B": orig_B,
-            "idx_A": idx_A,
-            "idx_B": idx_B,
-            "sample_id_A": self.sample_ids[idx_A],
-            "sample_id_B": self.sample_ids[idx_B],
-            "source_path_A": self.source_paths[idx_A],
-            "source_path_B": self.source_paths[idx_B],
+            "emb1_embedding": emb1,
+            "emb2_embedding": emb2,
+            "emb1_idx": idx1,
+            "emb2_idx": idx2,
+            "emb1_sample_id": self.sample_ids[idx1],
+            "emb2_sample_id": self.sample_ids[idx2],
+            "emb1_source_path": self.source_paths[idx1],
+            "emb2_source_path": self.source_paths[idx2],
+            "emb1_relative_path": self.relative_paths[idx1],
+            "emb2_relative_path": self.relative_paths[idx2],
         }
+
+    def __getitem__(self, index: int) -> Dict:
+        idx1, idx2 = self._sample_pair_indices(index)
+        return self._get_pair(idx1, idx2)
+
 
 def _seed_worker(worker_id: int):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
+
 def collate_semantic_pairs(batch: List[Dict]) -> Dict:
+    emb1_embedding = torch.stack([item["emb1_embedding"] for item in batch], dim=0)
+    emb2_embedding = torch.stack([item["emb2_embedding"] for item in batch], dim=0)
+
     return {
-        "x_0": torch.stack([item["x_0"] for item in batch], dim=0),
-        "x_T": torch.stack([item["x_T"] for item in batch], dim=0),
-        "pca_A": torch.stack([item["pca_A"] for item in batch], dim=0),
-        "pca_B": torch.stack([item["pca_B"] for item in batch], dim=0),
-        "idx_A": torch.tensor([item["idx_A"] for item in batch], dtype=torch.long),
-        "idx_B": torch.tensor([item["idx_B"] for item in batch], dtype=torch.long),
-        "sample_id_A": [item["sample_id_A"] for item in batch],
-        "sample_id_B": [item["sample_id_B"] for item in batch],
-        "source_path_A": [item["source_path_A"] for item in batch],
-        "source_path_B": [item["source_path_B"] for item in batch],
+        "emb1_embedding": emb1_embedding,
+        "emb2_embedding": emb2_embedding,
+        "emb1_idx": torch.tensor([item["emb1_idx"] for item in batch], dtype=torch.long),
+        "emb2_idx": torch.tensor([item["emb2_idx"] for item in batch], dtype=torch.long),
+        "emb1_sample_id": [item["emb1_sample_id"] for item in batch],
+        "emb2_sample_id": [item["emb2_sample_id"] for item in batch],
+        "emb1_source_path": [item["emb1_source_path"] for item in batch],
+        "emb2_source_path": [item["emb2_source_path"] for item in batch],
+        "emb1_relative_path": [item["emb1_relative_path"] for item in batch],
+        "emb2_relative_path": [item["emb2_relative_path"] for item in batch],
     }
+
 
 def get_data(args, partition: str):
     if partition not in {"train", "val"}:
@@ -138,7 +136,6 @@ def get_data(args, partition: str):
         dataset_root=args.dataset_root,
         split=partition,
         num_pairs=args.train_samples_per_epoch if partition == "train" else args.val_samples,
-        n_components=args.n_components,
         deterministic=(partition == "val"),
     )
 

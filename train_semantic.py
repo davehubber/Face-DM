@@ -100,83 +100,66 @@ class MLPSkipNet(nn.Module):
         return h
 
 
-class ColdDiffusionEmbeddings:
+class VelocityDiffusion:
     def __init__(self, max_timesteps: int = 300, device: str = "cuda"):
         self.max_timesteps = int(max_timesteps)
         self.device = device
 
-    def degrade(self, x_0: torch.Tensor, x_T: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        alpha = (t.float() / self.max_timesteps).unsqueeze(1)
-        return (1.0 - alpha) * x_0 + alpha * x_T
-
     def sample_timesteps(self, batch_size: int) -> torch.Tensor:
         return torch.randint(1, self.max_timesteps + 1, (batch_size,), device=self.device, dtype=torch.long)
 
-    def sample(self, model: nn.Module, x_T: torch.Tensor) -> torch.Tensor:
-        initial_noise_std = 1e-4
+    def get_xt(self, avg_emb: torch.Tensor, v_target: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        # t goes from max_timesteps down to 1
+        # at t=max_timesteps, x_t = avg_emb
+        # at t=0, x_t = avg_emb + v_target = emb_clean
+        progress = (self.max_timesteps - t.float().unsqueeze(1)) / self.max_timesteps
+        return avg_emb + progress * v_target
 
-        batch_size = x_T.shape[0]
+    def sample(self, model: nn.Module, avg_emb: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        batch_size = avg_emb.shape
         model.eval()
-
         with torch.no_grad():
-            x_T = x_T.to(self.device)
-
-            if initial_noise_std > 0:
-                x_t = x_T + initial_noise_std * torch.randn_like(x_T)
-            else:
-                x_t = x_T
-
+            x_t = avg_emb.clone().to(self.device)
             for i in reversed(range(1, self.max_timesteps + 1)):
                 t = torch.full((batch_size,), i, device=self.device, dtype=torch.long)
-
-                # Predict clean x_0
-                pred_x0 = model(x_t, t)
-
-                # Deterministic reverse step formula.
-                # Important: keep using the original clean x_T here,
-                # not the noise-perturbed x_t.
-                D_t = self.degrade(pred_x0, x_T, t)
-                D_t_prev = self.degrade(pred_x0, x_T, t - 1)
-                x_t = x_t - D_t + D_t_prev
+                pred_v = model(x_t, t)
+                # Step towards clean embedding (x_0)
+                x_t = x_t + pred_v / self.max_timesteps
 
         model.train()
-        return pred_x0
-
-
-def permutation_invariant_loss(pred_x0: torch.Tensor, target_x0: torch.Tensor) -> torch.Tensor:
-    # x0 shapes are [Batch, 512]. We split them into the two 256-dimensional PCA chunks
-    x0_A, x0_B = target_x0.chunk(2, dim=-1)
-
-    # Create the alternative flipped target
-    target_x0_flipped = torch.cat([x0_B, x0_A], dim=-1)
-
-    # Compute L1 Loss for both valid permutations
-    loss_standard = F.l1_loss(pred_x0, target_x0, reduction="none").mean(dim=-1)
-    loss_flipped = F.l1_loss(pred_x0, target_x0_flipped, reduction="none").mean(dim=-1)
-
-    # Take the minimum error per sample in the batch
-    min_loss = torch.min(loss_standard, loss_flipped)
-    return min_loss.mean()
+        clean_emb = x_t
+        other_emb = 2.0 * avg_emb - clean_emb
+        return clean_emb, other_emb
 
 
 @torch.no_grad()
-def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: ColdDiffusionEmbeddings, accelerator: Accelerator):
+def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: VelocityDiffusion, accelerator: Accelerator):
     model.eval()
     loss_sum = torch.zeros(1, device=accelerator.device)
     loss_count = torch.zeros(1, device=accelerator.device)
 
     for batch_idx, batch in enumerate(dataloader):
-        x_0 = batch["x_0"]
-        x_T = batch["x_T"]
+        emb1 = batch["emb1_embedding"]
+        emb2 = batch["emb2_embedding"]
+        
+        avg_emb = (emb1 + emb2) / 2.0
+        v1 = emb1 - avg_emb
+        v2 = emb2 - avg_emb
 
-        t = ((torch.arange(x_0.shape[0], device=accelerator.device) + batch_idx * x_0.shape[0]) % diffusion.max_timesteps) + 1
-        x_t = diffusion.degrade(x_0, x_T, t)
+        t = ((torch.arange(emb1.shape, device=accelerator.device) + batch_idx * emb1.shape) % diffusion.max_timesteps) + 1
 
-        pred_x0 = model(x_t, t)
+        sign = torch.randint(0, 2, (emb1.shape, 1), device=accelerator.device).float() * 2 - 1
+        v_target = v1 * sign
 
-        batch_loss = permutation_invariant_loss(pred_x0, x_0)
-        loss_sum += batch_loss * x_0.shape[0]
-        loss_count += x_0.shape[0]
+        x_t = diffusion.get_xt(avg_emb, v_target, t)
+        pred_v = model(x_t, t)
+
+        loss_v1 = F.l1_loss(pred_v, v1, reduction="none").mean(dim=1)
+        loss_v2 = F.l1_loss(pred_v, v2, reduction="none").mean(dim=1)
+        
+        loss_per_sample = torch.min(loss_v1, loss_v2)
+        loss_sum += loss_per_sample.sum().detach()
+        loss_count += emb1.shape
 
     avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(loss_count).sum()).item()
     model.train()
@@ -184,7 +167,7 @@ def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: ColdDiffus
 
 
 @torch.no_grad()
-def evaluate_embedding_l1(model: nn.Module, dataloader, diffusion: ColdDiffusionEmbeddings, accelerator: Accelerator, one_shot: bool = False):
+def evaluate_embedding_l1(model: nn.Module, dataloader, diffusion: VelocityDiffusion, accelerator: Accelerator, one_shot: bool = False):
     model.eval()
     total_sum = torch.zeros(1, device=accelerator.device)
     total_count = torch.zeros(1, device=accelerator.device)
@@ -192,31 +175,38 @@ def evaluate_embedding_l1(model: nn.Module, dataloader, diffusion: ColdDiffusion
     first_item = None
 
     for batch in dataloader:
-        x_0 = batch["x_0"]
-        x_T = batch["x_T"]
+        emb1 = batch["emb1_embedding"]
+        emb2 = batch["emb2_embedding"]
+        avg_emb = (emb1 + emb2) / 2.0
 
         if one_shot:
-            t = torch.full((x_0.shape[0],), diffusion.max_timesteps, device=accelerator.device, dtype=torch.long)
-            pred_x0 = model(x_T, t)
+            t = torch.full((emb1.shape,), diffusion.max_timesteps, device=accelerator.device, dtype=torch.long)
+            pred_v = model(avg_emb, t)
+            pred_clean = avg_emb + pred_v
+            pred_other = 2.0 * avg_emb - pred_clean
         else:
-            pred_x0 = diffusion.sample(model, x_T)
+            pred_clean, pred_other = diffusion.sample(model, avg_emb)
 
-        batch_loss = permutation_invariant_loss(pred_x0, x_0)
-        total_sum += batch_loss * x_0.shape[0]
-        total_count += x_0.shape[0]
+        # Permutation invariant matching to evaluate metrics accurately
+        dist_1 = F.l1_loss(pred_clean, emb1, reduction="none").mean(dim=1) + F.l1_loss(pred_other, emb2, reduction="none").mean(dim=1)
+        dist_2 = F.l1_loss(pred_clean, emb2, reduction="none").mean(dim=1) + F.l1_loss(pred_other, emb1, reduction="none").mean(dim=1)
+
+        best_dist = torch.min(dist_1, dist_2)
+        total_sum += best_dist.sum()
+        total_count += emb1.shape
 
         if first_item is None:
             first_item = {
-                "x_T_input": x_T[0].detach().cpu(),
-                "predicted_x0": pred_x0[0].detach().cpu(),
-                "target_x0": x_0[0].detach().cpu(),
-                "source_path_A": batch["source_path_A"][0],
-                "source_path_B": batch["source_path_B"][0],
-                "sample_id_A": batch["sample_id_A"][0],
-                "sample_id_B": batch["sample_id_B"][0],
+                "avg_embedding": avg_emb.detach().cpu(),
+                "predicted_clean": pred_clean.detach().cpu(),
+                "predicted_other": pred_other.detach().cpu(),
+                "emb1_source_path": batch["emb1_source_path"],
+                "emb2_source_path": batch["emb2_source_path"],
+                "emb1_sample_id": batch["emb1_sample_id"],
+                "emb2_sample_id": batch["emb2_sample_id"],
             }
 
-    total_l1 = (accelerator.gather(total_sum).sum() / accelerator.gather(total_count).sum()).item()
+    total_l1 = (accelerator.gather(total_sum).sum() / accelerator.gather(total_count).sum()).item() / 2.0
     model.train()
     return {
         "total_l1": total_l1,
@@ -236,8 +226,11 @@ def train(args):
     train_dataloader = get_data(args, "train")
     val_dataloader = get_data(args, "val")
 
+    sample_pack = torch.load(os.path.join(args.dataset_root, "semantic", "train_zsem.pt"), map_location="cpu")
+    embedding_dim = sample_pack["z_sem"].shape
+
     model = MLPSkipNet(
-        embedding_dim=512,
+        embedding_dim=embedding_dim,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         num_time_emb_channels=args.num_time_emb_channels,
@@ -251,7 +244,7 @@ def train(args):
         num_training_steps=steps_per_epoch * args.epochs,
     )
 
-    diffusion = ColdDiffusionEmbeddings(
+    diffusion = VelocityDiffusion(
         max_timesteps=args.max_timesteps,
         device=device,
     )
@@ -274,15 +267,25 @@ def train(args):
         epoch_train_loss_count = 0
 
         for batch in train_dataloader:
-            x_0 = batch["x_0"]
-            x_T = batch["x_T"]
-            t = diffusion.sample_timesteps(x_0.shape[0])
+            emb1 = batch["emb1_embedding"]
+            emb2 = batch["emb2_embedding"]
+            
+            avg_emb = (emb1 + emb2) / 2.0
+            v1 = emb1 - avg_emb
+            v2 = emb2 - avg_emb
+
+            t = diffusion.sample_timesteps(emb1.shape)
+
+            sign = torch.randint(0, 2, (emb1.shape, 1), device=device).float() * 2 - 1
+            v_target = v1 * sign
 
             with accelerator.accumulate(model):
-                x_t = diffusion.degrade(x_0, x_T, t)
-                pred_x0 = model(x_t, t)
-
-                loss = permutation_invariant_loss(pred_x0, x_0)
+                x_t = diffusion.get_xt(avg_emb, v_target, t)
+                pred_v = model(x_t, t)
+                
+                loss_v1 = F.l1_loss(pred_v, v1, reduction="none").mean(dim=1)
+                loss_v2 = F.l1_loss(pred_v, v2, reduction="none").mean(dim=1)
+                loss = torch.min(loss_v1, loss_v2).mean()
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -329,9 +332,11 @@ def eval_model(args, one_shot: bool = False):
     base_dir = os.path.join("experiments", args.run_name)
 
     val_dataloader = get_data(args, "val")
+    sample_pack = torch.load(os.path.join(args.dataset_root, "semantic", "train_zsem.pt"), map_location="cpu")
+    embedding_dim = sample_pack["z_sem"].shape
 
     model = MLPSkipNet(
-        embedding_dim=512,
+        embedding_dim=embedding_dim,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         num_time_emb_channels=args.num_time_emb_channels,
@@ -342,7 +347,7 @@ def eval_model(args, one_shot: bool = False):
     accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
-    diffusion = ColdDiffusionEmbeddings(
+    diffusion = VelocityDiffusion(
         max_timesteps=args.max_timesteps,
         device=device,
     )
@@ -359,7 +364,7 @@ def eval_model(args, one_shot: bool = False):
         label = "One-Shot" if one_shot else "Iterative"
         report = (
             f"--- {label} Evaluation (Validation Set) ---\n"
-            f"Permutation-Invariant Min L1 Error: {metrics['total_l1']:.8f}\n"
+            f"Mean L1 Error: {metrics['total_l1']:.8f}\n"
         )
         print(f"\n{report}")
 
@@ -372,17 +377,17 @@ def eval_model(args, one_shot: bool = False):
             torch.save(metrics["first_item"], save_path)
             print(f"Saved evaluation embeddings for visual decoding to: {save_path}")
 
-
 def launch():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_root", default="encoded_ffhq256_semantic_split", help="Folder containing semantic/train_zsem.pt and semantic/val_zsem.pt")
     parser.add_argument("--run_name", required=True, help="Name of the experiment folder")
 
-    parser.add_argument("--n_components", default=256, type=int, help="Number of PCA components to form half of x_0")
     parser.add_argument("--train_samples_per_epoch", default=1000000, type=int, help="Number of random train pairs per epoch")
     parser.add_argument("--val_samples", default=100000, type=int, help="Number of deterministic validation pairs")
     parser.add_argument("--num_workers", default=4, type=int, help="DataLoader worker count")
 
+    parser.add_argument("--alpha_max", default=0.5, type=float, help="Ignored/Deprecated")
+    parser.add_argument("--alpha_init", default=0.5, type=float, help="Ignored/Deprecated")
     parser.add_argument("--max_timesteps", default=300, type=int, help="Number of diffusion timesteps")
     parser.add_argument("--batch_size", default=256, type=int, help="Batch size")
     parser.add_argument("--epochs", default=150, type=int, help="Number of training epochs")
@@ -401,8 +406,8 @@ def launch():
 
     args = parser.parse_args()
 
-    #train(args)
-    #eval_model(args, one_shot=False)
+    train(args)
+    eval_model(args, one_shot=False)
     eval_model(args, one_shot=True)
 
 
