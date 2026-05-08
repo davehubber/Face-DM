@@ -1,0 +1,5 @@
+column,description,sample_id,source_path,relative_path
+0,original source image,00003,/nas-ctm01/datasets/public/ffhq256/00003.png,00003.png
+1,decoded using original stored 512D semantic embedding,00003,/nas-ctm01/datasets/public/ffhq256/00003.png,00003.png
+2,decoded using PCA compressed->reconstructed semantic embedding,00003,/nas-ctm01/datasets/public/ffhq256/00003.png,00003.png
+3,absolute pixel difference between decoded original and decoded PCA reconstruction,00003,/nas-ctm01/datasets/public/ffhq256/00003.png,00003.png
