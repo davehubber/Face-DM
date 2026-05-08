@@ -8,4 +8,4 @@
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train_semantic.py --run_name "lt_avg_double_deg" --max_timesteps 50 --batch_size 16384 --epochs 20
+python train_semantic.py --run_name "lt_avg_double_deg" --max_timesteps 50 --batch_size 16384 --epochs 50
