@@ -113,18 +113,28 @@ class ColdDiffusionEmbeddings:
         return torch.randint(1, self.max_timesteps + 1, (batch_size,), device=self.device, dtype=torch.long)
 
     def sample(self, model: nn.Module, x_T: torch.Tensor) -> torch.Tensor:
+        initial_noise_std = 1e-4
+
         batch_size = x_T.shape[0]
         model.eval()
 
         with torch.no_grad():
-            x_t = x_T.to(self.device)
+            x_T = x_T.to(self.device)
+
+            if initial_noise_std > 0:
+                x_t = x_T + initial_noise_std * torch.randn_like(x_T)
+            else:
+                x_t = x_T
+
             for i in reversed(range(1, self.max_timesteps + 1)):
                 t = torch.full((batch_size,), i, device=self.device, dtype=torch.long)
 
                 # Predict clean x_0
                 pred_x0 = model(x_t, t)
 
-                # Deterministic reverse step formula
+                # Deterministic reverse step formula.
+                # Important: keep using the original clean x_T here,
+                # not the noise-perturbed x_t.
                 D_t = self.degrade(pred_x0, x_T, t)
                 D_t_prev = self.degrade(pred_x0, x_T, t - 1)
                 x_t = x_t - D_t + D_t_prev
@@ -391,8 +401,8 @@ def launch():
 
     args = parser.parse_args()
 
-    train(args)
-    eval_model(args, one_shot=False)
+    #train(args)
+    #eval_model(args, one_shot=False)
     eval_model(args, one_shot=True)
 
 
