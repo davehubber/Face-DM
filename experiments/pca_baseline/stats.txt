@@ -1,7 +1,0 @@
---- Image Metrics ---
-Original 512D vs Ground Truth : MSE = 0.00007, PSNR = 41.37 dB
-PCA-256 Recon vs Ground Truth : MSE = 0.00075, PSNR = 31.24 dB
-PCA-256 Recon vs Original 512D: MSE = 0.00071, PSNR = 31.47 dB
-
-Visual comparison saved to: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/pca_baseline/comparison.png
-(Left: Real Image | Middle: 512D Decode | Right: PCA-256 Decode)

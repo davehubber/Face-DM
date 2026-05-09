@@ -1,4 +1,0 @@
---- Iterative Evaluation (Validation Set) ---
-Dominant MSE: 0.51217502
-Recovered Recessive MSE: 0.51217502
-Total MSE: 0.51217502

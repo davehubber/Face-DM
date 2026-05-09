@@ -1,4 +1,0 @@
---- One-Shot Evaluation (Validation Set) ---
-Dominant L1: 0.41803819
-Recovered Recessive L1: 0.62705737
-Total L1: 0.52254772

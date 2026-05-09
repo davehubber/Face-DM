@@ -1,5 +1,0 @@
---- One-Shot Permutation-Invariant Evaluation (Validation Set) ---
-Predicted Embedding L1, best assignment: 0.53533626
-Recovered Other Embedding L1, best assignment: 0.53533626
-Pair L1, best assignment: 0.53533626
-Prediction matched embedding_a fraction: 0.501870

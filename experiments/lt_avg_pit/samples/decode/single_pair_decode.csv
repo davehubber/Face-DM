@@ -1,5 +1,0 @@
-column,description,sample_id,source_path,pair_data_path
-0,original source image 1,63817,/nas-ctm01/datasets/public/ffhq256/63817.png,/nas-ctm01/homes/dacordeiro/Face-DM/experiments/lt_avg_pit/results/decode_pair_data_one_shot.pt
-1,original source image 2,36238,/nas-ctm01/datasets/public/ffhq256/36238.png,/nas-ctm01/homes/dacordeiro/Face-DM/experiments/lt_avg_pit/results/decode_pair_data_one_shot.pt
-2,decoded predicted embedding matched to source image 1 using GT stochastic code 1,63817,/nas-ctm01/datasets/public/ffhq256/63817.png,/nas-ctm01/homes/dacordeiro/Face-DM/experiments/lt_avg_pit/results/decode_pair_data_one_shot.pt
-3,decoded predicted embedding matched to source image 2 using GT stochastic code 2,36238,/nas-ctm01/datasets/public/ffhq256/36238.png,/nas-ctm01/homes/dacordeiro/Face-DM/experiments/lt_avg_pit/results/decode_pair_data_one_shot.pt

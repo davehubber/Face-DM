@@ -1,2 +1,0 @@
---- Iterative Evaluation (Validation Set) ---
-Permutation-Invariant Min L1 Error: 0.69954103
