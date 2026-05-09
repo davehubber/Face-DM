@@ -890,6 +890,428 @@ def check_sampling_swaps(args):
         print(f"\nSaved sampling swap check to: {out_path}")
         print(report)
 
+@torch.no_grad()
+def eval_iterative_with_perfect_swap_correction(args):
+    """
+    Diagnostic evaluation.
+
+    This runs iterative sampling like the normal full evaluation, but uses the
+    true clean embeddings to detect, with certainty, whether the model's current
+    prediction has switched identity relative to its first prediction.
+
+    If a swap is detected, the reverse update is corrected by swapping the order
+    of the predicted/extracted embeddings passed to diffusion.mix_embeddings().
+    This keeps the reverse path consistent with the identity assignment of the
+    model's first prediction.
+
+    It writes a txt report to:
+        experiments/<run_name>/results/swap_corrected_iterative_metrics.txt
+
+    Important:
+        This diagnostic is exact for alpha_init == 0.5, because the mixed
+        embedding is a true average and the predicted/extracted branches are
+        algebraically symmetric.
+    """
+
+    if abs(float(args.alpha_init) - 0.5) > 1e-8:
+        raise ValueError(
+            "This exact swap-correction diagnostic assumes args.alpha_init == 0.5. "
+            "With alpha_init != 0.5, the two branches no longer have symmetric "
+            "weights in the mixture, so swapping branch order is not algebraically "
+            "equivalent."
+        )
+
+    def _l1_sum_per_sample(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        return torch.abs(x - y).reshape(x.shape[0], -1).sum(dim=1)
+
+    def _permutation_invariant_pair_l1_sums(
+        predicted_a: torch.Tensor,
+        predicted_b: torch.Tensor,
+        clean_1: torch.Tensor,
+        clean_2: torch.Tensor,
+    ):
+        a_to_1 = _l1_sum_per_sample(predicted_a, clean_1)
+        b_to_2 = _l1_sum_per_sample(predicted_b, clean_2)
+
+        a_to_2 = _l1_sum_per_sample(predicted_a, clean_2)
+        b_to_1 = _l1_sum_per_sample(predicted_b, clean_1)
+
+        config_1_total = a_to_1 + b_to_2
+        config_2_total = a_to_2 + b_to_1
+
+        use_config_1 = config_1_total <= config_2_total
+
+        a_loss = torch.where(use_config_1, a_to_1, a_to_2)
+        b_loss = torch.where(use_config_1, b_to_2, b_to_1)
+        total_loss = torch.minimum(config_1_total, config_2_total)
+
+        return a_loss.sum(), b_loss.sum(), total_loss.sum()
+
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
+
+    val_dataloader = get_data(args, "val")
+
+    sample_pack = torch.load(
+        os.path.join(args.dataset_root, "semantic", "train_zsem.pt"),
+        map_location="cpu",
+    )
+    embedding_dim = sample_pack["z_sem"].shape[1]
+
+    model = MLPSkipNet(
+        embedding_dim=embedding_dim,
+        hidden_dim=args.hidden_dim,
+        num_layers=args.num_layers,
+        num_time_emb_channels=args.num_time_emb_channels,
+    )
+
+    model, val_dataloader = accelerator.prepare(model, val_dataloader)
+
+    model_path = os.path.join(base_dir, "checkpoints", "mlp_ema.pt")
+    accelerator.unwrap_model(model).load_state_dict(
+        torch.load(model_path, map_location=device)
+    )
+    model.eval()
+
+    diffusion = ColdDiffusionEmbeddings(
+        max_timesteps=args.max_timesteps,
+        alpha_max=args.alpha_max,
+        device=device,
+    )
+
+    init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
+    init_timestep = max(1, min(init_timestep, diffusion.max_timesteps))
+
+    normal_predicted_sum = torch.zeros(1, device=device)
+    normal_extracted_sum = torch.zeros(1, device=device)
+    normal_total_sum = torch.zeros(1, device=device)
+
+    corrected_initial_branch_sum = torch.zeros(1, device=device)
+    corrected_other_branch_sum = torch.zeros(1, device=device)
+    corrected_total_sum = torch.zeros(1, device=device)
+
+    embedding_count = torch.zeros(1, device=device)
+
+    total_samples = torch.zeros(1, device=device, dtype=torch.long)
+    total_steps_after_first = torch.zeros(1, device=device, dtype=torch.long)
+
+    swapped_predictions_after_first = torch.zeros(1, device=device, dtype=torch.long)
+    samples_with_any_swap = torch.zeros(1, device=device, dtype=torch.long)
+    identity_transition_events = torch.zeros(1, device=device, dtype=torch.long)
+    exact_ties = torch.zeros(1, device=device, dtype=torch.long)
+
+    alpha_init = float(args.alpha_init)
+
+    for batch in val_dataloader:
+        clean_1 = batch["clean_embedding_1"]
+        clean_2 = batch["clean_embedding_2"]
+
+        batch_size = clean_1.shape[0]
+
+        mixed_embeddings = (
+            clean_1 * (1.0 - alpha_init)
+            + clean_2 * alpha_init
+        )
+
+        # ------------------------------------------------------------
+        # 1) Normal iterative sampling baseline, exactly like eval.
+        # ------------------------------------------------------------
+        x_normal = mixed_embeddings
+
+        for i in reversed(range(1, init_timestep + 1)):
+            t = torch.full(
+                (batch_size,),
+                i,
+                device=device,
+                dtype=torch.long,
+            )
+
+            predicted_normal = model(x_normal, t)
+
+            extracted_normal = diffusion.extract_other(
+                mixed_embeddings,
+                predicted_normal,
+                alpha_init,
+            )
+
+            x_normal = (
+                x_normal
+                - diffusion.mix_embeddings(
+                    predicted_normal,
+                    extracted_normal,
+                    t,
+                )
+                + diffusion.mix_embeddings(
+                    predicted_normal,
+                    extracted_normal,
+                    t - 1,
+                )
+            )
+
+        final_normal_predicted = x_normal
+
+        final_normal_extracted = diffusion.extract_other(
+            mixed_embeddings,
+            final_normal_predicted,
+            alpha_init,
+        )
+
+        normal_predicted_loss_sum, normal_extracted_loss_sum, normal_total_loss_sum = (
+            _permutation_invariant_pair_l1_sums(
+                predicted_a=final_normal_predicted,
+                predicted_b=final_normal_extracted,
+                clean_1=clean_1,
+                clean_2=clean_2,
+            )
+        )
+
+        normal_predicted_sum += normal_predicted_loss_sum
+        normal_extracted_sum += normal_extracted_loss_sum
+        normal_total_sum += normal_total_loss_sum
+
+        # ------------------------------------------------------------
+        # 2) Swap-corrected iterative sampling.
+        # ------------------------------------------------------------
+        x_corrected = mixed_embeddings
+
+        initial_assignment = None
+        previous_assignment = None
+        previous_tie = None
+
+        sample_has_swap = torch.zeros(
+            batch_size,
+            device=device,
+            dtype=torch.bool,
+        )
+
+        for i in reversed(range(1, init_timestep + 1)):
+            t = torch.full(
+                (batch_size,),
+                i,
+                device=device,
+                dtype=torch.long,
+            )
+
+            predicted_current = model(x_corrected, t)
+
+            extracted_current = diffusion.extract_other(
+                mixed_embeddings,
+                predicted_current,
+                alpha_init,
+            )
+
+            distance_to_clean_1 = _l1_sum_per_sample(
+                predicted_current,
+                clean_1,
+            )
+
+            distance_to_clean_2 = _l1_sum_per_sample(
+                predicted_current,
+                clean_2,
+            )
+
+            current_tie = distance_to_clean_1 == distance_to_clean_2
+            exact_ties += current_tie.sum()
+
+            current_assignment = torch.where(
+                distance_to_clean_1 <= distance_to_clean_2,
+                torch.zeros_like(distance_to_clean_1, dtype=torch.long),
+                torch.ones_like(distance_to_clean_2, dtype=torch.long),
+            )
+
+            if previous_assignment is not None:
+                current_assignment_for_update = torch.where(
+                    current_tie,
+                    previous_assignment,
+                    current_assignment,
+                )
+            else:
+                current_assignment_for_update = current_assignment
+
+            if initial_assignment is None:
+                initial_assignment = current_assignment_for_update.clone()
+
+            else:
+                certain_current = ~current_tie
+
+                swapped_now = (
+                    current_assignment_for_update != initial_assignment
+                ) & certain_current
+
+                swapped_predictions_after_first += swapped_now.sum()
+                samples_with_any_swap += (swapped_now & (~sample_has_swap)).sum()
+                sample_has_swap |= swapped_now
+
+                if previous_assignment is not None and previous_tie is not None:
+                    certain_transition = (~previous_tie) & (~current_tie)
+
+                    transition_now = (
+                        current_assignment != previous_assignment
+                    ) & certain_transition
+
+                    identity_transition_events += transition_now.sum()
+
+                total_steps_after_first += batch_size
+
+            same_as_initial = current_assignment_for_update == initial_assignment
+
+            first_branch_for_update = torch.where(
+                same_as_initial[:, None],
+                predicted_current,
+                extracted_current,
+            )
+
+            second_branch_for_update = torch.where(
+                same_as_initial[:, None],
+                extracted_current,
+                predicted_current,
+            )
+
+            x_corrected = (
+                x_corrected
+                - diffusion.mix_embeddings(
+                    first_branch_for_update,
+                    second_branch_for_update,
+                    t,
+                )
+                + diffusion.mix_embeddings(
+                    first_branch_for_update,
+                    second_branch_for_update,
+                    t - 1,
+                )
+            )
+
+            previous_assignment = current_assignment_for_update
+            previous_tie = current_tie
+
+        final_initial_branch = x_corrected
+
+        final_other_branch = diffusion.extract_other(
+            mixed_embeddings,
+            final_initial_branch,
+            alpha_init,
+        )
+
+        true_initial_branch = torch.where(
+            initial_assignment[:, None] == 0,
+            clean_1,
+            clean_2,
+        )
+
+        true_other_branch = torch.where(
+            initial_assignment[:, None] == 0,
+            clean_2,
+            clean_1,
+        )
+
+        corrected_initial_branch_sum += _l1_sum_per_sample(
+            final_initial_branch,
+            true_initial_branch,
+        ).sum()
+
+        corrected_other_branch_sum += _l1_sum_per_sample(
+            final_other_branch,
+            true_other_branch,
+        ).sum()
+
+        corrected_pi_a_sum, corrected_pi_b_sum, corrected_pi_total_sum = (
+            _permutation_invariant_pair_l1_sums(
+                predicted_a=final_initial_branch,
+                predicted_b=final_other_branch,
+                clean_1=clean_1,
+                clean_2=clean_2,
+            )
+        )
+
+        corrected_total_sum += corrected_pi_total_sum
+
+        embedding_count += clean_1.numel()
+        total_samples += batch_size
+
+    accelerator.wait_for_everyone()
+
+    normal_predicted_sum = accelerator.gather(normal_predicted_sum).sum()
+    normal_extracted_sum = accelerator.gather(normal_extracted_sum).sum()
+    normal_total_sum = accelerator.gather(normal_total_sum).sum()
+
+    corrected_initial_branch_sum = accelerator.gather(
+        corrected_initial_branch_sum
+    ).sum()
+    corrected_other_branch_sum = accelerator.gather(
+        corrected_other_branch_sum
+    ).sum()
+    corrected_total_sum = accelerator.gather(corrected_total_sum).sum()
+
+    embedding_count = accelerator.gather(embedding_count).sum()
+
+    total_samples = accelerator.gather(total_samples).sum().item()
+    total_steps_after_first = accelerator.gather(total_steps_after_first).sum().item()
+    swapped_predictions_after_first = accelerator.gather(
+        swapped_predictions_after_first
+    ).sum().item()
+    samples_with_any_swap = accelerator.gather(samples_with_any_swap).sum().item()
+    identity_transition_events = accelerator.gather(identity_transition_events).sum().item()
+    exact_ties = accelerator.gather(exact_ties).sum().item()
+
+    normal_predicted_l1 = (normal_predicted_sum / embedding_count).item()
+    normal_extracted_l1 = (normal_extracted_sum / embedding_count).item()
+    normal_total_l1 = (normal_total_sum / (2.0 * embedding_count)).item()
+
+    corrected_initial_branch_l1 = (
+        corrected_initial_branch_sum / embedding_count
+    ).item()
+    corrected_other_branch_l1 = (
+        corrected_other_branch_sum / embedding_count
+    ).item()
+    corrected_total_l1 = (
+        corrected_total_sum / (2.0 * embedding_count)
+    ).item()
+
+    delta_total_l1 = normal_total_l1 - corrected_total_l1
+
+    if accelerator.is_main_process:
+        os.makedirs(os.path.join(base_dir, "results"), exist_ok=True)
+
+        report = (
+            "--- Swap-Corrected Iterative Evaluation ---\n"
+            f"Checkpoint: {model_path}\n"
+            f"alpha_init: {args.alpha_init}\n"
+            f"init_timestep: {init_timestep}\n"
+            f"Total validation samples checked: {total_samples}\n"
+            f"Total post-first timestep predictions checked: {total_steps_after_first}\n"
+            f"Predictions assigned to the opposite clean identity after first step: "
+            f"{swapped_predictions_after_first}\n"
+            f"Samples with at least one post-first swap: {samples_with_any_swap}\n"
+            f"Consecutive identity transition events: {identity_transition_events}\n"
+            f"Exact distance ties encountered: {exact_ties}\n"
+            "\n"
+            "--- Normal Iterative Evaluation ---\n"
+            f"Predicted Clean L1: {normal_predicted_l1:.8f}\n"
+            f"Extracted Other L1: {normal_extracted_l1:.8f}\n"
+            f"Permutation-Invariant Pair L1: {normal_total_l1:.8f}\n"
+            "\n"
+            "--- Swap-Corrected Iterative Evaluation ---\n"
+            f"Initial-Prediction Branch L1: {corrected_initial_branch_l1:.8f}\n"
+            f"Other Branch L1: {corrected_other_branch_l1:.8f}\n"
+            f"Permutation-Invariant Pair L1: {corrected_total_l1:.8f}\n"
+            "\n"
+            "--- Estimated Impact of Swapping ---\n"
+            f"Normal Pair L1 - Swap-Corrected Pair L1: {delta_total_l1:.8f}\n"
+        )
+
+        out_path = os.path.join(
+            base_dir,
+            "results",
+            "swap_corrected_iterative_metrics.txt",
+        )
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(report)
+
+        print(f"\nSaved swap-corrected iterative metrics to: {out_path}")
+        print(report)
+
 def launch():
     parser = argparse.ArgumentParser()
 
@@ -1039,10 +1461,11 @@ def launch():
 
     args = parser.parse_args()
 
-    train(args)
-    eval_model(args, one_shot=False)
-    eval_model(args, one_shot=True)
-    check_sampling_swaps(args)
+    #train(args)
+    #eval_model(args, one_shot=False)
+    #eval_model(args, one_shot=True)
+    #check_sampling_swaps(args)
+    eval_iterative_with_perfect_swap_correction(args)
 
 
 if __name__ == "__main__":

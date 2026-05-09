@@ -1,0 +1,9 @@
+--- Sampling Swap Check ---
+Checkpoint: experiments/avg_diffae_magSort_l1_10ts/checkpoints/mlp_ema.pt
+alpha_init: 0.5
+init_timestep: 10
+Total validation samples checked: 100000
+Total timestep transitions checked: 900000
+Total swap events detected: 8197
+Samples with at least one swap: 7009
+Exact distance ties ignored: 0
