@@ -211,6 +211,10 @@ def _l1_sum_per_sample(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return torch.abs(x - y).reshape(x.shape[0], -1).sum(dim=1)
 
 
+def _l1_mean_per_sample(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    return torch.abs(x - y).reshape(x.shape[0], -1).mean(dim=1)
+
+
 def permutation_invariant_single_prediction_loss(
     predicted_embedding: torch.Tensor,
     clean_embedding_1: torch.Tensor,
@@ -218,8 +222,8 @@ def permutation_invariant_single_prediction_loss(
     cosine_weight: float = 0.0,
     reduction: str = "mean",
 ) -> torch.Tensor:
-    loss_to_1 = _l1_sum_per_sample(predicted_embedding, clean_embedding_1)
-    loss_to_2 = _l1_sum_per_sample(predicted_embedding, clean_embedding_2)
+    loss_to_1 = _l1_mean_per_sample(predicted_embedding, clean_embedding_1)
+    loss_to_2 = _l1_mean_per_sample(predicted_embedding, clean_embedding_2)
 
     if cosine_weight > 0:
         cos_to_1 = 1.0 - F.cosine_similarity(
@@ -242,34 +246,81 @@ def permutation_invariant_single_prediction_loss(
         return min_loss.sum()
 
     if reduction == "mean":
-        elements_per_sample = predicted_embedding[0].numel()
-        return min_loss.mean() / elements_per_sample
+        return min_loss.mean()
 
     raise ValueError(f"Unsupported reduction: {reduction}")
 
 
-def permutation_invariant_pair_l1_sums(
+def permutation_invariant_pair_l1_cosine_sums(
     predicted_embedding: torch.Tensor,
     extracted_embedding: torch.Tensor,
     clean_embedding_1: torch.Tensor,
     clean_embedding_2: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    predicted_to_1 = _l1_sum_per_sample(predicted_embedding, clean_embedding_1)
-    extracted_to_2 = _l1_sum_per_sample(extracted_embedding, clean_embedding_2)
+) -> Tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
+    predicted_to_1_l1 = _l1_mean_per_sample(predicted_embedding, clean_embedding_1)
+    extracted_to_2_l1 = _l1_mean_per_sample(extracted_embedding, clean_embedding_2)
 
-    predicted_to_2 = _l1_sum_per_sample(predicted_embedding, clean_embedding_2)
-    extracted_to_1 = _l1_sum_per_sample(extracted_embedding, clean_embedding_1)
+    predicted_to_2_l1 = _l1_mean_per_sample(predicted_embedding, clean_embedding_2)
+    extracted_to_1_l1 = _l1_mean_per_sample(extracted_embedding, clean_embedding_1)
 
-    config_1_total = predicted_to_1 + extracted_to_2
-    config_2_total = predicted_to_2 + extracted_to_1
+    config_1_total_l1 = predicted_to_1_l1 + extracted_to_2_l1
+    config_2_total_l1 = predicted_to_2_l1 + extracted_to_1_l1
 
-    use_config_1 = config_1_total <= config_2_total
+    use_config_1 = config_1_total_l1 <= config_2_total_l1
 
-    predicted_loss = torch.where(use_config_1, predicted_to_1, predicted_to_2)
-    extracted_loss = torch.where(use_config_1, extracted_to_2, extracted_to_1)
-    total_loss = torch.minimum(config_1_total, config_2_total)
+    predicted_l1 = torch.where(use_config_1, predicted_to_1_l1, predicted_to_2_l1)
+    extracted_l1 = torch.where(use_config_1, extracted_to_2_l1, extracted_to_1_l1)
+    total_l1 = predicted_l1 + extracted_l1
 
-    return predicted_loss.sum(), extracted_loss.sum(), total_loss.sum()
+    predicted_to_1_cosine = F.cosine_similarity(
+        predicted_embedding,
+        clean_embedding_1,
+        dim=-1,
+    )
+    extracted_to_2_cosine = F.cosine_similarity(
+        extracted_embedding,
+        clean_embedding_2,
+        dim=-1,
+    )
+
+    predicted_to_2_cosine = F.cosine_similarity(
+        predicted_embedding,
+        clean_embedding_2,
+        dim=-1,
+    )
+    extracted_to_1_cosine = F.cosine_similarity(
+        extracted_embedding,
+        clean_embedding_1,
+        dim=-1,
+    )
+
+    predicted_cosine = torch.where(
+        use_config_1,
+        predicted_to_1_cosine,
+        predicted_to_2_cosine,
+    )
+    extracted_cosine = torch.where(
+        use_config_1,
+        extracted_to_2_cosine,
+        extracted_to_1_cosine,
+    )
+    total_cosine = predicted_cosine + extracted_cosine
+
+    return (
+        predicted_l1.sum(),
+        extracted_l1.sum(),
+        total_l1.sum(),
+        predicted_cosine.sum(),
+        extracted_cosine.sum(),
+        total_cosine.sum(),
+    )
 
 
 @torch.no_grad()
@@ -320,7 +371,7 @@ def evaluate_validation_loss(
             reduction="sum",
         ).detach()
 
-        loss_count += clean_embeddings_1.numel()
+        loss_count += clean_embeddings_1.shape[0]
 
     avg_val_loss = (
         accelerator.gather(loss_sum).sum()
@@ -332,7 +383,7 @@ def evaluate_validation_loss(
 
 
 @torch.no_grad()
-def evaluate_embedding_l1(
+def evaluate_embedding_metrics(
     model: nn.Module,
     dataloader,
     diffusion: ColdDiffusionEmbeddings,
@@ -342,9 +393,13 @@ def evaluate_embedding_l1(
 ):
     model.eval()
 
-    predicted_sum = torch.zeros(1, device=accelerator.device)
-    extracted_sum = torch.zeros(1, device=accelerator.device)
-    total_sum = torch.zeros(1, device=accelerator.device)
+    predicted_l1_sum = torch.zeros(1, device=accelerator.device)
+    extracted_l1_sum = torch.zeros(1, device=accelerator.device)
+    total_l1_sum = torch.zeros(1, device=accelerator.device)
+
+    predicted_cosine_sum = torch.zeros(1, device=accelerator.device)
+    extracted_cosine_sum = torch.zeros(1, device=accelerator.device)
+    total_cosine_sum = torch.zeros(1, device=accelerator.device)
 
     predicted_count = torch.zeros(1, device=accelerator.device)
     extracted_count = torch.zeros(1, device=accelerator.device)
@@ -384,21 +439,30 @@ def evaluate_embedding_l1(
                 alpha_init=alpha_init,
             )
 
-        predicted_loss_sum, extracted_loss_sum, total_loss_sum = (
-            permutation_invariant_pair_l1_sums(
-                predicted_embedding=predicted_embedding,
-                extracted_embedding=extracted_embedding,
-                clean_embedding_1=clean_embeddings_1,
-                clean_embedding_2=clean_embeddings_2,
-            )
+        (
+            predicted_l1_batch_sum,
+            extracted_l1_batch_sum,
+            total_l1_batch_sum,
+            predicted_cosine_batch_sum,
+            extracted_cosine_batch_sum,
+            total_cosine_batch_sum,
+        ) = permutation_invariant_pair_l1_cosine_sums(
+            predicted_embedding=predicted_embedding,
+            extracted_embedding=extracted_embedding,
+            clean_embedding_1=clean_embeddings_1,
+            clean_embedding_2=clean_embeddings_2,
         )
 
-        predicted_sum += predicted_loss_sum
-        extracted_sum += extracted_loss_sum
-        total_sum += total_loss_sum
+        predicted_l1_sum += predicted_l1_batch_sum
+        extracted_l1_sum += extracted_l1_batch_sum
+        total_l1_sum += total_l1_batch_sum
 
-        predicted_count += clean_embeddings_1.numel()
-        extracted_count += clean_embeddings_2.numel()
+        predicted_cosine_sum += predicted_cosine_batch_sum
+        extracted_cosine_sum += extracted_cosine_batch_sum
+        total_cosine_sum += total_cosine_batch_sum
+
+        predicted_count += clean_embeddings_1.shape[0]
+        extracted_count += clean_embeddings_2.shape[0]
 
         if first_item is None:
             first_item = {
@@ -413,22 +477,32 @@ def evaluate_embedding_l1(
                 "clean_sample_id_2": batch["clean_sample_id_2"][0],
             }
 
+    predicted_count = accelerator.gather(predicted_count).sum()
+    extracted_count = accelerator.gather(extracted_count).sum()
+    total_count = predicted_count + extracted_count
+
     predicted_l1 = (
-        accelerator.gather(predicted_sum).sum()
-        / accelerator.gather(predicted_count).sum()
+        accelerator.gather(predicted_l1_sum).sum() / predicted_count
     ).item()
 
     extracted_l1 = (
-        accelerator.gather(extracted_sum).sum()
-        / accelerator.gather(extracted_count).sum()
+        accelerator.gather(extracted_l1_sum).sum() / extracted_count
     ).item()
 
     total_l1 = (
-        accelerator.gather(total_sum).sum()
-        / (
-            accelerator.gather(predicted_count).sum()
-            + accelerator.gather(extracted_count).sum()
-        )
+        accelerator.gather(total_l1_sum).sum() / total_count
+    ).item()
+
+    predicted_cosine = (
+        accelerator.gather(predicted_cosine_sum).sum() / predicted_count
+    ).item()
+
+    extracted_cosine = (
+        accelerator.gather(extracted_cosine_sum).sum() / extracted_count
+    ).item()
+
+    total_cosine = (
+        accelerator.gather(total_cosine_sum).sum() / total_count
     ).item()
 
     model.train()
@@ -437,6 +511,9 @@ def evaluate_embedding_l1(
         "predicted_l1": predicted_l1,
         "extracted_l1": extracted_l1,
         "total_l1": total_l1,
+        "predicted_cosine": predicted_cosine,
+        "extracted_cosine": extracted_cosine,
+        "total_cosine": total_cosine,
         "first_item": first_item,
     }
 
@@ -691,7 +768,7 @@ def eval_model(args, one_shot: bool = False):
         device=device,
     )
 
-    metrics = evaluate_embedding_l1(
+    metrics = evaluate_embedding_metrics(
         model=model,
         dataloader=val_dataloader,
         diffusion=diffusion,
@@ -706,8 +783,11 @@ def eval_model(args, one_shot: bool = False):
         report = (
             f"--- {label} Evaluation (Validation Set) ---\n"
             f"Predicted Clean L1: {metrics['predicted_l1']:.8f}\n"
+            f"Predicted Clean Cosine Similarity: {metrics['predicted_cosine']:.8f}\n"
             f"Extracted Other L1: {metrics['extracted_l1']:.8f}\n"
+            f"Extracted Other Cosine Similarity: {metrics['extracted_cosine']:.8f}\n"
             f"Permutation-Invariant Pair L1: {metrics['total_l1']:.8f}\n"
+            f"Permutation-Invariant Pair Cosine Similarity: {metrics['total_cosine']:.8f}\n"
         )
 
         print(f"\n{report}")
