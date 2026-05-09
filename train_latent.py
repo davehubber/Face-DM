@@ -211,14 +211,31 @@ def _l1_sum_per_sample(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return torch.abs(x - y).reshape(x.shape[0], -1).sum(dim=1)
 
 
-def permutation_invariant_single_prediction_l1(
+def permutation_invariant_single_prediction_loss(
     predicted_embedding: torch.Tensor,
     clean_embedding_1: torch.Tensor,
     clean_embedding_2: torch.Tensor,
+    cosine_weight: float = 0.0,
     reduction: str = "mean",
 ) -> torch.Tensor:
     loss_to_1 = _l1_sum_per_sample(predicted_embedding, clean_embedding_1)
     loss_to_2 = _l1_sum_per_sample(predicted_embedding, clean_embedding_2)
+
+    if cosine_weight > 0:
+        cos_to_1 = 1.0 - F.cosine_similarity(
+            predicted_embedding,
+            clean_embedding_1,
+            dim=-1,
+        )
+        cos_to_2 = 1.0 - F.cosine_similarity(
+            predicted_embedding,
+            clean_embedding_2,
+            dim=-1,
+        )
+
+        loss_to_1 = loss_to_1 + cosine_weight * cos_to_1
+        loss_to_2 = loss_to_2 + cosine_weight * cos_to_2
+
     min_loss = torch.minimum(loss_to_1, loss_to_2)
 
     if reduction == "sum":
@@ -261,6 +278,7 @@ def evaluate_validation_loss(
     dataloader,
     diffusion: ColdDiffusionEmbeddings,
     accelerator: Accelerator,
+    cosine_weight: float = 0.0,
     fixed_timestep: Optional[int] = None,
 ):
     model.eval()
@@ -294,10 +312,11 @@ def evaluate_validation_loss(
         x_t = diffusion.mix_embeddings(clean_embeddings_1, clean_embeddings_2, t)
         predicted_embedding = model(x_t, t)
 
-        loss_sum += permutation_invariant_single_prediction_l1(
+        loss_sum += permutation_invariant_single_prediction_loss(
             predicted_embedding=predicted_embedding,
             clean_embedding_1=clean_embeddings_1,
             clean_embedding_2=clean_embeddings_2,
+            cosine_weight=cosine_weight,
             reduction="sum",
         ).detach()
 
@@ -518,10 +537,11 @@ def train(args):
 
                 predicted_embedding = model(x_t, t)
 
-                loss = permutation_invariant_single_prediction_l1(
+                loss = permutation_invariant_single_prediction_loss(
                     predicted_embedding=predicted_embedding,
                     clean_embedding_1=clean_embeddings_1,
                     clean_embedding_2=clean_embeddings_2,
+                    cosine_weight=args.cosine_loss_weight,
                     reduction="mean",
                 )
 
@@ -559,10 +579,11 @@ def train(args):
 
                     predicted_final = model(x_final, t_final)
 
-                    final_loss = permutation_invariant_single_prediction_l1(
+                    final_loss = permutation_invariant_single_prediction_loss(
                         predicted_embedding=predicted_final,
                         clean_embedding_1=clean_embeddings_1,
                         clean_embedding_2=clean_embeddings_2,
+                        cosine_weight=args.cosine_loss_weight,
                         reduction="mean",
                     )
 
@@ -593,6 +614,7 @@ def train(args):
             dataloader=val_dataloader,
             diffusion=diffusion,
             accelerator=accelerator,
+            cosine_weight=args.cosine_loss_weight,
             fixed_timestep=None,
         )
 
@@ -601,6 +623,7 @@ def train(args):
             dataloader=val_dataloader,
             diffusion=diffusion,
             accelerator=accelerator,
+            cosine_weight=args.cosine_loss_weight,
             fixed_timestep=diffusion.max_timesteps,
         )
 
@@ -701,6 +724,7 @@ def eval_model(args, one_shot: bool = False):
             save_path = os.path.join(base_dir, "results", "decode_pair_data.pt")
             torch.save(metrics["first_item"], save_path)
             print(f"Saved evaluation embeddings for visual decoding to: {save_path}")
+
 
 @torch.no_grad()
 def check_sampling_swaps(args):
@@ -890,6 +914,7 @@ def check_sampling_swaps(args):
         print(f"\nSaved sampling swap check to: {out_path}")
         print(report)
 
+
 @torch.no_grad()
 def eval_iterative_with_perfect_swap_correction(args):
     """
@@ -921,7 +946,7 @@ def eval_iterative_with_perfect_swap_correction(args):
             "equivalent."
         )
 
-    def _l1_sum_per_sample(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    def _l1_sum_per_sample_local(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         return torch.abs(x - y).reshape(x.shape[0], -1).sum(dim=1)
 
     def _permutation_invariant_pair_l1_sums(
@@ -930,11 +955,11 @@ def eval_iterative_with_perfect_swap_correction(args):
         clean_1: torch.Tensor,
         clean_2: torch.Tensor,
     ):
-        a_to_1 = _l1_sum_per_sample(predicted_a, clean_1)
-        b_to_2 = _l1_sum_per_sample(predicted_b, clean_2)
+        a_to_1 = _l1_sum_per_sample_local(predicted_a, clean_1)
+        b_to_2 = _l1_sum_per_sample_local(predicted_b, clean_2)
 
-        a_to_2 = _l1_sum_per_sample(predicted_a, clean_2)
-        b_to_1 = _l1_sum_per_sample(predicted_b, clean_1)
+        a_to_2 = _l1_sum_per_sample_local(predicted_a, clean_2)
+        b_to_1 = _l1_sum_per_sample_local(predicted_b, clean_1)
 
         config_1_total = a_to_1 + b_to_2
         config_2_total = a_to_2 + b_to_1
@@ -1101,12 +1126,12 @@ def eval_iterative_with_perfect_swap_correction(args):
                 alpha_init,
             )
 
-            distance_to_clean_1 = _l1_sum_per_sample(
+            distance_to_clean_1 = _l1_sum_per_sample_local(
                 predicted_current,
                 clean_1,
             )
 
-            distance_to_clean_2 = _l1_sum_per_sample(
+            distance_to_clean_2 = _l1_sum_per_sample_local(
                 predicted_current,
                 clean_2,
             )
@@ -1205,12 +1230,12 @@ def eval_iterative_with_perfect_swap_correction(args):
             clean_1,
         )
 
-        corrected_initial_branch_sum += _l1_sum_per_sample(
+        corrected_initial_branch_sum += _l1_sum_per_sample_local(
             final_initial_branch,
             true_initial_branch,
         ).sum()
 
-        corrected_other_branch_sum += _l1_sum_per_sample(
+        corrected_other_branch_sum += _l1_sum_per_sample_local(
             final_other_branch,
             true_other_branch,
         ).sum()
@@ -1311,6 +1336,7 @@ def eval_iterative_with_perfect_swap_correction(args):
 
         print(f"\nSaved swap-corrected iterative metrics to: {out_path}")
         print(report)
+
 
 def launch():
     parser = argparse.ArgumentParser()
@@ -1459,13 +1485,20 @@ def launch():
         help="Sinusoidal timestep embedding width",
     )
 
+    parser.add_argument(
+        "--cosine_loss_weight",
+        default=0.0,
+        type=float,
+        help="Weight for the cosine similarity penalty added to the L1 loss",
+    )
+
     args = parser.parse_args()
 
-    #train(args)
-    #eval_model(args, one_shot=False)
-    #eval_model(args, one_shot=True)
-    #check_sampling_swaps(args)
-    eval_iterative_with_perfect_swap_correction(args)
+    train(args)
+    eval_model(args, one_shot=False)
+    eval_model(args, one_shot=True)
+    # check_sampling_swaps(args)
+    # eval_iterative_with_perfect_swap_correction(args)
 
 
 if __name__ == "__main__":
