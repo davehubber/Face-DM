@@ -1,0 +1,2 @@
+--- Iterative Evaluation (Validation Set) ---
+Mean L1 Error: 0.59596384

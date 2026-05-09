@@ -116,13 +116,17 @@ class VelocityDiffusion:
         return avg_emb + progress * v_target
 
     def sample(self, model: nn.Module, avg_emb: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        batch_size = avg_emb.shape
+        batch_size = avg_emb.shape[0]
         model.eval()
+
         with torch.no_grad():
-            x_t = avg_emb.clone().to(self.device)
+            avg_emb = avg_emb.to(self.device)
+            x_t = avg_emb.clone()
+
             for i in reversed(range(1, self.max_timesteps + 1)):
                 t = torch.full((batch_size,), i, device=self.device, dtype=torch.long)
                 pred_v = model(x_t, t)
+
                 # Step towards clean embedding (x_0)
                 x_t = x_t + pred_v / self.max_timesteps
 
@@ -141,14 +145,16 @@ def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: VelocityDi
     for batch_idx, batch in enumerate(dataloader):
         emb1 = batch["emb1_embedding"]
         emb2 = batch["emb2_embedding"]
-        
+
+        batch_size = emb1.shape[0]
+
         avg_emb = (emb1 + emb2) / 2.0
         v1 = emb1 - avg_emb
         v2 = emb2 - avg_emb
 
-        t = ((torch.arange(emb1.shape, device=accelerator.device) + batch_idx * emb1.shape) % diffusion.max_timesteps) + 1
+        t = ((torch.arange(batch_size, device=accelerator.device) + batch_idx * batch_size) % diffusion.max_timesteps) + 1
 
-        sign = torch.randint(0, 2, (emb1.shape, 1), device=accelerator.device).float() * 2 - 1
+        sign = torch.randint(0, 2, (batch_size, 1), device=accelerator.device).float() * 2 - 1
         v_target = v1 * sign
 
         x_t = diffusion.get_xt(avg_emb, v_target, t)
@@ -156,10 +162,10 @@ def evaluate_validation_loss(model: nn.Module, dataloader, diffusion: VelocityDi
 
         loss_v1 = F.l1_loss(pred_v, v1, reduction="none").mean(dim=1)
         loss_v2 = F.l1_loss(pred_v, v2, reduction="none").mean(dim=1)
-        
+
         loss_per_sample = torch.min(loss_v1, loss_v2)
         loss_sum += loss_per_sample.sum().detach()
-        loss_count += emb1.shape
+        loss_count += batch_size
 
     avg_val_loss = (accelerator.gather(loss_sum).sum() / accelerator.gather(loss_count).sum()).item()
     model.train()
@@ -177,10 +183,13 @@ def evaluate_embedding_l1(model: nn.Module, dataloader, diffusion: VelocityDiffu
     for batch in dataloader:
         emb1 = batch["emb1_embedding"]
         emb2 = batch["emb2_embedding"]
+
+        batch_size = emb1.shape[0]
+
         avg_emb = (emb1 + emb2) / 2.0
 
         if one_shot:
-            t = torch.full((emb1.shape,), diffusion.max_timesteps, device=accelerator.device, dtype=torch.long)
+            t = torch.full((batch_size,), diffusion.max_timesteps, device=accelerator.device, dtype=torch.long)
             pred_v = model(avg_emb, t)
             pred_clean = avg_emb + pred_v
             pred_other = 2.0 * avg_emb - pred_clean
@@ -188,22 +197,28 @@ def evaluate_embedding_l1(model: nn.Module, dataloader, diffusion: VelocityDiffu
             pred_clean, pred_other = diffusion.sample(model, avg_emb)
 
         # Permutation invariant matching to evaluate metrics accurately
-        dist_1 = F.l1_loss(pred_clean, emb1, reduction="none").mean(dim=1) + F.l1_loss(pred_other, emb2, reduction="none").mean(dim=1)
-        dist_2 = F.l1_loss(pred_clean, emb2, reduction="none").mean(dim=1) + F.l1_loss(pred_other, emb1, reduction="none").mean(dim=1)
+        dist_1 = (
+            F.l1_loss(pred_clean, emb1, reduction="none").mean(dim=1)
+            + F.l1_loss(pred_other, emb2, reduction="none").mean(dim=1)
+        )
+        dist_2 = (
+            F.l1_loss(pred_clean, emb2, reduction="none").mean(dim=1)
+            + F.l1_loss(pred_other, emb1, reduction="none").mean(dim=1)
+        )
 
         best_dist = torch.min(dist_1, dist_2)
         total_sum += best_dist.sum()
-        total_count += emb1.shape
+        total_count += batch_size
 
         if first_item is None:
             first_item = {
-                "avg_embedding": avg_emb.detach().cpu(),
-                "predicted_clean": pred_clean.detach().cpu(),
-                "predicted_other": pred_other.detach().cpu(),
-                "emb1_source_path": batch["emb1_source_path"],
-                "emb2_source_path": batch["emb2_source_path"],
-                "emb1_sample_id": batch["emb1_sample_id"],
-                "emb2_sample_id": batch["emb2_sample_id"],
+                "avg_embedding": avg_emb[0].detach().cpu(),
+                "predicted_clean": pred_clean[0].detach().cpu(),
+                "predicted_other": pred_other[0].detach().cpu(),
+                "emb1_source_path": batch["emb1_source_path"][0],
+                "emb2_source_path": batch["emb2_source_path"][0],
+                "emb1_sample_id": batch["emb1_sample_id"][0],
+                "emb2_sample_id": batch["emb2_sample_id"][0],
             }
 
     total_l1 = (accelerator.gather(total_sum).sum() / accelerator.gather(total_count).sum()).item() / 2.0
@@ -227,7 +242,7 @@ def train(args):
     val_dataloader = get_data(args, "val")
 
     sample_pack = torch.load(os.path.join(args.dataset_root, "semantic", "train_zsem.pt"), map_location="cpu")
-    embedding_dim = sample_pack["z_sem"].shape
+    embedding_dim = sample_pack["z_sem"].shape[1]
 
     model = MLPSkipNet(
         embedding_dim=embedding_dim,
@@ -269,20 +284,22 @@ def train(args):
         for batch in train_dataloader:
             emb1 = batch["emb1_embedding"]
             emb2 = batch["emb2_embedding"]
-            
+
+            batch_size = emb1.shape[0]
+
             avg_emb = (emb1 + emb2) / 2.0
             v1 = emb1 - avg_emb
             v2 = emb2 - avg_emb
 
-            t = diffusion.sample_timesteps(emb1.shape)
+            t = diffusion.sample_timesteps(batch_size)
 
-            sign = torch.randint(0, 2, (emb1.shape, 1), device=device).float() * 2 - 1
+            sign = torch.randint(0, 2, (batch_size, 1), device=device).float() * 2 - 1
             v_target = v1 * sign
 
             with accelerator.accumulate(model):
                 x_t = diffusion.get_xt(avg_emb, v_target, t)
                 pred_v = model(x_t, t)
-                
+
                 loss_v1 = F.l1_loss(pred_v, v1, reduction="none").mean(dim=1)
                 loss_v2 = F.l1_loss(pred_v, v2, reduction="none").mean(dim=1)
                 loss = torch.min(loss_v1, loss_v2).mean()
@@ -332,8 +349,9 @@ def eval_model(args, one_shot: bool = False):
     base_dir = os.path.join("experiments", args.run_name)
 
     val_dataloader = get_data(args, "val")
+
     sample_pack = torch.load(os.path.join(args.dataset_root, "semantic", "train_zsem.pt"), map_location="cpu")
-    embedding_dim = sample_pack["z_sem"].shape
+    embedding_dim = sample_pack["z_sem"].shape[1]
 
     model = MLPSkipNet(
         embedding_dim=embedding_dim,
@@ -343,6 +361,7 @@ def eval_model(args, one_shot: bool = False):
     )
 
     model, val_dataloader = accelerator.prepare(model, val_dataloader)
+
     model_path = os.path.join(base_dir, "checkpoints", "mlp_ema.pt")
     accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
@@ -376,6 +395,7 @@ def eval_model(args, one_shot: bool = False):
             save_path = os.path.join(base_dir, "results", "decode_pair_data.pt")
             torch.save(metrics["first_item"], save_path)
             print(f"Saved evaluation embeddings for visual decoding to: {save_path}")
+
 
 def launch():
     parser = argparse.ArgumentParser()
