@@ -1,0 +1,7 @@
+--- One-Shot Evaluation (Validation Set) ---
+Predicted Clean L1: 0.55134237
+Predicted Clean Cosine Similarity: 0.73817885
+Extracted Other L1: 0.55134237
+Extracted Other Cosine Similarity: 0.70008796
+Permutation-Invariant Pair L1: 0.55134237
+Permutation-Invariant Pair Cosine Similarity: 0.71913326
