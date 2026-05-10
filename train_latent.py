@@ -1404,6 +1404,139 @@ def eval_iterative_with_perfect_swap_correction(args):
         print(f"\nSaved swap-corrected iterative metrics to: {out_path}")
         print(report)
 
+@torch.no_grad()
+def eval_one_shot_embedding_magnitudes(args):
+    """
+    Diagnostic one-shot evaluation.
+
+    Runs the same one-shot setup as eval_model(args, one_shot=True), but instead
+    of computing L1 / cosine metrics against the clean embeddings, it measures
+    the L2 magnitude of:
+
+        1) the model-predicted embedding
+        2) the mathematically extracted embedding
+
+    It writes a txt report to:
+        experiments/<run_name>/results/one_shot_embedding_magnitudes.txt
+    """
+
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
+
+    val_dataloader = get_data(args, "val")
+
+    sample_pack = torch.load(
+        os.path.join(args.dataset_root, "semantic", "train_zsem.pt"),
+        map_location="cpu",
+    )
+    embedding_dim = sample_pack["z_sem"].shape[1]
+
+    model = MLPSkipNet(
+        embedding_dim=embedding_dim,
+        hidden_dim=args.hidden_dim,
+        num_layers=args.num_layers,
+        num_time_emb_channels=args.num_time_emb_channels,
+    )
+
+    model, val_dataloader = accelerator.prepare(model, val_dataloader)
+
+    model_path = os.path.join(base_dir, "checkpoints", "mlp_ema.pt")
+    accelerator.unwrap_model(model).load_state_dict(
+        torch.load(model_path, map_location=device)
+    )
+    model.eval()
+
+    diffusion = ColdDiffusionEmbeddings(
+        max_timesteps=args.max_timesteps,
+        alpha_max=args.alpha_max,
+        device=device,
+    )
+
+    alpha_init = float(args.alpha_init)
+
+    init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
+    init_timestep = max(1, min(init_timestep, diffusion.max_timesteps))
+
+    predicted_magnitude_sum = torch.zeros(1, device=device)
+    extracted_magnitude_sum = torch.zeros(1, device=device)
+    total_count = torch.zeros(1, device=device)
+
+    for batch in val_dataloader:
+        clean_embeddings_1 = batch["clean_embedding_1"]
+        clean_embeddings_2 = batch["clean_embedding_2"]
+
+        batch_size = clean_embeddings_1.shape[0]
+
+        mixed_embeddings = (
+            clean_embeddings_1 * (1.0 - alpha_init)
+            + clean_embeddings_2 * alpha_init
+        )
+
+        t = torch.full(
+            (batch_size,),
+            init_timestep,
+            device=device,
+            dtype=torch.long,
+        )
+
+        predicted_embedding = model(mixed_embeddings, t)
+
+        extracted_embedding = diffusion.extract_other(
+            mixed_embeddings,
+            predicted_embedding,
+            alpha_init,
+        )
+
+        predicted_magnitude = torch.linalg.vector_norm(
+            predicted_embedding,
+            ord=2,
+            dim=-1,
+        )
+
+        extracted_magnitude = torch.linalg.vector_norm(
+            extracted_embedding,
+            ord=2,
+            dim=-1,
+        )
+
+        predicted_magnitude_sum += predicted_magnitude.sum()
+        extracted_magnitude_sum += extracted_magnitude.sum()
+        total_count += batch_size
+
+    accelerator.wait_for_everyone()
+
+    predicted_magnitude_sum = accelerator.gather(predicted_magnitude_sum).sum()
+    extracted_magnitude_sum = accelerator.gather(extracted_magnitude_sum).sum()
+    total_count = accelerator.gather(total_count).sum()
+
+    predicted_magnitude_avg = (predicted_magnitude_sum / total_count).item()
+    extracted_magnitude_avg = (extracted_magnitude_sum / total_count).item()
+
+    if accelerator.is_main_process:
+        os.makedirs(os.path.join(base_dir, "results"), exist_ok=True)
+
+        report = (
+            "--- One-Shot Embedding Magnitude Evaluation (Validation Set) ---\n"
+            f"Checkpoint: {model_path}\n"
+            f"alpha_init: {alpha_init}\n"
+            f"init_timestep: {init_timestep}\n"
+            f"Total validation samples checked: {int(total_count.item())}\n"
+            f"Predicted Embedding Average L2 Magnitude: {predicted_magnitude_avg:.8f}\n"
+            f"Extracted Embedding Average L2 Magnitude: {extracted_magnitude_avg:.8f}\n"
+        )
+
+        out_path = os.path.join(
+            base_dir,
+            "results",
+            "one_shot_embedding_magnitudes.txt",
+        )
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(report)
+
+        print(f"\nSaved one-shot embedding magnitudes to: {out_path}")
+        print(report)
 
 def launch():
     parser = argparse.ArgumentParser()
@@ -1554,9 +1687,10 @@ def launch():
 
     args = parser.parse_args()
 
-    train(args)
-    eval_model(args, one_shot=False)
-    eval_model(args, one_shot=True)
+    #train(args)
+    #eval_model(args, one_shot=False)
+    #eval_model(args, one_shot=True)
+    eval_one_shot_embedding_magnitudes(args)
     # check_sampling_swaps(args)
     # eval_iterative_with_perfect_swap_correction(args)
 
