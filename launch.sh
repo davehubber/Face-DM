@@ -8,4 +8,4 @@
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train_latent.py --run_name "avg_diffae_pit_l1cos1.0_10ts_20ep" --max_timesteps 10 --batch_size 24576 --epochs 15
+python train_latent.py --run_name "avg_diffae_pit_l1cos1.0_10ts_constLR" --max_timesteps 10 --batch_size 24576 --epochs 15
