@@ -8,7 +8,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import wandb
 from accelerate import Accelerator
-from diffusers.optimization import get_cosine_schedule_with_warmup
 from diffusers.training_utils import EMAModel
 from torch import optim
 
@@ -549,16 +548,6 @@ def train(args):
         weight_decay=args.weight_decay,
     )
 
-    steps_per_epoch = math.ceil(
-        len(train_dataloader) / args.gradient_accumulation_steps
-    )
-
-    lr_scheduler = get_cosine_schedule_with_warmup(
-        optimizer=optimizer,
-        num_warmup_steps=args.num_warmup_steps,
-        num_training_steps=steps_per_epoch * args.epochs,
-    )
-
     diffusion = ColdDiffusionEmbeddings(
         max_timesteps=args.max_timesteps,
         alpha_max=args.alpha_max,
@@ -580,12 +569,11 @@ def train(args):
             config=vars(args),
         )
 
-    model, optimizer, train_dataloader, val_dataloader, lr_scheduler = accelerator.prepare(
+    model, optimizer, train_dataloader, val_dataloader = accelerator.prepare(
         model,
         optimizer,
         train_dataloader,
         val_dataloader,
-        lr_scheduler,
     )
 
     best_val_loss = float("inf")
@@ -631,7 +619,6 @@ def train(args):
                     )
 
                 optimizer.step()
-                lr_scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
 
             if accelerator.sync_gradients:
@@ -1522,13 +1509,6 @@ def launch():
         default="fp16",
         choices=["no", "fp16", "bf16"],
         help="Accelerate mixed precision mode",
-    )
-
-    parser.add_argument(
-        "--num_warmup_steps",
-        default=500,
-        type=int,
-        help="Scheduler warmup steps",
     )
 
     parser.add_argument(
