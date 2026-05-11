@@ -147,8 +147,19 @@ class ColdDiffusionEmbeddings:
         self,
         mixed_embedding: torch.Tensor,
         predicted_embedding: torch.Tensor,
-        alpha: float,
+        alpha,
     ) -> torch.Tensor:
+        if torch.is_tensor(alpha):
+            alpha = alpha.to(
+                device=mixed_embedding.device,
+                dtype=mixed_embedding.dtype,
+            )
+            if torch.any(alpha <= 0):
+                raise ValueError("alpha must be > 0 to extract the second embedding")
+            while alpha.ndim < mixed_embedding.ndim:
+                alpha = alpha.unsqueeze(-1)
+            return (mixed_embedding - (1.0 - alpha) * predicted_embedding) / alpha
+
         alpha = float(alpha)
         if alpha <= 0:
             raise ValueError("alpha must be > 0 to extract the second embedding")
@@ -250,6 +261,56 @@ def permutation_invariant_single_prediction_loss(
     raise ValueError(f"Unsupported reduction: {reduction}")
 
 
+def pair_energy_regularization_loss(
+    predicted_embedding: torch.Tensor,
+    extracted_embedding: torch.Tensor,
+    clean_embedding_1: torch.Tensor,
+    clean_embedding_2: torch.Tensor,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    target_energy = 0.5 * (
+        clean_embedding_1.pow(2).mean(dim=1)
+        + clean_embedding_2.pow(2).mean(dim=1)
+    ).detach()
+
+    predicted_energy = predicted_embedding.pow(2).mean(dim=1)
+    extracted_energy = extracted_embedding.pow(2).mean(dim=1)
+
+    energy_loss = (
+        (predicted_energy - target_energy).pow(2)
+        + (extracted_energy - target_energy).pow(2)
+    )
+
+    if reduction == "sum":
+        return energy_loss.sum()
+
+    if reduction == "mean":
+        return energy_loss.mean()
+
+    raise ValueError(f"Unsupported reduction: {reduction}")
+
+
+def pair_energy_means(
+    predicted_embedding: torch.Tensor,
+    extracted_embedding: torch.Tensor,
+    clean_embedding_1: torch.Tensor,
+    clean_embedding_2: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    target_energy = 0.5 * (
+        clean_embedding_1.pow(2).mean(dim=1)
+        + clean_embedding_2.pow(2).mean(dim=1)
+    ).detach()
+
+    predicted_energy = predicted_embedding.pow(2).mean(dim=1)
+    extracted_energy = extracted_embedding.pow(2).mean(dim=1)
+
+    return (
+        predicted_energy.mean(),
+        extracted_energy.mean(),
+        target_energy.mean(),
+    )
+
+
 def permutation_invariant_pair_l1_cosine_sums(
     predicted_embedding: torch.Tensor,
     extracted_embedding: torch.Tensor,
@@ -329,6 +390,7 @@ def evaluate_validation_loss(
     diffusion: ColdDiffusionEmbeddings,
     accelerator: Accelerator,
     cosine_weight: float = 0.0,
+    energy_weight: float = 0.0,
     fixed_timestep: Optional[int] = None,
 ):
     model.eval()
@@ -362,13 +424,33 @@ def evaluate_validation_loss(
         x_t = diffusion.mix_embeddings(clean_embeddings_1, clean_embeddings_2, t)
         predicted_embedding = model(x_t, t)
 
-        loss_sum += permutation_invariant_single_prediction_loss(
+        base_loss = permutation_invariant_single_prediction_loss(
             predicted_embedding=predicted_embedding,
             clean_embedding_1=clean_embeddings_1,
             clean_embedding_2=clean_embeddings_2,
             cosine_weight=cosine_weight,
             reduction="sum",
-        ).detach()
+        )
+
+        loss = base_loss
+
+        if energy_weight > 0:
+            alpha_t = diffusion.alteration_per_t * t.float()
+            extracted_embedding = diffusion.extract_other(
+                mixed_embedding=x_t,
+                predicted_embedding=predicted_embedding,
+                alpha=alpha_t,
+            )
+            energy_loss = pair_energy_regularization_loss(
+                predicted_embedding=predicted_embedding,
+                extracted_embedding=extracted_embedding,
+                clean_embedding_1=clean_embeddings_1,
+                clean_embedding_2=clean_embeddings_2,
+                reduction="sum",
+            )
+            loss = loss + energy_weight * energy_loss
+
+        loss_sum += loss.detach()
 
         loss_count += clean_embeddings_1.shape[0]
 
@@ -587,6 +669,13 @@ def train(args):
         epoch_train_final_loss_sum = 0.0
         epoch_train_final_loss_count = 0
 
+        epoch_train_base_loss_sum = 0.0
+        epoch_train_energy_loss_sum = 0.0
+        epoch_train_predicted_energy_sum = 0.0
+        epoch_train_extracted_energy_sum = 0.0
+        epoch_train_target_energy_sum = 0.0
+        epoch_train_energy_count = 0
+
         for batch in train_dataloader:
             clean_embeddings_1 = batch["clean_embedding_1"]
             clean_embeddings_2 = batch["clean_embedding_2"]
@@ -602,13 +691,48 @@ def train(args):
 
                 predicted_embedding = model(x_t, t)
 
-                loss = permutation_invariant_single_prediction_loss(
+                base_loss = permutation_invariant_single_prediction_loss(
                     predicted_embedding=predicted_embedding,
                     clean_embedding_1=clean_embeddings_1,
                     clean_embedding_2=clean_embeddings_2,
                     cosine_weight=args.cosine_loss_weight,
                     reduction="mean",
                 )
+
+                loss = base_loss
+                energy_loss = torch.zeros((), device=accelerator.device)
+                predicted_energy_mean = torch.zeros((), device=accelerator.device)
+                extracted_energy_mean = torch.zeros((), device=accelerator.device)
+                target_energy_mean = torch.zeros((), device=accelerator.device)
+
+                if args.energy_loss_weight > 0:
+                    alpha_t = diffusion.alteration_per_t * t.float()
+                    extracted_embedding = diffusion.extract_other(
+                        mixed_embedding=x_t,
+                        predicted_embedding=predicted_embedding,
+                        alpha=alpha_t,
+                    )
+
+                    energy_loss = pair_energy_regularization_loss(
+                        predicted_embedding=predicted_embedding,
+                        extracted_embedding=extracted_embedding,
+                        clean_embedding_1=clean_embeddings_1,
+                        clean_embedding_2=clean_embeddings_2,
+                        reduction="mean",
+                    )
+
+                    (
+                        predicted_energy_mean,
+                        extracted_energy_mean,
+                        target_energy_mean,
+                    ) = pair_energy_means(
+                        predicted_embedding=predicted_embedding,
+                        extracted_embedding=extracted_embedding,
+                        clean_embedding_1=clean_embeddings_1,
+                        clean_embedding_2=clean_embeddings_2,
+                    )
+
+                    loss = loss + args.energy_loss_weight * energy_loss
 
                 accelerator.backward(loss)
 
@@ -627,6 +751,23 @@ def train(args):
                 epoch_train_loss_sum += accelerator.gather(loss.detach()).mean().item()
                 epoch_train_loss_count += 1
 
+                epoch_train_base_loss_sum += (
+                    accelerator.gather(base_loss.detach()).mean().item()
+                )
+                epoch_train_energy_loss_sum += (
+                    accelerator.gather(energy_loss.detach()).mean().item()
+                )
+                epoch_train_predicted_energy_sum += (
+                    accelerator.gather(predicted_energy_mean.detach()).mean().item()
+                )
+                epoch_train_extracted_energy_sum += (
+                    accelerator.gather(extracted_energy_mean.detach()).mean().item()
+                )
+                epoch_train_target_energy_sum += (
+                    accelerator.gather(target_energy_mean.detach()).mean().item()
+                )
+                epoch_train_energy_count += 1
+
                 with torch.no_grad():
                     t_final = torch.full(
                         (clean_embeddings_1.shape[0],),
@@ -643,13 +784,36 @@ def train(args):
 
                     predicted_final = model(x_final, t_final)
 
-                    final_loss = permutation_invariant_single_prediction_loss(
+                    final_base_loss = permutation_invariant_single_prediction_loss(
                         predicted_embedding=predicted_final,
                         clean_embedding_1=clean_embeddings_1,
                         clean_embedding_2=clean_embeddings_2,
                         cosine_weight=args.cosine_loss_weight,
                         reduction="mean",
                     )
+
+                    final_loss = final_base_loss
+
+                    if args.energy_loss_weight > 0:
+                        alpha_final = diffusion.alteration_per_t * t_final.float()
+                        extracted_final = diffusion.extract_other(
+                            mixed_embedding=x_final,
+                            predicted_embedding=predicted_final,
+                            alpha=alpha_final,
+                        )
+
+                        final_energy_loss = pair_energy_regularization_loss(
+                            predicted_embedding=predicted_final,
+                            extracted_embedding=extracted_final,
+                            clean_embedding_1=clean_embeddings_1,
+                            clean_embedding_2=clean_embeddings_2,
+                            reduction="mean",
+                        )
+
+                        final_loss = (
+                            final_loss
+                            + args.energy_loss_weight * final_energy_loss
+                        )
 
                 epoch_train_final_loss_sum += (
                     accelerator.gather(final_loss.detach()).mean().item()
@@ -668,6 +832,27 @@ def train(args):
             1,
         )
 
+        epoch_train_base_loss = epoch_train_base_loss_sum / max(
+            epoch_train_energy_count,
+            1,
+        )
+        epoch_train_energy_loss = epoch_train_energy_loss_sum / max(
+            epoch_train_energy_count,
+            1,
+        )
+        epoch_train_predicted_energy = epoch_train_predicted_energy_sum / max(
+            epoch_train_energy_count,
+            1,
+        )
+        epoch_train_extracted_energy = epoch_train_extracted_energy_sum / max(
+            epoch_train_energy_count,
+            1,
+        )
+        epoch_train_target_energy = epoch_train_target_energy_sum / max(
+            epoch_train_energy_count,
+            1,
+        )
+
         unwrapped_model = accelerator.unwrap_model(model)
 
         ema_model.store(unwrapped_model.parameters())
@@ -679,6 +864,7 @@ def train(args):
             diffusion=diffusion,
             accelerator=accelerator,
             cosine_weight=args.cosine_loss_weight,
+            energy_weight=args.energy_loss_weight,
             fixed_timestep=None,
         )
 
@@ -688,6 +874,7 @@ def train(args):
             diffusion=diffusion,
             accelerator=accelerator,
             cosine_weight=args.cosine_loss_weight,
+            energy_weight=args.energy_loss_weight,
             fixed_timestep=diffusion.max_timesteps,
         )
 
@@ -702,6 +889,11 @@ def train(args):
                     "val_loss": val_loss,
                     "train_loss_final_timestep": epoch_train_final_loss,
                     "val_loss_final_timestep": val_final_loss,
+                    "train_base_loss": epoch_train_base_loss,
+                    "train_energy_loss": epoch_train_energy_loss,
+                    "train_predicted_energy": epoch_train_predicted_energy,
+                    "train_extracted_energy": epoch_train_extracted_energy,
+                    "train_target_energy": epoch_train_target_energy,
                 },
                 step=epoch + 1,
             )
@@ -1404,139 +1596,6 @@ def eval_iterative_with_perfect_swap_correction(args):
         print(f"\nSaved swap-corrected iterative metrics to: {out_path}")
         print(report)
 
-@torch.no_grad()
-def eval_one_shot_embedding_magnitudes(args):
-    """
-    Diagnostic one-shot evaluation.
-
-    Runs the same one-shot setup as eval_model(args, one_shot=True), but instead
-    of computing L1 / cosine metrics against the clean embeddings, it measures
-    the L2 magnitude of:
-
-        1) the model-predicted embedding
-        2) the mathematically extracted embedding
-
-    It writes a txt report to:
-        experiments/<run_name>/results/one_shot_embedding_magnitudes.txt
-    """
-
-    accelerator = Accelerator()
-    device = accelerator.device
-    base_dir = os.path.join("experiments", args.run_name)
-
-    val_dataloader = get_data(args, "val")
-
-    sample_pack = torch.load(
-        os.path.join(args.dataset_root, "semantic", "train_zsem.pt"),
-        map_location="cpu",
-    )
-    embedding_dim = sample_pack["z_sem"].shape[1]
-
-    model = MLPSkipNet(
-        embedding_dim=embedding_dim,
-        hidden_dim=args.hidden_dim,
-        num_layers=args.num_layers,
-        num_time_emb_channels=args.num_time_emb_channels,
-    )
-
-    model, val_dataloader = accelerator.prepare(model, val_dataloader)
-
-    model_path = os.path.join(base_dir, "checkpoints", "mlp_ema.pt")
-    accelerator.unwrap_model(model).load_state_dict(
-        torch.load(model_path, map_location=device)
-    )
-    model.eval()
-
-    diffusion = ColdDiffusionEmbeddings(
-        max_timesteps=args.max_timesteps,
-        alpha_max=args.alpha_max,
-        device=device,
-    )
-
-    alpha_init = float(args.alpha_init)
-
-    init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
-    init_timestep = max(1, min(init_timestep, diffusion.max_timesteps))
-
-    predicted_magnitude_sum = torch.zeros(1, device=device)
-    extracted_magnitude_sum = torch.zeros(1, device=device)
-    total_count = torch.zeros(1, device=device)
-
-    for batch in val_dataloader:
-        clean_embeddings_1 = batch["clean_embedding_1"]
-        clean_embeddings_2 = batch["clean_embedding_2"]
-
-        batch_size = clean_embeddings_1.shape[0]
-
-        mixed_embeddings = (
-            clean_embeddings_1 * (1.0 - alpha_init)
-            + clean_embeddings_2 * alpha_init
-        )
-
-        t = torch.full(
-            (batch_size,),
-            init_timestep,
-            device=device,
-            dtype=torch.long,
-        )
-
-        predicted_embedding = model(mixed_embeddings, t)
-
-        extracted_embedding = diffusion.extract_other(
-            mixed_embeddings,
-            predicted_embedding,
-            alpha_init,
-        )
-
-        predicted_magnitude = torch.linalg.vector_norm(
-            predicted_embedding,
-            ord=2,
-            dim=-1,
-        )
-
-        extracted_magnitude = torch.linalg.vector_norm(
-            extracted_embedding,
-            ord=2,
-            dim=-1,
-        )
-
-        predicted_magnitude_sum += predicted_magnitude.sum()
-        extracted_magnitude_sum += extracted_magnitude.sum()
-        total_count += batch_size
-
-    accelerator.wait_for_everyone()
-
-    predicted_magnitude_sum = accelerator.gather(predicted_magnitude_sum).sum()
-    extracted_magnitude_sum = accelerator.gather(extracted_magnitude_sum).sum()
-    total_count = accelerator.gather(total_count).sum()
-
-    predicted_magnitude_avg = (predicted_magnitude_sum / total_count).item()
-    extracted_magnitude_avg = (extracted_magnitude_sum / total_count).item()
-
-    if accelerator.is_main_process:
-        os.makedirs(os.path.join(base_dir, "results"), exist_ok=True)
-
-        report = (
-            "--- One-Shot Embedding Magnitude Evaluation (Validation Set) ---\n"
-            f"Checkpoint: {model_path}\n"
-            f"alpha_init: {alpha_init}\n"
-            f"init_timestep: {init_timestep}\n"
-            f"Total validation samples checked: {int(total_count.item())}\n"
-            f"Predicted Embedding Average L2 Magnitude: {predicted_magnitude_avg:.8f}\n"
-            f"Extracted Embedding Average L2 Magnitude: {extracted_magnitude_avg:.8f}\n"
-        )
-
-        out_path = os.path.join(
-            base_dir,
-            "results",
-            "one_shot_embedding_magnitudes.txt",
-        )
-
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(report)
-
-        print(f"\nSaved one-shot embedding magnitudes to: {out_path}")
-        print(report)
 
 def launch():
     parser = argparse.ArgumentParser()
@@ -1685,12 +1744,22 @@ def launch():
         help="Weight for the cosine similarity penalty added to the L1 loss",
     )
 
+    parser.add_argument(
+        "--energy_loss_weight",
+        default=0.0,
+        type=float,
+        help=(
+            "Weight for the predicted/extracted embedding energy penalty. "
+            "This encourages both branches to have real single-embedding "
+            "per-dimension energy instead of average-embedding energy."
+        ),
+    )
+
     args = parser.parse_args()
 
-    #train(args)
-    #eval_model(args, one_shot=False)
-    #eval_model(args, one_shot=True)
-    eval_one_shot_embedding_magnitudes(args)
+    train(args)
+    eval_model(args, one_shot=False)
+    eval_model(args, one_shot=True)
     # check_sampling_swaps(args)
     # eval_iterative_with_perfect_swap_correction(args)
 
