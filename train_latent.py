@@ -140,8 +140,11 @@ class ColdDiffusionEmbeddings:
         clean_embedding_2: torch.Tensor,
         t: torch.Tensor,
     ) -> torch.Tensor:
-        weight = (self.alteration_per_t * t.float()).unsqueeze(1)
-        return clean_embedding_1 * (1.0 - weight) + clean_embedding_2 * weight
+        alpha = (self.alteration_per_t * t.float()).unsqueeze(1)
+        
+        denom = torch.sqrt((1.0 - alpha)**2 + alpha**2)
+        
+        return (clean_embedding_1 * (1.0 - alpha) + clean_embedding_2 * alpha) / denom
 
     def extract_other(
         self,
@@ -152,7 +155,9 @@ class ColdDiffusionEmbeddings:
         alpha = float(alpha)
         if alpha <= 0:
             raise ValueError("alpha must be > 0 to extract the second embedding")
-        return (mixed_embedding - (1.0 - alpha) * predicted_embedding) / alpha
+            
+        denom = math.sqrt((1.0 - alpha)**2 + alpha**2)
+        return (mixed_embedding * denom - (1.0 - alpha) * predicted_embedding) / alpha
 
     def sample_timesteps(self, batch_size: int) -> torch.Tensor:
         return torch.randint(
@@ -419,10 +424,11 @@ def evaluate_embedding_metrics(
         clean_embeddings_1 = batch["clean_embedding_1"]
         clean_embeddings_2 = batch["clean_embedding_2"]
 
+        denom_init = math.sqrt((1.0 - alpha_init)**2 + alpha_init**2)
         mixed_embeddings = (
             clean_embeddings_1 * (1.0 - alpha_init)
             + clean_embeddings_2 * alpha_init
-        )
+        ) / denom_init
 
         if one_shot:
             t = torch.full(
@@ -872,10 +878,12 @@ def check_sampling_swaps(args):
 
         batch_size = clean_embeddings_1.shape[0]
 
+        # NEW VARIANCE-PRESERVING CODE
+        denom_init = math.sqrt((1.0 - args.alpha_init)**2 + args.alpha_init**2)
         mixed_embeddings = (
             clean_embeddings_1 * (1.0 - args.alpha_init)
             + clean_embeddings_2 * args.alpha_init
-        )
+        ) / denom_init
 
         x_t = mixed_embeddings
 
@@ -1112,10 +1120,11 @@ def eval_iterative_with_perfect_swap_correction(args):
 
         batch_size = clean_1.shape[0]
 
+        denom_init = math.sqrt((1.0 - alpha_init)**2 + alpha_init**2)
         mixed_embeddings = (
             clean_1 * (1.0 - alpha_init)
             + clean_2 * alpha_init
-        )
+        ) / denom_init
 
         # ------------------------------------------------------------
         # 1) Normal iterative sampling baseline, exactly like eval.
@@ -1480,10 +1489,11 @@ def eval_one_shot_embedding_magnitudes(args):
 
         batch_size = clean_embeddings_1.shape[0]
 
+        denom_init = math.sqrt((1.0 - alpha_init)**2 + alpha_init**2)
         mixed_embeddings = (
             clean_embeddings_1 * (1.0 - alpha_init)
             + clean_embeddings_2 * alpha_init
-        )
+        ) / denom_init
 
         t = torch.full(
             (batch_size,),
