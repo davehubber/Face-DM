@@ -4,3 +4,4 @@ wandb/
 *.ckpt
 *.pt
 *.pth
+*.npy

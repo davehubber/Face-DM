@@ -8,8 +8,10 @@ from deepface import DeepFace
 
 
 IMAGE_ROOT = Path("/nas-ctm01/datasets/public/ffhq256/")
-OUT_DIR = Path("/arcface_embeddings")
+OUT_DIR = Path("/nas-ctm01/homes/dacordeiro/arcface_embeddings/Face-DM/")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+LIMIT = None  # set to None to process the full dataset
 
 MODEL_NAME = "ArcFace"
 DETECTOR_BACKEND = "retinaface"   # or "mtcnn" if RetinaFace is too slow
@@ -21,6 +23,9 @@ image_paths = sorted(
     list(IMAGE_ROOT.rglob("*.jpg")) +
     list(IMAGE_ROOT.rglob("*.jpeg"))
 )
+
+if LIMIT is not None:
+    image_paths = image_paths[:LIMIT]
 
 print(f"Found {len(image_paths)} images")
 
