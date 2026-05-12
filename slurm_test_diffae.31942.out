@@ -1,9 +1,0 @@
-Loaded embeddings: (70000, 512)
-Loaded metadata rows: 70000
-Device: cuda
-Model params: 160.69 M
-loading pretrain ... ffhq256_autoenc
-step: 1563562
-Saved report to: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_average_face_test_report.txt
-Succeeded: 1000
-Failed: 0

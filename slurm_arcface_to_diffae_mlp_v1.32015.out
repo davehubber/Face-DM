@@ -1,0 +1,48 @@
+Run directory: experiments/arcface_to_diffae_mlp_v1
+Device: cuda
+Aligned samples: 70000
+ArcFace input dim: 512
+DiffAE target dim: 512
+ArcFace raw input norm check: mean=1.000000, std=0.000000, min=1.000000, max=1.000000
+DiffAE raw target norm check: mean=6.484890, std=0.153500, min=5.772444, max=7.804988
+Epoch 001 | train_loss=1.148457 | val_loss=0.999432 | val_raw_cosine_mean=0.953136 | val_raw_mse_mean=0.007573
+Epoch 002 | train_loss=0.985866 | val_loss=0.946390 | val_raw_cosine_mean=0.955543 | val_raw_mse_mean=0.007194
+Epoch 003 | train_loss=0.946215 | val_loss=0.924450 | val_raw_cosine_mean=0.956579 | val_raw_mse_mean=0.007032
+Epoch 004 | train_loss=0.922330 | val_loss=0.912383 | val_raw_cosine_mean=0.957129 | val_raw_mse_mean=0.006945
+Epoch 005 | train_loss=0.904014 | val_loss=0.904208 | val_raw_cosine_mean=0.957498 | val_raw_mse_mean=0.006886
+Epoch 006 | train_loss=0.887005 | val_loss=0.897064 | val_raw_cosine_mean=0.957828 | val_raw_mse_mean=0.006834
+Epoch 007 | train_loss=0.869440 | val_loss=0.893792 | val_raw_cosine_mean=0.957962 | val_raw_mse_mean=0.006812
+Epoch 008 | train_loss=0.852127 | val_loss=0.895261 | val_raw_cosine_mean=0.957858 | val_raw_mse_mean=0.006829
+Epoch 009 | train_loss=0.835027 | val_loss=0.898297 | val_raw_cosine_mean=0.957716 | val_raw_mse_mean=0.006852
+Epoch 010 | train_loss=0.817586 | val_loss=0.902699 | val_raw_cosine_mean=0.957446 | val_raw_mse_mean=0.006894
+Epoch 011 | train_loss=0.796949 | val_loss=0.909605 | val_raw_cosine_mean=0.957027 | val_raw_mse_mean=0.006961
+Epoch 012 | train_loss=0.770748 | val_loss=0.917029 | val_raw_cosine_mean=0.956605 | val_raw_mse_mean=0.007029
+Epoch 013 | train_loss=0.743990 | val_loss=0.927208 | val_raw_cosine_mean=0.956059 | val_raw_mse_mean=0.007120
+Epoch 014 | train_loss=0.717455 | val_loss=0.932067 | val_raw_cosine_mean=0.955830 | val_raw_mse_mean=0.007157
+Epoch 015 | train_loss=0.692459 | val_loss=0.940758 | val_raw_cosine_mean=0.955420 | val_raw_mse_mean=0.007222
+Epoch 016 | train_loss=0.667495 | val_loss=0.953108 | val_raw_cosine_mean=0.954780 | val_raw_mse_mean=0.007326
+Epoch 017 | train_loss=0.644425 | val_loss=0.964241 | val_raw_cosine_mean=0.954252 | val_raw_mse_mean=0.007413
+Epoch 018 | train_loss=0.623097 | val_loss=0.970742 | val_raw_cosine_mean=0.953939 | val_raw_mse_mean=0.007464
+Epoch 019 | train_loss=0.602647 | val_loss=0.977070 | val_raw_cosine_mean=0.953667 | val_raw_mse_mean=0.007510
+Epoch 020 | train_loss=0.583495 | val_loss=0.989375 | val_raw_cosine_mean=0.953043 | val_raw_mse_mean=0.007610
+Epoch 021 | train_loss=0.566112 | val_loss=0.997654 | val_raw_cosine_mean=0.952659 | val_raw_mse_mean=0.007676
+Epoch 022 | train_loss=0.550201 | val_loss=1.003214 | val_raw_cosine_mean=0.952432 | val_raw_mse_mean=0.007712
+Epoch 023 | train_loss=0.535790 | val_loss=1.010793 | val_raw_cosine_mean=0.952065 | val_raw_mse_mean=0.007774
+Epoch 024 | train_loss=0.522121 | val_loss=1.014518 | val_raw_cosine_mean=0.951918 | val_raw_mse_mean=0.007796
+Epoch 025 | train_loss=0.509882 | val_loss=1.021705 | val_raw_cosine_mean=0.951560 | val_raw_mse_mean=0.007854
+Epoch 026 | train_loss=0.497998 | val_loss=1.026464 | val_raw_cosine_mean=0.951381 | val_raw_mse_mean=0.007888
+Epoch 027 | train_loss=0.487603 | val_loss=1.032955 | val_raw_cosine_mean=0.951110 | val_raw_mse_mean=0.007930
+Epoch 028 | train_loss=0.477910 | val_loss=1.036381 | val_raw_cosine_mean=0.950979 | val_raw_mse_mean=0.007952
+Epoch 029 | train_loss=0.468963 | val_loss=1.039772 | val_raw_cosine_mean=0.950829 | val_raw_mse_mean=0.007981
+Epoch 030 | train_loss=0.460863 | val_loss=1.040238 | val_raw_cosine_mean=0.950818 | val_raw_mse_mean=0.007979
+Epoch 031 | train_loss=0.453354 | val_loss=1.043367 | val_raw_cosine_mean=0.950709 | val_raw_mse_mean=0.008004
+Epoch 032 | train_loss=0.446451 | val_loss=1.050332 | val_raw_cosine_mean=0.950353 | val_raw_mse_mean=0.008056
+Early stopping at epoch 32. Best epoch=7, best val raw cosine=0.957962
+Computing retrieval diagnostics on test set...
+
+Done.
+Saved experiment to: experiments/arcface_to_diffae_mlp_v1
+Best epoch: 7
+Test raw cosine mean: 0.958050
+Test raw MSE mean: 0.006794
+Test raw L2 mean: 1.852987
