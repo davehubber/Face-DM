@@ -1,0 +1,432 @@
+Dataset dir: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings_celeba
+Embeddings: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings_celeba/celeba_diffae_zsem_zscore.npy
+Metadata: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings_celeba/celeba_diffae_zsem_metadata.csv
+Output dir: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp
+Device: cuda
+Dataset validation passed.
+Embedding shape: (5774, 512)
+Number of classes: 198
+Split counts: {'train': 4596, 'val': 589, 'test': 589}
+Training sampler: class-balanced WeightedRandomSampler
+IdentityMLP(
+  (net): Sequential(
+    (0): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+    (1): Linear(in_features=512, out_features=512, bias=True)
+    (2): GELU(approximate='none')
+    (3): Dropout(p=0.2, inplace=False)
+    (4): Linear(in_features=512, out_features=512, bias=True)
+    (5): GELU(approximate='none')
+    (6): Dropout(p=0.2, inplace=False)
+    (7): Linear(in_features=512, out_features=198, bias=True)
+  )
+)
+AMP enabled: True
+
+Epoch 1/100
+train loss=4.9526 top1=0.1495 top5=0.3000 top10=0.4017
+val   loss=4.4711 top1=0.1307 top5=0.3226 top10=0.4669
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 2/100
+train loss=3.3942 top1=0.3183 top5=0.5657 top10=0.6830
+val   loss=2.9704 top1=0.3311 top5=0.5806 top10=0.7148
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 3/100
+train loss=1.9896 top1=0.5661 top5=0.8022 top10=0.8701
+val   loss=2.1490 top1=0.5042 top5=0.7436 top10=0.8353
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 4/100
+train loss=1.2346 top1=0.7202 top5=0.8982 top10=0.9428
+val   loss=1.6838 top1=0.5993 top5=0.8183 top10=0.8795
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 5/100
+train loss=0.8228 top1=0.8138 top5=0.9493 top10=0.9739
+val   loss=1.3823 top1=0.6774 top5=0.8506 top10=0.9134
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 6/100
+train loss=0.4991 top1=0.8999 top5=0.9735 top10=0.9861
+val   loss=1.2217 top1=0.7046 top5=0.8710 top10=0.9423
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 7/100
+train loss=0.3376 top1=0.9284 top5=0.9852 top10=0.9924
+val   loss=1.1529 top1=0.7029 top5=0.8812 top10=0.9372
+
+Epoch 8/100
+train loss=0.2172 top1=0.9571 top5=0.9941 top10=0.9974
+val   loss=1.0677 top1=0.7419 top5=0.9015 top10=0.9440
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 9/100
+train loss=0.1437 top1=0.9695 top5=0.9976 top10=0.9998
+val   loss=1.0635 top1=0.7555 top5=0.8913 top10=0.9372
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 10/100
+train loss=0.0967 top1=0.9846 top5=0.9991 top10=0.9998
+val   loss=1.0582 top1=0.7470 top5=0.8998 top10=0.9457
+
+Epoch 11/100
+train loss=0.0781 top1=0.9865 top5=0.9980 top10=0.9991
+val   loss=1.0289 top1=0.7759 top5=0.9015 top10=0.9406
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 12/100
+train loss=0.0472 top1=0.9939 top5=1.0000 top10=1.0000
+val   loss=0.9643 top1=0.7691 top5=0.9117 top10=0.9474
+
+Epoch 13/100
+train loss=0.0359 top1=0.9956 top5=0.9998 top10=1.0000
+val   loss=0.9785 top1=0.7861 top5=0.9134 top10=0.9525
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 14/100
+train loss=0.0274 top1=0.9976 top5=1.0000 top10=1.0000
+val   loss=0.9535 top1=0.7708 top5=0.9151 top10=0.9491
+
+Epoch 15/100
+train loss=0.0250 top1=0.9961 top5=1.0000 top10=1.0000
+val   loss=0.9645 top1=0.7844 top5=0.9100 top10=0.9491
+
+Epoch 16/100
+train loss=0.0184 top1=0.9985 top5=1.0000 top10=1.0000
+val   loss=0.9408 top1=0.7878 top5=0.9134 top10=0.9474
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 17/100
+train loss=0.0163 top1=0.9985 top5=1.0000 top10=1.0000
+val   loss=0.9253 top1=0.7912 top5=0.9202 top10=0.9525
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 18/100
+train loss=0.0152 top1=0.9983 top5=1.0000 top10=1.0000
+val   loss=0.9655 top1=0.7980 top5=0.9134 top10=0.9508
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 19/100
+train loss=0.0121 top1=0.9989 top5=1.0000 top10=1.0000
+val   loss=0.9702 top1=0.7946 top5=0.9168 top10=0.9508
+
+Epoch 20/100
+train loss=0.0102 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9630 top1=0.7912 top5=0.9151 top10=0.9525
+
+Epoch 21/100
+train loss=0.0083 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9599 top1=0.7929 top5=0.9168 top10=0.9508
+
+Epoch 22/100
+train loss=0.0075 top1=0.9993 top5=1.0000 top10=1.0000
+val   loss=0.9443 top1=0.7912 top5=0.9202 top10=0.9576
+
+Epoch 23/100
+train loss=0.0088 top1=0.9991 top5=1.0000 top10=1.0000
+val   loss=0.9430 top1=0.7929 top5=0.9236 top10=0.9576
+
+Epoch 24/100
+train loss=0.0081 top1=0.9993 top5=1.0000 top10=1.0000
+val   loss=0.9645 top1=0.7963 top5=0.9168 top10=0.9525
+
+Epoch 25/100
+train loss=0.0067 top1=0.9996 top5=1.0000 top10=1.0000
+val   loss=0.9335 top1=0.7946 top5=0.9202 top10=0.9593
+
+Epoch 26/100
+train loss=0.0055 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9288 top1=0.8014 top5=0.9134 top10=0.9559
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 27/100
+train loss=0.0055 top1=0.9993 top5=1.0000 top10=1.0000
+val   loss=0.9579 top1=0.7946 top5=0.9151 top10=0.9576
+
+Epoch 28/100
+train loss=0.0054 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9621 top1=0.7929 top5=0.9185 top10=0.9576
+
+Epoch 29/100
+train loss=0.0057 top1=0.9991 top5=1.0000 top10=1.0000
+val   loss=0.9560 top1=0.7929 top5=0.9134 top10=0.9474
+
+Epoch 30/100
+train loss=0.0063 top1=0.9991 top5=1.0000 top10=1.0000
+val   loss=0.9920 top1=0.7776 top5=0.9236 top10=0.9525
+
+Epoch 31/100
+train loss=0.0056 top1=0.9996 top5=1.0000 top10=1.0000
+val   loss=0.9771 top1=0.7912 top5=0.9185 top10=0.9525
+
+Epoch 32/100
+train loss=0.0050 top1=0.9996 top5=1.0000 top10=1.0000
+val   loss=0.9824 top1=0.8048 top5=0.9151 top10=0.9508
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 33/100
+train loss=0.0064 top1=0.9987 top5=1.0000 top10=1.0000
+val   loss=0.9889 top1=0.7997 top5=0.9151 top10=0.9508
+
+Epoch 34/100
+train loss=0.0060 top1=0.9991 top5=1.0000 top10=1.0000
+val   loss=0.9800 top1=0.7946 top5=0.9134 top10=0.9474
+
+Epoch 35/100
+train loss=0.0044 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9685 top1=0.7997 top5=0.9151 top10=0.9474
+
+Epoch 36/100
+train loss=0.0037 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9756 top1=0.7980 top5=0.9134 top10=0.9491
+
+Epoch 37/100
+train loss=0.0041 top1=0.9993 top5=1.0000 top10=1.0000
+val   loss=0.9902 top1=0.7929 top5=0.9168 top10=0.9576
+
+Epoch 38/100
+train loss=0.0048 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9599 top1=0.7895 top5=0.9253 top10=0.9508
+
+Epoch 39/100
+train loss=0.0032 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9505 top1=0.7980 top5=0.9219 top10=0.9542
+
+Epoch 40/100
+train loss=0.0025 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9524 top1=0.7912 top5=0.9185 top10=0.9525
+
+Epoch 41/100
+train loss=0.0024 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9511 top1=0.7963 top5=0.9219 top10=0.9508
+
+Epoch 42/100
+train loss=0.0027 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9425 top1=0.7980 top5=0.9202 top10=0.9542
+
+Epoch 43/100
+train loss=0.0023 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9451 top1=0.8014 top5=0.9185 top10=0.9542
+
+Epoch 44/100
+train loss=0.0028 top1=0.9996 top5=1.0000 top10=1.0000
+val   loss=0.9781 top1=0.8031 top5=0.9168 top10=0.9508
+
+Epoch 45/100
+train loss=0.0028 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9806 top1=0.7980 top5=0.9168 top10=0.9525
+
+Epoch 46/100
+train loss=0.0025 top1=0.9996 top5=1.0000 top10=1.0000
+val   loss=0.9763 top1=0.7980 top5=0.9202 top10=0.9491
+
+Epoch 47/100
+train loss=0.0030 top1=0.9996 top5=1.0000 top10=1.0000
+val   loss=0.9763 top1=0.7980 top5=0.9134 top10=0.9508
+
+Epoch 48/100
+train loss=0.0025 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9700 top1=0.7929 top5=0.9219 top10=0.9508
+
+Epoch 49/100
+train loss=0.0021 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9712 top1=0.7980 top5=0.9219 top10=0.9508
+
+Epoch 50/100
+train loss=0.0022 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9816 top1=0.7980 top5=0.9202 top10=0.9491
+
+Epoch 51/100
+train loss=0.0020 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9923 top1=0.7929 top5=0.9185 top10=0.9525
+
+Epoch 52/100
+train loss=0.0023 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9725 top1=0.8048 top5=0.9151 top10=0.9525
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 53/100
+train loss=0.0014 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9567 top1=0.8081 top5=0.9168 top10=0.9525
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 54/100
+train loss=0.0023 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9495 top1=0.8081 top5=0.9236 top10=0.9508
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 55/100
+train loss=0.0022 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9725 top1=0.8098 top5=0.9202 top10=0.9491
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 56/100
+train loss=0.0026 top1=0.9996 top5=1.0000 top10=1.0000
+val   loss=0.9796 top1=0.8081 top5=0.9151 top10=0.9491
+
+Epoch 57/100
+train loss=0.0022 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9839 top1=0.8115 top5=0.9100 top10=0.9508
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 58/100
+train loss=0.0020 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9700 top1=0.8115 top5=0.9100 top10=0.9508
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 59/100
+train loss=0.0018 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9553 top1=0.8132 top5=0.9151 top10=0.9542
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 60/100
+train loss=0.0020 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9510 top1=0.8048 top5=0.9117 top10=0.9559
+
+Epoch 61/100
+train loss=0.0014 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9535 top1=0.8065 top5=0.9134 top10=0.9559
+
+Epoch 62/100
+train loss=0.0019 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9603 top1=0.8098 top5=0.9202 top10=0.9525
+
+Epoch 63/100
+train loss=0.0017 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9730 top1=0.8065 top5=0.9185 top10=0.9542
+
+Epoch 64/100
+train loss=0.0017 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9645 top1=0.8149 top5=0.9219 top10=0.9559
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 65/100
+train loss=0.0015 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9533 top1=0.8098 top5=0.9185 top10=0.9559
+
+Epoch 66/100
+train loss=0.0012 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9496 top1=0.8166 top5=0.9168 top10=0.9559
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 67/100
+train loss=0.0011 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9483 top1=0.8132 top5=0.9185 top10=0.9559
+
+Epoch 68/100
+train loss=0.0014 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9482 top1=0.8149 top5=0.9168 top10=0.9559
+
+Epoch 69/100
+train loss=0.0011 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9487 top1=0.8166 top5=0.9185 top10=0.9559
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 70/100
+train loss=0.0013 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9550 top1=0.8149 top5=0.9202 top10=0.9559
+
+Epoch 71/100
+train loss=0.0015 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9575 top1=0.8217 top5=0.9185 top10=0.9559
+Saved new best checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+
+Epoch 72/100
+train loss=0.0016 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9554 top1=0.8183 top5=0.9219 top10=0.9576
+
+Epoch 73/100
+train loss=0.0015 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9549 top1=0.8149 top5=0.9202 top10=0.9576
+
+Epoch 74/100
+train loss=0.0011 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9543 top1=0.8166 top5=0.9219 top10=0.9542
+
+Epoch 75/100
+train loss=0.0013 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9524 top1=0.8183 top5=0.9219 top10=0.9542
+
+Epoch 76/100
+train loss=0.0009 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9514 top1=0.8166 top5=0.9253 top10=0.9542
+
+Epoch 77/100
+train loss=0.0011 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9519 top1=0.8132 top5=0.9219 top10=0.9542
+
+Epoch 78/100
+train loss=0.0010 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9508 top1=0.8149 top5=0.9202 top10=0.9542
+
+Epoch 79/100
+train loss=0.0011 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9515 top1=0.8166 top5=0.9219 top10=0.9542
+
+Epoch 80/100
+train loss=0.0010 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9510 top1=0.8115 top5=0.9202 top10=0.9542
+
+Epoch 81/100
+train loss=0.0009 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9526 top1=0.8115 top5=0.9202 top10=0.9542
+
+Epoch 82/100
+train loss=0.0009 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9515 top1=0.8098 top5=0.9219 top10=0.9559
+
+Epoch 83/100
+train loss=0.0010 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9509 top1=0.8115 top5=0.9202 top10=0.9559
+
+Epoch 84/100
+train loss=0.0012 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9496 top1=0.8115 top5=0.9219 top10=0.9559
+
+Epoch 85/100
+train loss=0.0013 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9512 top1=0.8115 top5=0.9202 top10=0.9559
+
+Epoch 86/100
+train loss=0.0010 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9513 top1=0.8115 top5=0.9219 top10=0.9542
+
+Epoch 87/100
+train loss=0.0009 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9517 top1=0.8098 top5=0.9202 top10=0.9542
+
+Epoch 88/100
+train loss=0.0011 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9519 top1=0.8098 top5=0.9236 top10=0.9542
+
+Epoch 89/100
+train loss=0.0010 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9522 top1=0.8098 top5=0.9253 top10=0.9542
+
+Epoch 90/100
+train loss=0.0012 top1=0.9998 top5=1.0000 top10=1.0000
+val   loss=0.9519 top1=0.8149 top5=0.9270 top10=0.9542
+
+Epoch 91/100
+train loss=0.0012 top1=1.0000 top5=1.0000 top10=1.0000
+val   loss=0.9521 top1=0.8149 top5=0.9270 top10=0.9542
+Early stopping after 20 epochs without validation improvement.
+
+Training complete.
+Best epoch: 71
+Best validation top-1: 0.8217
+Best validation loss: 0.9575
+
+Loading best checkpoint for final test evaluation.
+
+Final test metrics:
+test loss=1.1898
+test top1=0.7793
+test top5=0.9083
+test top10=0.9372
+
+Saved final results to: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/final_results.json
+Saved test predictions to: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/test_predictions.csv
+Saved best checkpoint to: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt
+Saved last checkpoint to: /nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/last_model.pt

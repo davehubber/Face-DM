@@ -1,0 +1,24 @@
+{
+  "num_images": 5774,
+  "num_identities": 198,
+  "embedding_shape": [
+    5774,
+    512
+  ],
+  "min_images_per_identity": 25,
+  "image_size": 256,
+  "train_frac": 0.8,
+  "val_frac": 0.1,
+  "test_frac": 0.09999999999999995,
+  "seed": 123,
+  "split_counts": {
+    "train": 4596,
+    "val": 589,
+    "test": 589
+  },
+  "raw_embeddings": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings_celeba/celeba_diffae_zsem.npy",
+  "zscore_embeddings": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings_celeba/celeba_diffae_zsem_zscore.npy",
+  "zscore_stats": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings_celeba/celeba_diffae_zsem_train_stats.npz",
+  "metadata_csv": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings_celeba/celeba_diffae_zsem_metadata.csv",
+  "label_map_csv": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings_celeba/celeba_identity_label_map.csv"
+}
