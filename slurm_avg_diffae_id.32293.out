@@ -1,0 +1,14 @@
+Loaded mixed train split:
+  FFHQ:   63000 embeddings
+  CelebA: 4596 embeddings, 198 identities
+  P(CelebA pair): 0.25
+  num_pairs: 1000000
+  deterministic: False
+  training_normalization: combined
+Loaded mixed val split:
+  FFHQ:   7000 embeddings
+  CelebA: 589 embeddings, 198 identities
+  P(CelebA pair): 0.25
+  num_pairs: 100000
+  deterministic: True
+  training_normalization: combined

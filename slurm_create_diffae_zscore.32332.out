@@ -1,0 +1,8 @@
+Loading embeddings from: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy
+Loaded 70000 embeddings of dimension 512.
+Computing mean...
+Computing standard deviation...
+
+Success!
+Saved mean vector shape (512,) to: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_mean.npy
+Saved std vector shape (512,) to: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_std.npy
