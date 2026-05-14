@@ -2,22 +2,20 @@
 #
 #SBATCH --partition=gpu_min8gb_ext                         # Partition where the job will be run. Check with "$ sinfo".
 #SBATCH --qos=gpu_min8gb_ext                               # QoS level. Must match the partition name. External users must add the suffix "_ext". Check with "$sacctmgr show qos".
-#SBATCH --job-name=avg_diffae_id                          # Job name
+#SBATCH --job-name=decode_celeba_test                          # Job name
 #SBATCH --output=slurm_%x.%j.out                            # File containing STDOUT output
 #SBATCH --error=slurm_%x.%j.err                             # File containing STDERR output. If ommited, use STDOUT.
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train_latent_id.py \
-  --dataset_root "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings_celeba" \
-  --run_name "avg_diffae_id" \
-  --identity_classifier_path "/nas-ctm01/homes/dacordeiro/Face-DM/experiments/celeba_200id_diffae_identity_mlp/best_model.pt" \
-  --identity_loss_weight 0.01 \
-  --identity_min_alpha 0.05 \
-  --train_samples_per_epoch 1000000 \
-  --val_samples 100000 \
-  --batch_size 4096 \
-  --epochs 50 \
-  --lr 3e-4 \
-  --weight_decay 1e-2 \
-  --mixed_precision "fp16"
+python decode_celeba_test.py \
+  --diffae-root /nas-ctm01/homes/dacordeiro/diffae \
+  --checkpoint /nas-ctm01/homes/dacordeiro/Face-DM/ffhq256_autoenc/last.ckpt \
+  --dataset-dir /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings_celeba \
+  --embeddings-file diffae_embeddings_celeba/celeba_diffae_zsem.npy \
+  --metadata-file diffae_embeddings_celeba/celeba_diffae_zsem_metadata.csv \
+  --index 0 \
+  --out-dir /nas-ctm01/homes/dacordeiro/Face-DM/debug_decode_celeba_zsem \
+  --t-inv 200 \
+  --t-step 200 \
+  --also-recompute-semantic
