@@ -11,7 +11,14 @@ from accelerate import Accelerator
 from diffusers.training_utils import EMAModel
 from torch import optim
 
-from utils_latent import get_data, get_embedding_dim, get_num_classes, setup_logging
+from utils_latent_id import (
+    get_celeba_classifier_zscore_stats,
+    get_data,
+    get_embedding_dim,
+    get_num_classes,
+    get_training_normalization_stats,
+    setup_logging,
+)
 
 
 # -------------------------
@@ -235,7 +242,7 @@ class ColdDiffusionEmbeddings:
 
 
 # -------------------------
-# Frozen identity classifier
+# Frozen CelebA identity classifier
 # -------------------------
 
 class IdentityMLP(nn.Module):
@@ -317,8 +324,8 @@ def load_identity_classifier(
     if ckpt_num_classes != num_classes:
         raise ValueError(
             f"Classifier num_classes mismatch: checkpoint has {ckpt_num_classes}, "
-            f"current dataset has {num_classes}. Make sure you are using the same "
-            "CelebA identity label mapping used to train the classifier."
+            f"current CelebA dataset has {num_classes}. Make sure you are using the "
+            "same CelebA identity label mapping used to train the classifier."
         )
 
     classifier = IdentityMLP(
@@ -338,8 +345,31 @@ def load_identity_classifier(
     return classifier
 
 
-def _classifier_dtype(classifier: nn.Module) -> torch.dtype:
-    return next(classifier.parameters()).dtype
+def move_stats_to_device(stats, device: torch.device):
+    mean, std = stats
+    mean = mean.to(device=device, dtype=torch.float32).view(1, -1)
+    std = std.to(device=device, dtype=torch.float32).view(1, -1)
+    return mean, std
+
+
+def shared_to_classifier_space(
+    x_shared: torch.Tensor,
+    shared_mean: torch.Tensor,
+    shared_std: torch.Tensor,
+    classifier_mean: torch.Tensor,
+    classifier_std: torch.Tensor,
+) -> torch.Tensor:
+    """
+    The deaveraging model trains in one shared z-scored space for FFHQ + CelebA.
+    The identity classifier was trained in CelebA's own z-scored space.
+
+    Therefore:
+        shared z-space -> raw DiffAE z_sem -> CelebA classifier z-space
+    """
+    x_float = x_shared.float()
+    x_raw = x_float * shared_std + shared_mean
+    x_classifier = (x_raw - classifier_mean) / classifier_std
+    return x_classifier
 
 
 # -------------------------
@@ -370,88 +400,126 @@ def permutation_invariant_single_prediction_l1_loss(
     raise ValueError(f"Unsupported reduction: {reduction}")
 
 
-def permutation_invariant_pair_identity_loss(
+def permutation_invariant_pair_identity_loss_and_count(
     identity_classifier: nn.Module,
     predicted_embedding: torch.Tensor,
     extracted_embedding: torch.Tensor,
     clean_label_1: torch.Tensor,
     clean_label_2: torch.Tensor,
-    active_mask: Optional[torch.Tensor] = None,
-    reduction: str = "mean",
-) -> torch.Tensor:
-    classifier_dtype = _classifier_dtype(identity_classifier)
+    active_mask: torch.Tensor,
+    shared_mean: torch.Tensor,
+    shared_std: torch.Tensor,
+    classifier_mean: torch.Tensor,
+    classifier_std: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    active_mask = active_mask.to(device=predicted_embedding.device, dtype=torch.bool)
+    active_count = active_mask.float().sum()
 
-    predicted_for_classifier = predicted_embedding.to(dtype=classifier_dtype)
-    extracted_for_classifier = extracted_embedding.to(dtype=classifier_dtype)
+    if active_count.item() == 0:
+        zero = predicted_embedding.sum() * 0.0
+        return zero, active_count
+
+    predicted_active = predicted_embedding[active_mask]
+    extracted_active = extracted_embedding[active_mask]
+    label_1_active = clean_label_1[active_mask]
+    label_2_active = clean_label_2[active_mask]
+
+    predicted_for_classifier = shared_to_classifier_space(
+        predicted_active,
+        shared_mean=shared_mean,
+        shared_std=shared_std,
+        classifier_mean=classifier_mean,
+        classifier_std=classifier_std,
+    )
+    extracted_for_classifier = shared_to_classifier_space(
+        extracted_active,
+        shared_mean=shared_mean,
+        shared_std=shared_std,
+        classifier_mean=classifier_mean,
+        classifier_std=classifier_std,
+    )
 
     predicted_logits = identity_classifier(predicted_for_classifier)
     extracted_logits = identity_classifier(extracted_for_classifier)
 
     predicted_to_1 = F.cross_entropy(
         predicted_logits,
-        clean_label_1,
+        label_1_active,
         reduction="none",
     )
     extracted_to_2 = F.cross_entropy(
         extracted_logits,
-        clean_label_2,
+        label_2_active,
         reduction="none",
     )
 
     predicted_to_2 = F.cross_entropy(
         predicted_logits,
-        clean_label_2,
+        label_2_active,
         reduction="none",
     )
     extracted_to_1 = F.cross_entropy(
         extracted_logits,
-        clean_label_1,
+        label_1_active,
         reduction="none",
     )
 
     config_1 = predicted_to_1 + extracted_to_2
     config_2 = predicted_to_2 + extracted_to_1
 
-    loss = torch.minimum(config_1, config_2)
+    loss = torch.minimum(config_1, config_2).mean()
 
-    if active_mask is not None:
-        active_mask = active_mask.to(device=loss.device, dtype=loss.dtype)
-        loss = loss * active_mask
-        denom = active_mask.sum().clamp_min(1.0)
-    else:
-        denom = torch.tensor(
-            float(loss.shape[0]),
-            device=loss.device,
-            dtype=loss.dtype,
-        )
-
-    if reduction == "mean":
-        return loss.sum() / denom
-    if reduction == "sum":
-        return loss.sum()
-    if reduction == "none":
-        return loss
-
-    raise ValueError(f"Unsupported reduction: {reduction}")
+    return loss, active_count
 
 
+@torch.no_grad()
 def permutation_invariant_pair_identity_sums(
     identity_classifier: nn.Module,
     predicted_embedding: torch.Tensor,
     extracted_embedding: torch.Tensor,
     clean_label_1: torch.Tensor,
     clean_label_2: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    classifier_dtype = _classifier_dtype(identity_classifier)
+    active_mask: torch.Tensor,
+    shared_mean: torch.Tensor,
+    shared_std: torch.Tensor,
+    classifier_mean: torch.Tensor,
+    classifier_std: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    active_mask = active_mask.to(device=predicted_embedding.device, dtype=torch.bool)
+    active_count = active_mask.float().sum()
 
-    predicted_logits = identity_classifier(predicted_embedding.to(dtype=classifier_dtype))
-    extracted_logits = identity_classifier(extracted_embedding.to(dtype=classifier_dtype))
+    if active_count.item() == 0:
+        zero = torch.zeros(1, device=predicted_embedding.device)
+        return zero, zero, zero, zero, zero
 
-    predicted_to_1 = F.cross_entropy(predicted_logits, clean_label_1, reduction="none")
-    extracted_to_2 = F.cross_entropy(extracted_logits, clean_label_2, reduction="none")
+    predicted_active = predicted_embedding[active_mask]
+    extracted_active = extracted_embedding[active_mask]
+    label_1_active = clean_label_1[active_mask]
+    label_2_active = clean_label_2[active_mask]
 
-    predicted_to_2 = F.cross_entropy(predicted_logits, clean_label_2, reduction="none")
-    extracted_to_1 = F.cross_entropy(extracted_logits, clean_label_1, reduction="none")
+    predicted_for_classifier = shared_to_classifier_space(
+        predicted_active,
+        shared_mean=shared_mean,
+        shared_std=shared_std,
+        classifier_mean=classifier_mean,
+        classifier_std=classifier_std,
+    )
+    extracted_for_classifier = shared_to_classifier_space(
+        extracted_active,
+        shared_mean=shared_mean,
+        shared_std=shared_std,
+        classifier_mean=classifier_mean,
+        classifier_std=classifier_std,
+    )
+
+    predicted_logits = identity_classifier(predicted_for_classifier)
+    extracted_logits = identity_classifier(extracted_for_classifier)
+
+    predicted_to_1 = F.cross_entropy(predicted_logits, label_1_active, reduction="none")
+    extracted_to_2 = F.cross_entropy(extracted_logits, label_2_active, reduction="none")
+
+    predicted_to_2 = F.cross_entropy(predicted_logits, label_2_active, reduction="none")
+    extracted_to_1 = F.cross_entropy(extracted_logits, label_1_active, reduction="none")
 
     config_1 = predicted_to_1 + extracted_to_2
     config_2 = predicted_to_2 + extracted_to_1
@@ -460,8 +528,8 @@ def permutation_invariant_pair_identity_sums(
 
     identity_pair_loss = torch.where(use_config_1, config_1, config_2)
 
-    predicted_target = torch.where(use_config_1, clean_label_1, clean_label_2)
-    extracted_target = torch.where(use_config_1, clean_label_2, clean_label_1)
+    predicted_target = torch.where(use_config_1, label_1_active, label_2_active)
+    extracted_target = torch.where(use_config_1, label_2_active, label_1_active)
 
     predicted_class = predicted_logits.argmax(dim=1)
     extracted_class = extracted_logits.argmax(dim=1)
@@ -475,31 +543,7 @@ def permutation_invariant_pair_identity_sums(
         predicted_correct.float().sum(),
         extracted_correct.float().sum(),
         both_correct.float().sum(),
-    )
-
-
-def make_identity_loss(
-    identity_classifier: Optional[nn.Module],
-    predicted_embedding: torch.Tensor,
-    extracted_embedding: torch.Tensor,
-    clean_label_1: torch.Tensor,
-    clean_label_2: torch.Tensor,
-    alpha_t: torch.Tensor,
-    min_alpha: float,
-) -> torch.Tensor:
-    if identity_classifier is None:
-        return predicted_embedding.sum() * 0.0
-
-    active_mask = alpha_t >= min_alpha
-
-    return permutation_invariant_pair_identity_loss(
-        identity_classifier=identity_classifier,
-        predicted_embedding=predicted_embedding,
-        extracted_embedding=extracted_embedding,
-        clean_label_1=clean_label_1,
-        clean_label_2=clean_label_2,
-        active_mask=active_mask,
-        reduction="mean",
+        active_count,
     )
 
 
@@ -575,6 +619,16 @@ def permutation_invariant_pair_l1_cosine_sums(
     )
 
 
+def _gather_weighted_mean(
+    accelerator: Accelerator,
+    local_sum: torch.Tensor,
+    local_count: torch.Tensor,
+) -> float:
+    total_sum = accelerator.gather(local_sum.reshape(1)).sum()
+    total_count = accelerator.gather(local_count.reshape(1)).sum().clamp_min(1.0)
+    return (total_sum / total_count).item()
+
+
 # -------------------------
 # Validation and evaluation
 # -------------------------
@@ -588,21 +642,26 @@ def evaluate_validation_losses(
     identity_classifier: Optional[nn.Module],
     identity_loss_weight: float,
     identity_min_alpha: float,
+    shared_mean: torch.Tensor,
+    shared_std: torch.Tensor,
+    classifier_mean: torch.Tensor,
+    classifier_std: torch.Tensor,
     fixed_timestep: Optional[int] = None,
 ):
     model.eval()
 
-    l1_loss_sum = torch.zeros(1, device=accelerator.device)
-    sample_count = torch.zeros(1, device=accelerator.device)
+    l1_sum = torch.zeros(1, device=accelerator.device)
+    l1_count = torch.zeros(1, device=accelerator.device)
 
-    identity_loss_sum = torch.zeros(1, device=accelerator.device)
-    identity_active_count = torch.zeros(1, device=accelerator.device)
+    identity_sum = torch.zeros(1, device=accelerator.device)
+    identity_count = torch.zeros(1, device=accelerator.device)
 
     for batch_idx, batch in enumerate(dataloader):
         clean_embeddings_1 = batch["clean_embedding_1"]
         clean_embeddings_2 = batch["clean_embedding_2"]
         clean_labels_1 = batch["clean_label_1"]
         clean_labels_2 = batch["clean_label_2"]
+        is_celeba_pair = batch["is_celeba_pair"]
 
         batch_size = clean_embeddings_1.shape[0]
 
@@ -624,14 +683,15 @@ def evaluate_validation_losses(
         x_t = diffusion.mix_embeddings(clean_embeddings_1, clean_embeddings_2, t)
         predicted_embedding = model(x_t, t)
 
-        l1_loss_sum += permutation_invariant_single_prediction_l1_loss(
+        l1_per_sample = permutation_invariant_single_prediction_l1_loss(
             predicted_embedding=predicted_embedding,
             clean_embedding_1=clean_embeddings_1,
             clean_embedding_2=clean_embeddings_2,
-            reduction="sum",
-        ).detach()
+            reduction="none",
+        )
 
-        sample_count += batch_size
+        l1_sum += l1_per_sample.sum().detach()
+        l1_count += batch_size
 
         if identity_classifier is not None:
             extracted_embedding = diffusion.extract_other(
@@ -640,29 +700,28 @@ def evaluate_validation_losses(
                 alpha=alpha_t,
             )
 
-            active_mask = alpha_t >= identity_min_alpha
+            active_mask = is_celeba_pair.bool() & (alpha_t >= identity_min_alpha)
 
-            identity_loss_sum += permutation_invariant_pair_identity_loss(
+            identity_loss, active_count = permutation_invariant_pair_identity_loss_and_count(
                 identity_classifier=identity_classifier,
                 predicted_embedding=predicted_embedding,
                 extracted_embedding=extracted_embedding,
                 clean_label_1=clean_labels_1,
                 clean_label_2=clean_labels_2,
                 active_mask=active_mask,
-                reduction="sum",
-            ).detach()
+                shared_mean=shared_mean,
+                shared_std=shared_std,
+                classifier_mean=classifier_mean,
+                classifier_std=classifier_std,
+            )
 
-            identity_active_count += active_mask.float().sum()
+            identity_sum += (identity_loss.detach() * active_count.detach())
+            identity_count += active_count.detach()
 
-    gathered_l1_sum = accelerator.gather(l1_loss_sum).sum()
-    gathered_sample_count = accelerator.gather(sample_count).sum().clamp_min(1.0)
-
-    l1_loss = (gathered_l1_sum / gathered_sample_count).item()
+    l1_loss = _gather_weighted_mean(accelerator, l1_sum, l1_count)
 
     if identity_classifier is not None:
-        gathered_identity_sum = accelerator.gather(identity_loss_sum).sum()
-        gathered_identity_count = accelerator.gather(identity_active_count).sum().clamp_min(1.0)
-        identity_loss = (gathered_identity_sum / gathered_identity_count).item()
+        identity_loss = _gather_weighted_mean(accelerator, identity_sum, identity_count)
     else:
         identity_loss = 0.0
 
@@ -684,7 +743,11 @@ def evaluate_embedding_metrics(
     diffusion: ColdDiffusionEmbeddings,
     accelerator: Accelerator,
     alpha_init: float,
-    identity_classifier: Optional[nn.Module] = None,
+    identity_classifier: Optional[nn.Module],
+    shared_mean: torch.Tensor,
+    shared_std: torch.Tensor,
+    classifier_mean: torch.Tensor,
+    classifier_std: torch.Tensor,
     one_shot: bool = False,
 ):
     model.eval()
@@ -716,6 +779,7 @@ def evaluate_embedding_metrics(
         clean_embeddings_2 = batch["clean_embedding_2"]
         clean_labels_1 = batch["clean_label_1"]
         clean_labels_2 = batch["clean_label_2"]
+        is_celeba_pair = batch["is_celeba_pair"]
 
         mixed_embeddings = (
             clean_embeddings_1 * (1.0 - alpha_init)
@@ -771,27 +835,36 @@ def evaluate_embedding_metrics(
         extracted_count += batch_size
 
         if identity_classifier is not None:
+            active_mask = is_celeba_pair.bool()
+
             (
                 identity_pair_loss_batch_sum,
                 identity_predicted_correct_batch_sum,
                 identity_extracted_correct_batch_sum,
                 identity_both_correct_batch_sum,
+                active_count,
             ) = permutation_invariant_pair_identity_sums(
                 identity_classifier=identity_classifier,
                 predicted_embedding=predicted_embedding,
                 extracted_embedding=extracted_embedding,
                 clean_label_1=clean_labels_1,
                 clean_label_2=clean_labels_2,
+                active_mask=active_mask,
+                shared_mean=shared_mean,
+                shared_std=shared_std,
+                classifier_mean=classifier_mean,
+                classifier_std=classifier_std,
             )
 
             identity_pair_loss_sum += identity_pair_loss_batch_sum
             identity_predicted_correct_sum += identity_predicted_correct_batch_sum
             identity_extracted_correct_sum += identity_extracted_correct_batch_sum
             identity_both_correct_sum += identity_both_correct_batch_sum
-            identity_pair_count += batch_size
+            identity_pair_count += active_count
 
         if first_item is None:
             first_item = {
+                "pair_source": batch["pair_source"][0],
                 "mixed_embedding": mixed_embeddings[0].detach().cpu(),
                 "predicted_embedding": predicted_embedding[0].detach().cpu(),
                 "extracted_embedding": extracted_embedding[0].detach().cpu(),
@@ -882,8 +955,17 @@ def train(args):
     )
     device = accelerator.device
 
-    embedding_dim = get_embedding_dim(args.dataset_root, args.embeddings_file)
-    num_classes = get_num_classes(args.dataset_root, args.metadata_file)
+    embedding_dim = get_embedding_dim(args)
+    num_classes = get_num_classes(args)
+
+    shared_mean, shared_std = move_stats_to_device(
+        get_training_normalization_stats(args),
+        device,
+    )
+    classifier_mean, classifier_std = move_stats_to_device(
+        get_celeba_classifier_zscore_stats(args),
+        device,
+    )
 
     train_dataloader = get_data(args, "train")
     val_dataloader = get_data(args, "val")
@@ -941,23 +1023,26 @@ def train(args):
     for epoch in range(args.epochs):
         model.train()
 
-        epoch_train_total_loss_sum = 0.0
-        epoch_train_l1_loss_sum = 0.0
-        epoch_train_identity_loss_sum = 0.0
-        epoch_train_loss_count = 0
+        train_l1_sum = torch.zeros(1, device=device)
+        train_l1_count = torch.zeros(1, device=device)
+        train_identity_sum = torch.zeros(1, device=device)
+        train_identity_count = torch.zeros(1, device=device)
 
-        epoch_train_final_total_loss_sum = 0.0
-        epoch_train_final_l1_loss_sum = 0.0
-        epoch_train_final_identity_loss_sum = 0.0
-        epoch_train_final_loss_count = 0
+        train_final_l1_sum = torch.zeros(1, device=device)
+        train_final_l1_count = torch.zeros(1, device=device)
+        train_final_identity_sum = torch.zeros(1, device=device)
+        train_final_identity_count = torch.zeros(1, device=device)
 
         for batch in train_dataloader:
             clean_embeddings_1 = batch["clean_embedding_1"]
             clean_embeddings_2 = batch["clean_embedding_2"]
             clean_labels_1 = batch["clean_label_1"]
             clean_labels_2 = batch["clean_label_2"]
+            is_celeba_pair = batch["is_celeba_pair"]
 
             batch_size = clean_embeddings_1.shape[0]
+            batch_count = torch.tensor(float(batch_size), device=device)
+
             t = diffusion.sample_timesteps(batch_size)
             alpha_t = diffusion.alpha_from_timesteps(t)
 
@@ -979,17 +1064,25 @@ def train(args):
                         alpha=alpha_t,
                     )
 
-                    identity_loss = make_identity_loss(
-                        identity_classifier=identity_classifier,
-                        predicted_embedding=predicted_embedding,
-                        extracted_embedding=extracted_embedding,
-                        clean_label_1=clean_labels_1,
-                        clean_label_2=clean_labels_2,
-                        alpha_t=alpha_t,
-                        min_alpha=args.identity_min_alpha,
+                    active_mask = is_celeba_pair.bool() & (alpha_t >= args.identity_min_alpha)
+
+                    identity_loss, identity_active_count = (
+                        permutation_invariant_pair_identity_loss_and_count(
+                            identity_classifier=identity_classifier,
+                            predicted_embedding=predicted_embedding,
+                            extracted_embedding=extracted_embedding,
+                            clean_label_1=clean_labels_1,
+                            clean_label_2=clean_labels_2,
+                            active_mask=active_mask,
+                            shared_mean=shared_mean,
+                            shared_std=shared_std,
+                            classifier_mean=classifier_mean,
+                            classifier_std=classifier_std,
+                        )
                     )
                 else:
                     identity_loss = predicted_embedding.sum() * 0.0
+                    identity_active_count = torch.zeros(1, device=device)
 
                 total_loss = l1_loss + args.identity_loss_weight * identity_loss
 
@@ -1004,22 +1097,17 @@ def train(args):
             if accelerator.sync_gradients:
                 ema_model.step(model.parameters())
 
-                epoch_train_total_loss_sum += (
-                    accelerator.gather(total_loss.detach()).mean().item()
-                )
-                epoch_train_l1_loss_sum += (
-                    accelerator.gather(l1_loss.detach()).mean().item()
-                )
-                epoch_train_identity_loss_sum += (
-                    accelerator.gather(identity_loss.detach()).mean().item()
-                )
-                epoch_train_loss_count += 1
+                train_l1_sum += l1_loss.detach() * batch_count
+                train_l1_count += batch_count
+
+                train_identity_sum += identity_loss.detach() * identity_active_count.detach()
+                train_identity_count += identity_active_count.detach()
 
                 with torch.no_grad():
                     t_final = torch.full(
                         (batch_size,),
                         diffusion.max_timesteps,
-                        device=accelerator.device,
+                        device=device,
                         dtype=torch.long,
                     )
                     alpha_final = diffusion.alpha_from_timesteps(t_final)
@@ -1045,54 +1133,64 @@ def train(args):
                             alpha=alpha_final,
                         )
 
-                        final_identity_loss = make_identity_loss(
-                            identity_classifier=identity_classifier,
-                            predicted_embedding=predicted_final,
-                            extracted_embedding=extracted_final,
-                            clean_label_1=clean_labels_1,
-                            clean_label_2=clean_labels_2,
-                            alpha_t=alpha_final,
-                            min_alpha=args.identity_min_alpha,
+                        final_active_mask = (
+                            is_celeba_pair.bool()
+                            & (alpha_final >= args.identity_min_alpha)
+                        )
+
+                        final_identity_loss, final_identity_active_count = (
+                            permutation_invariant_pair_identity_loss_and_count(
+                                identity_classifier=identity_classifier,
+                                predicted_embedding=predicted_final,
+                                extracted_embedding=extracted_final,
+                                clean_label_1=clean_labels_1,
+                                clean_label_2=clean_labels_2,
+                                active_mask=final_active_mask,
+                                shared_mean=shared_mean,
+                                shared_std=shared_std,
+                                classifier_mean=classifier_mean,
+                                classifier_std=classifier_std,
+                            )
                         )
                     else:
                         final_identity_loss = predicted_final.sum() * 0.0
+                        final_identity_active_count = torch.zeros(1, device=device)
 
-                    final_total_loss = (
-                        final_l1_loss
-                        + args.identity_loss_weight * final_identity_loss
-                    )
+                train_final_l1_sum += final_l1_loss.detach() * batch_count
+                train_final_l1_count += batch_count
 
-                epoch_train_final_total_loss_sum += (
-                    accelerator.gather(final_total_loss.detach()).mean().item()
+                train_final_identity_sum += (
+                    final_identity_loss.detach()
+                    * final_identity_active_count.detach()
                 )
-                epoch_train_final_l1_loss_sum += (
-                    accelerator.gather(final_l1_loss.detach()).mean().item()
-                )
-                epoch_train_final_identity_loss_sum += (
-                    accelerator.gather(final_identity_loss.detach()).mean().item()
-                )
-                epoch_train_final_loss_count += 1
+                train_final_identity_count += final_identity_active_count.detach()
 
         accelerator.wait_for_everyone()
 
         if (epoch + 1) % args.val_every != 0:
             continue
 
-        epoch_train_total_loss = epoch_train_total_loss_sum / max(epoch_train_loss_count, 1)
-        epoch_train_l1_loss = epoch_train_l1_loss_sum / max(epoch_train_loss_count, 1)
-        epoch_train_identity_loss = epoch_train_identity_loss_sum / max(epoch_train_loss_count, 1)
+        train_l1_loss = _gather_weighted_mean(accelerator, train_l1_sum, train_l1_count)
+        train_identity_loss = _gather_weighted_mean(
+            accelerator,
+            train_identity_sum,
+            train_identity_count,
+        )
+        train_total_loss = train_l1_loss + args.identity_loss_weight * train_identity_loss
 
-        epoch_train_final_total_loss = epoch_train_final_total_loss_sum / max(
-            epoch_train_final_loss_count,
-            1,
+        train_l1_loss_final = _gather_weighted_mean(
+            accelerator,
+            train_final_l1_sum,
+            train_final_l1_count,
         )
-        epoch_train_final_l1_loss = epoch_train_final_l1_loss_sum / max(
-            epoch_train_final_loss_count,
-            1,
+        train_identity_loss_final = _gather_weighted_mean(
+            accelerator,
+            train_final_identity_sum,
+            train_final_identity_count,
         )
-        epoch_train_final_identity_loss = epoch_train_final_identity_loss_sum / max(
-            epoch_train_final_loss_count,
-            1,
+        train_total_loss_final = (
+            train_l1_loss_final
+            + args.identity_loss_weight * train_identity_loss_final
         )
 
         unwrapped_model = accelerator.unwrap_model(model)
@@ -1107,6 +1205,10 @@ def train(args):
             identity_classifier=identity_classifier,
             identity_loss_weight=args.identity_loss_weight,
             identity_min_alpha=args.identity_min_alpha,
+            shared_mean=shared_mean,
+            shared_std=shared_std,
+            classifier_mean=classifier_mean,
+            classifier_std=classifier_std,
             fixed_timestep=None,
         )
 
@@ -1118,6 +1220,10 @@ def train(args):
             identity_classifier=identity_classifier,
             identity_loss_weight=args.identity_loss_weight,
             identity_min_alpha=args.identity_min_alpha,
+            shared_mean=shared_mean,
+            shared_std=shared_std,
+            classifier_mean=classifier_mean,
+            classifier_std=classifier_std,
             fixed_timestep=diffusion.max_timesteps,
         )
 
@@ -1134,31 +1240,26 @@ def train(args):
             best_metric_value = current_metric
 
         if accelerator.is_main_process:
-            log_dict = {
-                "train_loss": epoch_train_total_loss,
-                "train_total_loss": epoch_train_total_loss,
-                "train_l1_loss": epoch_train_l1_loss,
-                "train_identity_loss": epoch_train_identity_loss,
+            wandb.log(
+                {
+                    "train_l1_loss": train_l1_loss,
+                    "train_identity_loss": train_identity_loss,
+                    "train_total_loss": train_total_loss,
 
-                "train_loss_final_timestep": epoch_train_final_total_loss,
-                "train_total_loss_final_timestep": epoch_train_final_total_loss,
-                "train_l1_loss_final_timestep": epoch_train_final_l1_loss,
-                "train_identity_loss_final_timestep": epoch_train_final_identity_loss,
+                    "val_l1_loss": val_metrics["l1_loss"],
+                    "val_identity_loss": val_metrics["identity_loss"],
+                    "val_total_loss": val_metrics["total_loss"],
 
-                "val_loss": val_metrics["total_loss"],
-                "val_total_loss": val_metrics["total_loss"],
-                "val_l1_loss": val_metrics["l1_loss"],
-                "val_identity_loss": val_metrics["identity_loss"],
+                    "train_l1_loss_final_timestep": train_l1_loss_final,
+                    "train_identity_loss_final_timestep": train_identity_loss_final,
+                    "train_total_loss_final_timestep": train_total_loss_final,
 
-                "val_loss_final_timestep": val_final_metrics["total_loss"],
-                "val_total_loss_final_timestep": val_final_metrics["total_loss"],
-                "val_l1_loss_final_timestep": val_final_metrics["l1_loss"],
-                "val_identity_loss_final_timestep": val_final_metrics["identity_loss"],
-
-                "best_metric_value": best_metric_value,
-            }
-
-            wandb.log(log_dict, step=epoch + 1)
+                    "val_l1_loss_final_timestep": val_final_metrics["l1_loss"],
+                    "val_identity_loss_final_timestep": val_final_metrics["identity_loss"],
+                    "val_total_loss_final_timestep": val_final_metrics["total_loss"],
+                },
+                step=epoch + 1,
+            )
 
             torch.save(
                 unwrapped_model.state_dict(),
@@ -1180,8 +1281,17 @@ def eval_model(args, one_shot: bool = False):
     device = accelerator.device
     base_dir = os.path.join("experiments", args.run_name)
 
-    embedding_dim = get_embedding_dim(args.dataset_root, args.embeddings_file)
-    num_classes = get_num_classes(args.dataset_root, args.metadata_file)
+    embedding_dim = get_embedding_dim(args)
+    num_classes = get_num_classes(args)
+
+    shared_mean, shared_std = move_stats_to_device(
+        get_training_normalization_stats(args),
+        device,
+    )
+    classifier_mean, classifier_std = move_stats_to_device(
+        get_celeba_classifier_zscore_stats(args),
+        device,
+    )
 
     val_dataloader = get_data(args, "val")
 
@@ -1219,6 +1329,10 @@ def eval_model(args, one_shot: bool = False):
         accelerator=accelerator,
         alpha_init=args.alpha_init,
         identity_classifier=identity_classifier,
+        shared_mean=shared_mean,
+        shared_std=shared_std,
+        classifier_mean=classifier_mean,
+        classifier_std=classifier_std,
         one_shot=one_shot,
     )
 
@@ -1226,7 +1340,7 @@ def eval_model(args, one_shot: bool = False):
         label = "One-Shot" if one_shot else "Iterative"
 
         report = (
-            f"--- {label} Evaluation (Validation Set) ---\n"
+            f"--- {label} Evaluation (Mixed Validation Set) ---\n"
             f"Predicted Clean L1: {metrics['predicted_l1']:.8f}\n"
             f"Predicted Clean Cosine Similarity: {metrics['predicted_cosine']:.8f}\n"
             f"Extracted Other L1: {metrics['extracted_l1']:.8f}\n"
@@ -1237,10 +1351,10 @@ def eval_model(args, one_shot: bool = False):
 
         if identity_classifier is not None:
             report += (
-                f"Identity Pair CE Loss: {metrics['identity_pair_loss']:.8f}\n"
-                f"Predicted Identity Top-1: {metrics['identity_predicted_top1']:.8f}\n"
-                f"Extracted Identity Top-1: {metrics['identity_extracted_top1']:.8f}\n"
-                f"Both Identities Top-1: {metrics['identity_both_top1']:.8f}\n"
+                f"Identity Pair CE Loss, CelebA pairs only: {metrics['identity_pair_loss']:.8f}\n"
+                f"Predicted Identity Top-1, CelebA pairs only: {metrics['identity_predicted_top1']:.8f}\n"
+                f"Extracted Identity Top-1, CelebA pairs only: {metrics['identity_extracted_top1']:.8f}\n"
+                f"Both Identities Top-1, CelebA pairs only: {metrics['identity_both_top1']:.8f}\n"
             )
 
         print(f"\n{report}")
@@ -1264,22 +1378,40 @@ def launch():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--dataset_root",
+        "--ffhq_dataset_root",
         required=True,
-        help=(
-            "Folder produced by the CelebA DiffAE encoding script. Expected files: "
-            "celeba_diffae_zsem_zscore.npy and celeba_diffae_zsem_metadata.csv."
-        ),
+        help="Old FFHQ semantic dataset root containing semantic/train_zsem.pt and semantic/val_zsem.pt.",
     )
     parser.add_argument(
-        "--embeddings_file",
-        default="celeba_diffae_zsem_zscore.npy",
-        help="Z-scored CelebA DiffAE semantic embeddings file.",
+        "--celeba_dataset_root",
+        required=True,
+        help="CelebA DiffAE dataset root containing raw embeddings, z-scored embeddings, metadata, and train stats.",
+    )
+
+    parser.add_argument(
+        "--celeba_raw_embeddings_file",
+        default="celeba_diffae_zsem.npy",
+        help="Raw CelebA DiffAE semantic embeddings. Do not use the z-scored file here.",
     )
     parser.add_argument(
-        "--metadata_file",
+        "--celeba_metadata_file",
         default="celeba_diffae_zsem_metadata.csv",
-        help="Metadata CSV with embedding_index, label, split, filename, image_path.",
+        help="CelebA metadata CSV with embedding_index, label, split, filename, image_path.",
+    )
+    parser.add_argument(
+        "--celeba_classifier_stats_file",
+        default="celeba_diffae_zsem_train_stats.npz",
+        help="Stats used to create the CelebA z-scored embeddings used by the identity classifier.",
+    )
+
+    parser.add_argument(
+        "--training_normalization",
+        default="combined",
+        choices=["combined", "ffhq", "celeba", "none"],
+        help=(
+            "Shared training coordinate system for both datasets. "
+            "'combined' computes train-set mean/std using FFHQ train + CelebA train."
+        ),
     )
 
     parser.add_argument("--run_name", required=True, help="Name of the experiment folder")
@@ -1293,7 +1425,7 @@ def launch():
         "--identity_loss_weight",
         default=0.01,
         type=float,
-        help="Weight of the frozen-classifier auxiliary identity loss.",
+        help="Weight of the frozen-classifier auxiliary identity loss on CelebA pairs only.",
     )
     parser.add_argument(
         "--identity_min_alpha",
@@ -1316,13 +1448,34 @@ def launch():
         type=float,
         help="Fallback dropout for the identity classifier if checkpoint config is absent.",
     )
+
+    parser.add_argument(
+        "--celeba_pair_probability",
+        default=0.25,
+        type=float,
+        help=(
+            "Probability that each sampled pair comes from CelebA. "
+            "FFHQ pairs use only L1; CelebA pairs use L1 + identity loss."
+        ),
+    )
+    parser.add_argument(
+        "--allow_same_identity_celeba_pairs",
+        action="store_true",
+        help="Allow same-identity CelebA pairs. By default, CelebA pairs use different identities.",
+    )
+    parser.add_argument(
+        "--no_balanced_celeba_identity_sampling",
+        action="store_true",
+        help="Disable class-balanced identity sampling for CelebA pairs.",
+    )
+
     parser.add_argument(
         "--best_metric",
         default="l1",
         choices=["l1", "total"],
         help=(
             "Checkpoint selection metric. 'l1' keeps the best geometric deaveraging checkpoint; "
-            "'total' follows the combined training objective."
+            "'total' follows the combined objective."
         ),
     )
 
@@ -1330,13 +1483,13 @@ def launch():
         "--train_samples_per_epoch",
         default=1_000_000,
         type=int,
-        help="Number of random train pairs per epoch",
+        help="Number of random train pairs per epoch.",
     )
     parser.add_argument(
         "--val_samples",
         default=100_000,
         type=int,
-        help="Number of deterministic validation pairs",
+        help="Number of deterministic validation pairs.",
     )
     parser.add_argument("--num_workers", default=4, type=int, help="DataLoader worker count")
 
@@ -1344,13 +1497,13 @@ def launch():
         "--alpha_max",
         default=0.5,
         type=float,
-        help="Maximum second-embedding weight at the last timestep",
+        help="Maximum second-embedding weight at the last timestep.",
     )
     parser.add_argument(
         "--alpha_init",
         default=0.5,
         type=float,
-        help="Second-embedding weight used for evaluation sampling",
+        help="Second-embedding weight used for evaluation sampling.",
     )
     parser.add_argument("--max_timesteps", default=300, type=int, help="Number of diffusion timesteps")
 
@@ -1371,7 +1524,7 @@ def launch():
         "--mixed_precision",
         default="fp16",
         choices=["no", "fp16", "bf16"],
-        help="Accelerate mixed precision mode",
+        help="Accelerate mixed precision mode.",
     )
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Gradient clipping norm")
     parser.add_argument("--wandb_project", default="Face-DM", help="Weights & Biases project name")
@@ -1382,21 +1535,13 @@ def launch():
         "--num_time_emb_channels",
         default=64,
         type=int,
-        help="Sinusoidal timestep embedding width",
-    )
-
-    parser.add_argument(
-        "--allow_same_identity_pairs",
-        action="store_true",
-        help="Allow same-identity pairs. By default, pairs are forced to have different identities.",
-    )
-    parser.add_argument(
-        "--no_balanced_identity_sampling",
-        action="store_true",
-        help="Disable class-balanced identity-pair sampling.",
+        help="Sinusoidal timestep embedding width.",
     )
 
     args = parser.parse_args()
+
+    if not (0.0 <= args.celeba_pair_probability <= 1.0):
+        raise ValueError("--celeba_pair_probability must be between 0 and 1.")
 
     if args.identity_loss_weight > 0.0 and args.identity_classifier_path is None:
         raise ValueError(
