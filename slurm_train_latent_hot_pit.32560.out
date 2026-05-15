@@ -1,0 +1,87 @@
+Loading raw embeddings from: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy
+Found Z-score statistics. Applying normalization...
+Z-score normalization applied successfully.
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 1 | Train L1: 0.7179 | Val Noise L1: 0.5586
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 2 | Train L1: 0.4571 | Val Noise L1: 0.3903
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 3 | Train L1: 0.3591 | Val Noise L1: 0.3410
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 4 | Train L1: 0.3288 | Val Noise L1: 0.3175
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 5 | Train L1: 0.3129 | Val Noise L1: 0.3050 | Val Perm-Inv L1: 3.5603
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 6 | Train L1: 0.3007 | Val Noise L1: 0.2883
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 7 | Train L1: 0.2909 | Val Noise L1: 0.2822
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 8 | Train L1: 0.2815 | Val Noise L1: 0.2814
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 9 | Train L1: 0.2744 | Val Noise L1: 0.2742
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 10 | Train L1: 0.2677 | Val Noise L1: 0.2633 | Val Perm-Inv L1: 2.3301
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 11 | Train L1: 0.2625 | Val Noise L1: 0.2587
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 12 | Train L1: 0.2575 | Val Noise L1: 0.2535
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 13 | Train L1: 0.2539 | Val Noise L1: 0.2534
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 14 | Train L1: 0.2496 | Val Noise L1: 0.2515
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 15 | Train L1: 0.2464 | Val Noise L1: 0.2514 | Val Perm-Inv L1: 1.9607
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 16 | Train L1: 0.2432 | Val Noise L1: 0.2463
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 17 | Train L1: 0.2405 | Val Noise L1: 0.2413
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 18 | Train L1: 0.2374 | Val Noise L1: 0.2395
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 19 | Train L1: 0.2351 | Val Noise L1: 0.2366
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 20 | Train L1: 0.2333 | Val Noise L1: 0.2346 | Val Perm-Inv L1: 1.7994
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 21 | Train L1: 0.2312 | Val Noise L1: 0.2330
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 22 | Train L1: 0.2293 | Val Noise L1: 0.2294
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 23 | Train L1: 0.2281 | Val Noise L1: 0.2268
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 24 | Train L1: 0.2260 | Val Noise L1: 0.2240
+Epoch 25 | Train L1: 0.2243 | Val Noise L1: 0.2269 | Val Perm-Inv L1: 1.7481
+Epoch 26 | Train L1: 0.2232 | Val Noise L1: 0.2287
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 27 | Train L1: 0.2221 | Val Noise L1: 0.2224
+Epoch 28 | Train L1: 0.2209 | Val Noise L1: 0.2283
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 29 | Train L1: 0.2202 | Val Noise L1: 0.2218
+Epoch 30 | Train L1: 0.2187 | Val Noise L1: 0.2239 | Val Perm-Inv L1: 1.6834
+Epoch 31 | Train L1: 0.2180 | Val Noise L1: 0.2238
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 32 | Train L1: 0.2169 | Val Noise L1: 0.2217
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 33 | Train L1: 0.2157 | Val Noise L1: 0.2154
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 34 | Train L1: 0.2154 | Val Noise L1: 0.2141
+Epoch 35 | Train L1: 0.2144 | Val Noise L1: 0.2200 | Val Perm-Inv L1: 1.6372
+Epoch 36 | Train L1: 0.2140 | Val Noise L1: 0.2205
+Epoch 37 | Train L1: 0.2130 | Val Noise L1: 0.2160
+Epoch 38 | Train L1: 0.2124 | Val Noise L1: 0.2146
+Epoch 39 | Train L1: 0.2116 | Val Noise L1: 0.2151
+Epoch 40 | Train L1: 0.2110 | Val Noise L1: 0.2146 | Val Perm-Inv L1: 1.6496
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 41 | Train L1: 0.2102 | Val Noise L1: 0.2118
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 42 | Train L1: 0.2098 | Val Noise L1: 0.2111
+Epoch 43 | Train L1: 0.2092 | Val Noise L1: 0.2123
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 44 | Train L1: 0.2088 | Val Noise L1: 0.2093
+Epoch 45 | Train L1: 0.2084 | Val Noise L1: 0.2112 | Val Perm-Inv L1: 1.6152
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 46 | Train L1: 0.2079 | Val Noise L1: 0.2083
+Epoch 47 | Train L1: 0.2075 | Val Noise L1: 0.2110
+Epoch 48 | Train L1: 0.2071 | Val Noise L1: 0.2092
+--> Saved new best checkpoint based on Val Noise to experiments/avg_diffae_hot_pit/checkpoints/best.pt
+Epoch 49 | Train L1: 0.2066 | Val Noise L1: 0.2036
+Epoch 50 | Train L1: 0.2057 | Val Noise L1: 0.2091 | Val Perm-Inv L1: 1.5754
