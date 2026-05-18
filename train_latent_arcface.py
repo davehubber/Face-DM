@@ -345,9 +345,160 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
 
     wandb.finish()
 
+def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int = 10, mode: str = 'iterative'):
+    """
+    Evaluates the trained Cold Diffusion Demorph model on the validation set.
+    
+    Args:
+        arcface_path_str: Path to the raw ArcFace embeddings.
+        run_name: The name of the experiment folder.
+        num_timesteps: Number of timesteps used during training.
+        mode: 'iterative' for TACOs sampling, 'one_shot' for a single direct prediction.
+    """
+    assert mode in ['iterative', 'one_shot'], "Mode must be 'iterative' or 'one_shot'"
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # ------------------------------------------
+    # Directory & Checkpoint Setup
+    # ------------------------------------------
+    exp_dir = Path("experiments") / run_name
+    ckpt_path = exp_dir / "checkpoints" / "best.pt"
+    
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found at {ckpt_path}")
+        
+    out_file_path = exp_dir / f"eval_{mode}.txt"
+    
+    # ------------------------------------------
+    # Data Loading (Exact same split as training)
+    # ------------------------------------------
+    print(f"Loading ArcFace embeddings for {mode} evaluation...")
+    arcface_embs = np.load(Path(arcface_path_str).resolve()).astype(np.float32)
+    split_idx = int(len(arcface_embs) * 0.9)
+    val_embs = arcface_embs[split_idx:]
+    
+    # deterministic=True ensures we evaluate on the exact same pairs 
+    val_dataset = ColdArcFaceDemorphDataset(val_embs, epoch_size=10_000, deterministic=True)
+    val_loader = DataLoader(val_dataset, batch_size=2048, shuffle=False, num_workers=4)
+
+    # ------------------------------------------
+    # Model Setup
+    # ------------------------------------------
+    net = ColdDemorphNet(x_dim=512, c_dim=512, hidden_dim=2048, num_layers=10).to(device)
+    diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
+    
+    print(f"Loading weights from {ckpt_path}...")
+    checkpoint = torch.load(ckpt_path, map_location=device)
+    net.load_state_dict(checkpoint['model_state_dict'])
+    net.eval()
+
+    # ------------------------------------------
+    # Evaluation Loop
+    # ------------------------------------------
+    total_l1_scaled = 0.0
+    total_l1_raw = 0.0
+    total_cosine = 0.0
+    num_batches = 0
+    
+    scale_factor = math.sqrt(512)
+
+    with torch.no_grad():
+        for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Evaluating ({mode})"):
+            batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
+            batch_c = (batch_z1 + batch_z2) / 2.0
+            b = batch_z1.shape
+            
+            # --- 1. Generation ---
+            if mode == 'iterative':
+                pred_z1_scaled, pred_z2_scaled = diffusion.tacos_sample_loop(batch_c)
+            else: # one_shot
+                # Predict directly from the terminal timestep T
+                t_batch = torch.full((b,), num_timesteps, device=device, dtype=torch.long)
+                pred_z1_scaled = net(batch_c, t_batch, batch_c)
+                pred_z2_scaled = 2.0 * batch_c - pred_z1_scaled
+
+            # --- 2. Permutation Alignment ---
+            # We calculate L1 distances in the scaled space to determine the correct pairing path
+            dist_a = F.l1_loss(pred_z1_scaled, batch_z1, reduction='none').mean(dim=1) + \
+                     F.l1_loss(pred_z2_scaled, batch_z2, reduction='none').mean(dim=1)
+                     
+            dist_b = F.l1_loss(pred_z1_scaled, batch_z2, reduction='none').mean(dim=1) + \
+                     F.l1_loss(pred_z2_scaled, batch_z1, reduction='none').mean(dim=1)
+                     
+            # Create masks to dynamically swap predictions based on the lowest distance
+            mask_a = (dist_a <= dist_b).unsqueeze(-1)
+            mask_b = ~mask_a
+            
+            # Aligned predictions (Scaled Space)
+            aligned_pred_z1_scaled = torch.where(mask_a, pred_z1_scaled, pred_z2_scaled)
+            aligned_pred_z2_scaled = torch.where(mask_a, pred_z2_scaled, pred_z1_scaled)
+
+            # --- 3. Compute Metrics ---
+            # Metric 1: Scaled L1 (Matching the training loss magnitude)
+            l1_scaled = (F.l1_loss(aligned_pred_z1_scaled, batch_z1) + 
+                         F.l1_loss(aligned_pred_z2_scaled, batch_z2)) / 2.0
+            
+            # Map back to strictly L2-normalized ArcFace domain
+            pred_z1_raw = F.normalize(aligned_pred_z1_scaled / scale_factor, p=2, dim=-1)
+            pred_z2_raw = F.normalize(aligned_pred_z2_scaled / scale_factor, p=2, dim=-1)
+            true_z1_raw = F.normalize(batch_z1 / scale_factor, p=2, dim=-1)
+            true_z2_raw = F.normalize(batch_z2 / scale_factor, p=2, dim=-1)
+            
+            # Metric 2: Raw ArcFace L1
+            l1_raw = (F.l1_loss(pred_z1_raw, true_z1_raw) + 
+                      F.l1_loss(pred_z2_raw, true_z2_raw)) / 2.0
+            
+            # Metric 3: Cosine Similarity
+            cos_sim_1 = F.cosine_similarity(pred_z1_raw, true_z1_raw, dim=-1).mean()
+            cos_sim_2 = F.cosine_similarity(pred_z2_raw, true_z2_raw, dim=-1).mean()
+            cos_sim = (cos_sim_1 + cos_sim_2) / 2.0
+            
+            total_l1_scaled += l1_scaled.item()
+            total_l1_raw += l1_raw.item()
+            total_cosine += cos_sim.item()
+            num_batches += 1
+
+    # ------------------------------------------
+    # Finalize & Save
+    # ------------------------------------------
+    avg_l1_scaled = total_l1_scaled / num_batches
+    avg_l1_raw = total_l1_raw / num_batches
+    avg_cosine = total_cosine / num_batches
+
+    results_text = (
+        f"--- Evaluation Results: {mode.upper()} ---\n"
+        f"Run Name: {run_name}\n"
+        f"Validation Pairs: 10,000\n"
+        f"----------------------------------------\n"
+        f"L1 Distance (Scaled space): {avg_l1_scaled:.6f}\n"
+        f"L1 Distance (Raw ArcFace):  {avg_l1_raw:.6f}\n"
+        f"Cosine Similarity:          {avg_cosine:.6f}\n"
+    )
+    
+    print("\n" + results_text)
+    
+    with open(out_file_path, "w") as f:
+        f.write(results_text)
+        
+    print(f"Saved evaluation results to {out_file_path}")
+
 if __name__ == "__main__":
-    train_cold_demorph(
+    # train_cold_demorph(
+    #     arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
+    #     run_name="avg_arcface",
+    #     num_timesteps=10
+    # )
+
+    evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
         run_name="avg_arcface",
-        num_timesteps=10
+        num_timesteps=10,
+        mode='one_shot'
+    )
+    
+    evaluate_cold_demorph(
+        arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
+        run_name="avg_arcface",
+        num_timesteps=10,
+        mode='iterative'
     )
