@@ -406,7 +406,7 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
         for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Evaluating ({mode})"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
             batch_c = (batch_z1 + batch_z2) / 2.0
-            b = batch_z1.shape
+            b = batch_z1.shape[0]
             
             # --- 1. Generation ---
             if mode == 'iterative':
