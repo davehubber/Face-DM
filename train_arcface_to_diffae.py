@@ -1,773 +1,333 @@
-import argparse
-import json
 import math
-import random
 from pathlib import Path
-
-import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
+import numpy as np
+import wandb
 from tqdm import tqdm
+import csv
 
-
-# -----------------------------
-# Utilities
-# -----------------------------
-
-def set_seed(seed: int):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-
-def save_json(obj, path: Path):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=2)
-
-
-def l2_normalize_np(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    norm = np.linalg.norm(x, axis=1, keepdims=True)
-    return x / np.maximum(norm, eps)
-
-
-def cosine_scheduler(optimizer, warmup_steps: int, total_steps: int):
-    def lr_lambda(step):
-        if step < warmup_steps:
-            return float(step + 1) / max(1, warmup_steps)
-
-        progress = float(step - warmup_steps) / max(1, total_steps - warmup_steps)
-        return 0.5 * (1.0 + math.cos(math.pi * progress))
-
-    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-
-
-# -----------------------------
-# Data alignment
-# -----------------------------
-
-def load_and_align_embeddings(
-    arcface_embeddings_path: Path,
-    arcface_metadata_path: Path,
-    diffae_embeddings_path: Path,
-    diffae_metadata_path: Path,
-    join_key: str = "filename",
-):
-    arcface = np.load(arcface_embeddings_path).astype(np.float32)
-    diffae = np.load(diffae_embeddings_path).astype(np.float32)
-
-    arcface_meta = pd.read_csv(arcface_metadata_path).reset_index(drop=True)
-    diffae_meta = pd.read_csv(diffae_metadata_path).reset_index(drop=True)
-
-    if len(arcface_meta) != len(arcface):
-        raise ValueError(
-            f"ArcFace metadata rows ({len(arcface_meta)}) do not match embeddings ({len(arcface)})."
-        )
-
-    if len(diffae_meta) != len(diffae):
-        raise ValueError(
-            f"DiffAE metadata rows ({len(diffae_meta)}) do not match embeddings ({len(diffae)})."
-        )
-
-    if join_key not in arcface_meta.columns:
-        raise ValueError(f"join_key='{join_key}' not found in ArcFace metadata.")
-
-    if join_key not in diffae_meta.columns:
-        raise ValueError(f"join_key='{join_key}' not found in DiffAE metadata.")
-
-    if arcface_meta[join_key].duplicated().any():
-        duplicates = arcface_meta.loc[arcface_meta[join_key].duplicated(), join_key].head().tolist()
-        raise ValueError(f"Duplicate join_key values in ArcFace metadata. Examples: {duplicates}")
-
-    if diffae_meta[join_key].duplicated().any():
-        duplicates = diffae_meta.loc[diffae_meta[join_key].duplicated(), join_key].head().tolist()
-        raise ValueError(f"Duplicate join_key values in DiffAE metadata. Examples: {duplicates}")
-
-    arcface_meta = arcface_meta.copy()
-    diffae_meta = diffae_meta.copy()
-
-    arcface_meta["arcface_row"] = np.arange(len(arcface_meta))
-    diffae_meta["diffae_row"] = np.arange(len(diffae_meta))
-
-    merged = arcface_meta[[join_key, "arcface_row"]].merge(
-        diffae_meta[[join_key, "diffae_row"]],
-        on=join_key,
-        how="inner",
-    )
-
-    if len(merged) == 0:
-        raise ValueError(
-            f"No rows matched using join_key='{join_key}'. "
-            "Try --join-key image_path if paths are identical in both metadata files."
-        )
-
-    if len(merged) < min(len(arcface), len(diffae)):
-        print(
-            f"Warning: only {len(merged)} matched rows. "
-            f"ArcFace rows={len(arcface)}, DiffAE rows={len(diffae)}."
-        )
-
-    arcface_idx = merged["arcface_row"].to_numpy()
-    diffae_idx = merged["diffae_row"].to_numpy()
-
-    x = arcface[arcface_idx].astype(np.float32)
-    y = diffae[diffae_idx].astype(np.float32)
-
-    # Your ArcFace extraction script saved L2-normalized vectors.
-    # Normalize again for safety.
-    x = l2_normalize_np(x).astype(np.float32)
-
-    return x, y, merged
-
-
-# -----------------------------
-# Dataset
-# -----------------------------
-
-class EmbeddingDataset(Dataset):
-    def __init__(self, x: np.ndarray, y: np.ndarray):
-        self.x = torch.from_numpy(x.astype(np.float32))
-        self.y = torch.from_numpy(y.astype(np.float32))
-
+# ==========================================
+# 1. Dataset & Data Loading
+# ==========================================
+class TranslationDataset(Dataset):
+    """
+    1-to-1 Mapping Dataset.
+    Now optimized for ArcFace -> Diff-AE translation.
+    """
+    def __init__(self, diffae_embs: np.ndarray, arcface_embs: np.ndarray):
+        self.diffae_embs = diffae_embs
+        
+        # Scale ArcFace by sqrt(512) so its magnitude matches the Z-scored Diff-AE space.
+        # This keeps the interpolation mathematically stable.
+        self.arcface_embs = arcface_embs * np.sqrt(512)
+        
     def __len__(self):
-        return self.x.shape[0]
+        return len(self.diffae_embs)
 
     def __getitem__(self, idx):
-        return self.x[idx], self.y[idx]
+        # Return (target_x0, condition_xT)
+        # Target: Diff-AE | Condition (Terminal): ArcFace
+        return (
+            torch.tensor(self.diffae_embs[idx], dtype=torch.float32), 
+            torch.tensor(self.arcface_embs[idx], dtype=torch.float32)
+        )
 
-
-# -----------------------------
-# Model
-# -----------------------------
-
-class ResidualBlock(nn.Module):
-    def __init__(self, dim: int, dropout: float):
+# ==========================================
+# 2. Network Architecture
+# ==========================================
+class SinusoidalPositionEmbeddings(nn.Module):
+    def __init__(self, dim):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, dim * 2),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(dim * 2, dim),
-            nn.Dropout(dropout),
-        )
+        self.dim = dim
 
-    def forward(self, x):
-        return x + self.net(x)
+    def forward(self, time):
+        device = time.device
+        half_dim = self.dim // 2
+        embeddings = math.log(10000) / (half_dim - 1)
+        embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
+        embeddings = time[:, None] * embeddings[None, :]
+        embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
+        return embeddings
 
-
-class ArcFaceToDiffAEMLP(nn.Module):
-    """
-    Residual MLP for mapping ArcFace identity embeddings to DiffAE semantic embeddings.
-
-    Input:
-        standardized ArcFace embedding, originally 512-D unit vector
-
-    Output:
-        standardized DiffAE z_sem vector
-
-    The output is not L2-normalized, because DiffAE z_sem is not a unit-sphere embedding.
-    """
-    def __init__(
-        self,
-        input_dim: int = 512,
-        output_dim: int = 512,
-        hidden_dim: int = 1024,
-        num_blocks: int = 6,
-        dropout: float = 0.10,
-    ):
+class AdaLNBlock(nn.Module):
+    def __init__(self, in_dim: int, hidden_dim: int, cond_dim: int):
         super().__init__()
+        self.linear = nn.Linear(in_dim, hidden_dim)
+        self.norm = nn.LayerNorm(hidden_dim, elementwise_affine=False)
+        self.silu = nn.SiLU()
+        self.cond_proj = nn.Linear(cond_dim, hidden_dim * 2)
 
-        self.input = nn.Sequential(
-            nn.LayerNorm(input_dim),
-            nn.Linear(input_dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
+    def forward(self, x, cond):
+        h = self.linear(x)
+        scale, shift = self.cond_proj(cond).chunk(2, dim=-1)
+        h = self.norm(h) * (1 + scale) + shift
+        return self.silu(h)
+
+class ColdTranslationNet(nn.Module):
+    def __init__(self, x_dim=512, c_dim=512, hidden_dim=2048, num_layers=10, time_emb_dim=512):
+        super().__init__()
+        self.time_mlp = nn.Sequential(
+            SinusoidalPositionEmbeddings(time_emb_dim),
+            nn.Linear(time_emb_dim, time_emb_dim * 2),
+            nn.SiLU(),
+            nn.Linear(time_emb_dim * 2, time_emb_dim)
         )
-
-        self.blocks = nn.Sequential(
-            *[ResidualBlock(hidden_dim, dropout=dropout) for _ in range(num_blocks)]
-        )
-
-        self.output = nn.Sequential(
-            nn.LayerNorm(hidden_dim),
-            nn.Linear(hidden_dim, output_dim),
-        )
-
-    def forward(self, x):
-        h = self.input(x)
-        h = self.blocks(h)
-        return self.output(h)
-
-
-# -----------------------------
-# Loss and metrics
-# -----------------------------
-
-def prediction_loss(pred_z: torch.Tensor, target_z: torch.Tensor, cosine_weight: float = 0.10):
-    """
-    Main loss is MSE in standardized DiffAE z_sem space.
-
-    A small cosine term is included only as a geometry-preserving auxiliary loss.
-    It does not force the output to unit norm.
-    """
-    mse_loss = F.mse_loss(pred_z, target_z)
-
-    cos = F.cosine_similarity(pred_z, target_z, dim=1)
-    cosine_loss = 1.0 - cos.mean()
-
-    loss = mse_loss + cosine_weight * cosine_loss
-
-    return loss, {
-        "mse_loss": float(mse_loss.detach().cpu()),
-        "cosine_loss": float(cosine_loss.detach().cpu()),
-    }
-
-
-@torch.no_grad()
-def evaluate(
-    model,
-    loader,
-    device,
-    y_mean: np.ndarray,
-    y_std: np.ndarray,
-    cosine_weight: float,
-):
-    model.eval()
-
-    total_loss = 0.0
-    total_mse_loss = 0.0
-    total_cosine_loss = 0.0
-    total_n = 0
-
-    all_pred_z = []
-    all_target_z = []
-
-    for x, y in loader:
-        x = x.to(device)
-        y = y.to(device)
-
-        pred_z = model(x)
-        loss, parts = prediction_loss(pred_z, y, cosine_weight=cosine_weight)
-
-        bs = x.shape[0]
-        total_loss += float(loss.detach().cpu()) * bs
-        total_mse_loss += parts["mse_loss"] * bs
-        total_cosine_loss += parts["cosine_loss"] * bs
-        total_n += bs
-
-        all_pred_z.append(pred_z.detach().cpu().numpy())
-        all_target_z.append(y.detach().cpu().numpy())
-
-    pred_z = np.concatenate(all_pred_z, axis=0).astype(np.float32)
-    target_z = np.concatenate(all_target_z, axis=0).astype(np.float32)
-
-    # Metrics in standardized z_sem space.
-    diff_z = pred_z - target_z
-    mse_z_per_sample = np.mean(diff_z ** 2, axis=1)
-    mae_z_per_sample = np.mean(np.abs(diff_z), axis=1)
-
-    pred_z_unit = l2_normalize_np(pred_z)
-    target_z_unit = l2_normalize_np(target_z)
-    cos_z = np.sum(pred_z_unit * target_z_unit, axis=1)
-    cos_z = np.clip(cos_z, -1.0, 1.0)
-
-    # Convert back to raw DiffAE z_sem space.
-    pred_raw = pred_z * y_std + y_mean
-    target_raw = target_z * y_std + y_mean
-
-    diff_raw = pred_raw - target_raw
-    mse_raw_per_sample = np.mean(diff_raw ** 2, axis=1)
-    mae_raw_per_sample = np.mean(np.abs(diff_raw), axis=1)
-    l2_raw_per_sample = np.linalg.norm(diff_raw, axis=1)
-
-    pred_raw_unit = l2_normalize_np(pred_raw)
-    target_raw_unit = l2_normalize_np(target_raw)
-    cos_raw = np.sum(pred_raw_unit * target_raw_unit, axis=1)
-    cos_raw = np.clip(cos_raw, -1.0, 1.0)
-
-    angle_raw_deg = np.degrees(np.arccos(cos_raw))
-
-    metrics = {
-        "loss": total_loss / total_n,
-        "mse_loss": total_mse_loss / total_n,
-        "cosine_loss": total_cosine_loss / total_n,
-
-        "standardized_mse_mean": float(np.mean(mse_z_per_sample)),
-        "standardized_mse_median": float(np.median(mse_z_per_sample)),
-        "standardized_mae_mean": float(np.mean(mae_z_per_sample)),
-        "standardized_mae_median": float(np.median(mae_z_per_sample)),
-        "standardized_cosine_mean": float(np.mean(cos_z)),
-        "standardized_cosine_median": float(np.median(cos_z)),
-        "standardized_cosine_p05": float(np.percentile(cos_z, 5)),
-        "standardized_cosine_p95": float(np.percentile(cos_z, 95)),
-
-        "raw_mse_mean": float(np.mean(mse_raw_per_sample)),
-        "raw_mse_median": float(np.median(mse_raw_per_sample)),
-        "raw_mae_mean": float(np.mean(mae_raw_per_sample)),
-        "raw_mae_median": float(np.median(mae_raw_per_sample)),
-        "raw_l2_mean": float(np.mean(l2_raw_per_sample)),
-        "raw_l2_median": float(np.median(l2_raw_per_sample)),
-        "raw_cosine_mean": float(np.mean(cos_raw)),
-        "raw_cosine_std": float(np.std(cos_raw)),
-        "raw_cosine_median": float(np.median(cos_raw)),
-        "raw_cosine_p05": float(np.percentile(cos_raw, 5)),
-        "raw_cosine_p95": float(np.percentile(cos_raw, 95)),
-        "raw_angle_deg_mean": float(np.mean(angle_raw_deg)),
-        "raw_angle_deg_median": float(np.median(angle_raw_deg)),
-    }
-
-    return metrics, pred_raw.astype(np.float32), target_raw.astype(np.float32)
-
-
-@torch.no_grad()
-def retrieval_accuracy(pred_raw: np.ndarray, target_raw: np.ndarray, batch_size: int = 512):
-    """
-    Retrieval diagnostic:
-    For each predicted DiffAE z_sem, is the corresponding true DiffAE z_sem
-    the nearest one among all test targets by cosine similarity?
-    """
-    pred_unit = l2_normalize_np(pred_raw.astype(np.float32))
-    target_unit = l2_normalize_np(target_raw.astype(np.float32))
-
-    n = pred_unit.shape[0]
-    correct_top1 = 0
-    correct_top5 = 0
-    correct_top10 = 0
-
-    for start in range(0, n, batch_size):
-        end = min(start + batch_size, n)
-        sims = pred_unit[start:end] @ target_unit.T
-
-        k = min(10, n)
-        topk = np.argpartition(-sims, kth=k - 1, axis=1)[:, :k]
-
-        for local_i, candidates in enumerate(topk):
-            true_idx = start + local_i
-
-            candidate_scores = sims[local_i, candidates]
-            ordered = candidates[np.argsort(-candidate_scores)]
-
-            if ordered[0] == true_idx:
-                correct_top1 += 1
-            if true_idx in ordered[:min(5, n)]:
-                correct_top5 += 1
-            if true_idx in ordered[:min(10, n)]:
-                correct_top10 += 1
-
-    return {
-        "retrieval_top1": correct_top1 / n,
-        "retrieval_top5": correct_top5 / n,
-        "retrieval_top10": correct_top10 / n,
-    }
-
-
-# -----------------------------
-# Main
-# -----------------------------
-
-def main():
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--arcface-embeddings", type=str, required=True)
-    parser.add_argument("--arcface-metadata", type=str, required=True)
-    parser.add_argument("--diffae-embeddings", type=str, required=True)
-    parser.add_argument("--diffae-metadata", type=str, required=True)
-
-    parser.add_argument("--run-name", type=str, required=True)
-    parser.add_argument("--experiments-root", type=str, default="experiments")
-
-    parser.add_argument("--join-key", type=str, default="filename")
-
-    parser.add_argument("--train-frac", type=float, default=0.80)
-    parser.add_argument("--val-frac", type=float, default=0.10)
-
-    parser.add_argument("--hidden-dim", type=int, default=1024)
-    parser.add_argument("--num-blocks", type=int, default=6)
-    parser.add_argument("--dropout", type=float, default=0.10)
-
-    parser.add_argument("--epochs", type=int, default=200)
-    parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--warmup-frac", type=float, default=0.05)
-
-    parser.add_argument(
-        "--cosine-weight",
-        type=float,
-        default=0.10,
-        help="Auxiliary cosine loss weight in standardized DiffAE target space.",
-    )
-
-    parser.add_argument("--patience", type=int, default=25)
-    parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--seed", type=int, default=123)
-
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--compute-retrieval", action="store_true")
-
-    args = parser.parse_args()
-
-    set_seed(args.seed)
-
-    device = torch.device(args.device)
-
-    run_dir = Path(args.experiments_root) / args.run_name
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    config = vars(args).copy()
-    save_json(config, run_dir / "config.json")
-
-    print(f"Run directory: {run_dir}")
-    print(f"Device: {device}")
-
-    x_raw, y_raw, merged = load_and_align_embeddings(
-        arcface_embeddings_path=Path(args.arcface_embeddings),
-        arcface_metadata_path=Path(args.arcface_metadata),
-        diffae_embeddings_path=Path(args.diffae_embeddings),
-        diffae_metadata_path=Path(args.diffae_metadata),
-        join_key=args.join_key,
-    )
-
-    n, input_dim = x_raw.shape
-    _, output_dim = y_raw.shape
-
-    print(f"Aligned samples: {n}")
-    print(f"ArcFace input dim: {input_dim}")
-    print(f"DiffAE target dim: {output_dim}")
-
-    if input_dim != 512:
-        print(f"Warning: expected ArcFace dimension 512, got {input_dim}")
-
-    if output_dim != 512:
-        print(f"Warning: expected DiffAE z_sem dimension 512, got {output_dim}")
-
-    merged.to_csv(run_dir / "aligned_metadata.csv", index=False)
-
-    # Random split.
-    indices = np.arange(n)
-    rng = np.random.default_rng(args.seed)
-    rng.shuffle(indices)
-
-    n_train = int(n * args.train_frac)
-    n_val = int(n * args.val_frac)
-    n_test = n - n_train - n_val
-
-    if n_train <= 0 or n_val <= 0 or n_test <= 0:
-        raise ValueError(
-            f"Invalid split sizes: train={n_train}, val={n_val}, test={n_test}. "
-            "Adjust --train-frac and --val-frac."
-        )
-
-    train_idx = indices[:n_train]
-    val_idx = indices[n_train:n_train + n_val]
-    test_idx = indices[n_train + n_val:]
-
-    np.savez(
-        run_dir / "splits.npz",
-        train_idx=train_idx,
-        val_idx=val_idx,
-        test_idx=test_idx,
-    )
-
-    # -----------------------------
-    # Normalization strategy
-    # -----------------------------
-    # ArcFace input:
-    # already L2-normalized from extraction, but feature-wise standardization helps MLP training.
-    #
-    # DiffAE target:
-    # raw z_sem vectors from model.encode(x), so we z-score them using train-only statistics.
-    # The model predicts standardized z_sem.
-    # -----------------------------
-
-    x_mean = x_raw[train_idx].mean(axis=0, keepdims=True).astype(np.float32)
-    x_std = x_raw[train_idx].std(axis=0, keepdims=True).astype(np.float32)
-    x_std = np.maximum(x_std, 1e-6)
-
-    y_mean = y_raw[train_idx].mean(axis=0, keepdims=True).astype(np.float32)
-    y_std = y_raw[train_idx].std(axis=0, keepdims=True).astype(np.float32)
-    y_std = np.maximum(y_std, 1e-6)
-
-    np.save(run_dir / "arcface_train_mean.npy", x_mean)
-    np.save(run_dir / "arcface_train_std.npy", x_std)
-    np.save(run_dir / "diffae_train_mean.npy", y_mean)
-    np.save(run_dir / "diffae_train_std.npy", y_std)
-
-    x = ((x_raw - x_mean) / x_std).astype(np.float32)
-    y = ((y_raw - y_mean) / y_std).astype(np.float32)
-
-    arcface_norms = np.linalg.norm(x_raw, axis=1)
-    diffae_norms = np.linalg.norm(y_raw, axis=1)
-
-    print(
-        "ArcFace raw input norm check: "
-        f"mean={arcface_norms.mean():.6f}, "
-        f"std={arcface_norms.std():.6f}, "
-        f"min={arcface_norms.min():.6f}, "
-        f"max={arcface_norms.max():.6f}"
-    )
-
-    print(
-        "DiffAE raw target norm check: "
-        f"mean={diffae_norms.mean():.6f}, "
-        f"std={diffae_norms.std():.6f}, "
-        f"min={diffae_norms.min():.6f}, "
-        f"max={diffae_norms.max():.6f}"
-    )
-
-    train_ds = EmbeddingDataset(x[train_idx], y[train_idx])
-    val_ds = EmbeddingDataset(x[val_idx], y[val_idx])
-    test_ds = EmbeddingDataset(x[test_idx], y[test_idx])
-
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
-        drop_last=False,
-    )
-
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
-        drop_last=False,
-    )
-
-    test_loader = DataLoader(
-        test_ds,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
-        drop_last=False,
-    )
-
-    model = ArcFaceToDiffAEMLP(
-        input_dim=input_dim,
-        output_dim=output_dim,
-        hidden_dim=args.hidden_dim,
-        num_blocks=args.num_blocks,
-        dropout=args.dropout,
-    ).to(device)
-
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-    )
-
-    total_steps = args.epochs * max(1, len(train_loader))
-    warmup_steps = int(total_steps * args.warmup_frac)
-
-    scheduler = cosine_scheduler(
-        optimizer,
-        warmup_steps=warmup_steps,
-        total_steps=total_steps,
-    )
-
-    best_val_raw_cosine = -1.0
-    best_epoch = -1
-    epochs_without_improvement = 0
-
-    history = []
-
-    for epoch in range(1, args.epochs + 1):
-        model.train()
-
-        train_loss_sum = 0.0
-        train_mse_loss_sum = 0.0
-        train_cosine_loss_sum = 0.0
-        train_n = 0
-
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch:03d}/{args.epochs}", leave=False)
-
-        for xb, yb in pbar:
-            xb = xb.to(device)
-            yb = yb.to(device)
-
-            optimizer.zero_grad(set_to_none=True)
-
-            pred = model(xb)
-            loss, parts = prediction_loss(
-                pred,
-                yb,
-                cosine_weight=args.cosine_weight,
-            )
-
+        
+        cond_dim = time_emb_dim + c_dim
+        
+        self.blocks = nn.ModuleList()
+        self.blocks.append(AdaLNBlock(x_dim, hidden_dim, cond_dim))
+        
+        for _ in range(num_layers - 1):
+            self.blocks.append(AdaLNBlock(hidden_dim + x_dim, hidden_dim, cond_dim))
+            
+        self.final_linear = nn.Linear(hidden_dim, x_dim)
+
+    def forward(self, x, t, c):
+        t_emb = self.time_mlp(t)
+        cond = torch.cat([t_emb, c], dim=-1)
+        
+        h = x
+        for i, block in enumerate(self.blocks):
+            if i == 0:
+                h = block(h, cond)
+            else:
+                h = block(torch.cat([h, x], dim=-1), cond)
+                
+        return self.final_linear(h)
+
+# ==========================================
+# 3. Cold Diffusion Process
+# ==========================================
+class DeterministicColdDiffusion(nn.Module):
+    def __init__(self, model, num_timesteps=10):
+        super().__init__()
+        self.model = model
+        self.num_timesteps = num_timesteps
+
+    def degrade(self, x_0, x_cond, t):
+        """
+        Deterministic linear interpolation.
+        t=0: Pure Diff-AE (x_0)
+        t=T: Pure ArcFace (x_cond)
+        """
+        s = (t / self.num_timesteps).view(-1, 1).float()
+        return (1.0 - s) * x_0 + s * x_cond
+
+    def compute_loss(self, x_0, x_cond):
+        b = x_0.shape[0]
+        # Uniformly sample t from {1, 2, ..., T}
+        t = torch.randint(1, self.num_timesteps + 1, (b,), device=x_0.device).long()
+        
+        x_t = self.degrade(x_0, x_cond, t)
+        pred_x_0 = self.model(x_t, t, x_cond)
+        
+        return F.l1_loss(pred_x_0, x_0)
+
+    @torch.no_grad()
+    def tacos_sample_loop(self, x_cond):
+        device = x_cond.device
+        b = x_cond.shape[0]
+        
+        timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
+        
+        # Start sampling from the terminal degraded state (ArcFace condition)
+        x_t = x_cond.clone()
+        
+        for t in tqdm(timesteps, desc='TACOs Sampling', leave=False):
+            t_batch = torch.full((b,), t, device=device, dtype=torch.long)
+            
+            # 1. Predict clean x_0 (Diff-AE)
+            pred_x_0 = self.model(x_t, t_batch, x_cond)
+            
+            t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
+            
+            # 2. Re-apply degradation to t and t-1
+            deg_t = self.degrade(pred_x_0, x_cond, t_batch)
+            deg_t_prev = self.degrade(pred_x_0, x_cond, t_prev_batch)
+            
+            # 3. TACOs update step
+            x_t = x_t - deg_t + deg_t_prev
+            
+        return x_t
+
+# ==========================================
+# 4. Evaluation & Training Loop
+# ==========================================
+def train_cold_translation(diffae_path_str: str, arcface_path_str: str, run_name: str, num_timesteps: int = 100):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # ------------------------------------------
+    # Directory Setup
+    # ------------------------------------------
+    exp_dir = Path("experiments") / run_name
+    ckpt_dir = exp_dir / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = exp_dir / "metrics.csv"
+    
+    if not metrics_path.exists():
+        with open(metrics_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Epoch", "Train_L1", "Val_Cheap_L1", "Val_TACOs_Reconstruct_L1"])
+            
+    # ------------------------------------------
+    # Data Loading & Normalization
+    # ------------------------------------------
+    print("Loading DiffAE embeddings...")
+    diffae_path = Path(diffae_path_str).resolve()
+    raw_diffae = np.load(diffae_path).astype(np.float32)
+    
+    mean_path = diffae_path.parent / f"{diffae_path.stem}_mean.npy"
+    std_path = diffae_path.parent / f"{diffae_path.stem}_std.npy"
+    
+    if mean_path.exists() and std_path.exists():
+        zscore_mean = np.load(mean_path).astype(np.float32)
+        zscore_std = np.load(std_path).astype(np.float32)
+        diffae_embs = (raw_diffae - zscore_mean) / zscore_std
+    else:
+        raise FileNotFoundError("Missing DiffAE Z-score statistics.")
+        
+    print("Loading ArcFace embeddings...")
+    arcface_path = Path(arcface_path_str).resolve()
+    arcface_embs = np.load(arcface_path).astype(np.float32)
+    
+    assert len(diffae_embs) == len(arcface_embs), "Dataset lengths must match perfectly."
+
+    # ------------------------------------------
+    # Dataset Splits
+    # ------------------------------------------
+    split_idx = int(len(diffae_embs) * 0.9)
+    
+    train_dataset = TranslationDataset(diffae_embs[:split_idx], arcface_embs[:split_idx])
+    val_dataset = TranslationDataset(diffae_embs[split_idx:], arcface_embs[split_idx:])
+    
+    train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True, num_workers=8)
+    val_loader = DataLoader(val_dataset, batch_size=512, shuffle=False, num_workers=4)
+
+    # ------------------------------------------
+    # Model Setup
+    # ------------------------------------------
+    net = ColdTranslationNet(x_dim=512, c_dim=512, hidden_dim=2048, num_layers=10).to(device)
+    diffusion = DeterministicColdDiffusion(net, num_timesteps=num_timesteps).to(device)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
+    
+    wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
+        "learning_rate": 1e-4,
+        "batch_size": 512,
+        "num_layers": 10,
+        "hidden_dim": 2048,
+        "num_timesteps": num_timesteps,
+        "direction": "arcface_to_diffae"
+    })
+
+    epochs = 50
+    best_val_loss = float("inf")
+    
+    for epoch in range(epochs):
+        net.train()
+        train_loss = 0.0
+        
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]")
+        # Now extracting batch_target (Diff-AE) and batch_cond (ArcFace)
+        for batch_target, batch_cond in pbar:
+            batch_target, batch_cond = batch_target.to(device), batch_cond.to(device)
+            
+            optimizer.zero_grad()
+            loss = diffusion.compute_loss(x_0=batch_target, x_cond=batch_cond)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
             optimizer.step()
-            scheduler.step()
+            
+            train_loss += loss.item()
+            pbar.set_postfix({"L1_loss": loss.item()})
+            
+        avg_train_loss = train_loss / len(train_loader)
+        
+        # ------------------------------------------
+        # Validation Loop (Cheap Metric)
+        # ------------------------------------------
+        net.eval()
+        val_cheap_loss = 0.0
+        val_tacos_loss = None
+        
+        with torch.no_grad():
+            for batch_target, batch_cond in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val Cheap]"):
+                batch_target, batch_cond = batch_target.to(device), batch_cond.to(device)
+                
+                loss_cheap = diffusion.compute_loss(x_0=batch_target, x_cond=batch_cond)
+                val_cheap_loss += loss_cheap.item()
+                
+        avg_val_cheap_loss = val_cheap_loss / len(val_loader)
 
-            bs = xb.shape[0]
-            train_loss_sum += float(loss.detach().cpu()) * bs
-            train_mse_loss_sum += parts["mse_loss"] * bs
-            train_cosine_loss_sum += parts["cosine_loss"] * bs
-            train_n += bs
-
-            pbar.set_postfix({
-                "loss": train_loss_sum / train_n,
-                "lr": optimizer.param_groups[0]["lr"],
-            })
-
-        train_metrics = {
-            "train_loss": train_loss_sum / train_n,
-            "train_mse_loss": train_mse_loss_sum / train_n,
-            "train_cosine_loss": train_cosine_loss_sum / train_n,
+        # ------------------------------------------
+        # Validation Loop (Expensive TACOs Metric)
+        # ------------------------------------------
+        if (epoch + 1) % 5 == 0 or (epoch + 1) == epochs:
+            val_tacos_loss_total = 0.0
+            
+            with torch.no_grad():
+                for batch_target, batch_cond in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val TACOs]"):
+                    batch_target, batch_cond = batch_target.to(device), batch_cond.to(device)
+                    
+                    # Generate Diff-AE from ArcFace
+                    sampled_target = diffusion.tacos_sample_loop(batch_cond)
+                    
+                    # Compute L1 Loss directly in the Z-scored Diff-AE space
+                    loss = F.l1_loss(sampled_target, batch_target)
+                    val_tacos_loss_total += loss.item()
+                    
+            val_tacos_loss = val_tacos_loss_total / len(val_loader)
+            
+        # ------------------------------------------
+        # Logging & Checkpointing
+        # ------------------------------------------
+        log_dict = {
+            "epoch": epoch + 1,
+            "train_l1": avg_train_loss,
+            "val_cheap_l1": avg_val_cheap_loss
         }
-
-        val_metrics, _, _ = evaluate(
-            model,
-            val_loader,
-            device=device,
-            y_mean=y_mean,
-            y_std=y_std,
-            cosine_weight=args.cosine_weight,
-        )
-
-        row = {
-            "epoch": epoch,
-            "lr": optimizer.param_groups[0]["lr"],
-            **train_metrics,
-            **{f"val_{k}": v for k, v in val_metrics.items()},
+        if val_tacos_loss is not None:
+            log_dict["val_tacos_reconstruct_l1"] = val_tacos_loss
+            
+        wandb.log(log_dict)
+        
+        with open(metrics_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                epoch + 1, 
+                f"{avg_train_loss:.6f}", 
+                f"{avg_val_cheap_loss:.6f}", 
+                f"{val_tacos_loss:.6f}" if val_tacos_loss is not None else "N/A"
+            ])
+            
+        checkpoint_data = {
+            'epoch': epoch + 1,
+            'model_state_dict': net.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'train_loss': avg_train_loss,
+            'val_cheap_loss': avg_val_cheap_loss,
         }
-
-        history.append(row)
-        pd.DataFrame(history).to_csv(run_dir / "history.csv", index=False)
-
-        print(
-            f"Epoch {epoch:03d} | "
-            f"train_loss={row['train_loss']:.6f} | "
-            f"val_loss={row['val_loss']:.6f} | "
-            f"val_raw_cosine_mean={row['val_raw_cosine_mean']:.6f} | "
-            f"val_raw_mse_mean={row['val_raw_mse_mean']:.6f}"
-        )
-
-        # Best model selected by raw-space cosine similarity.
-        # You could also use val_loss or raw_mse_mean; cosine is a useful global semantic diagnostic.
-        if val_metrics["raw_cosine_mean"] > best_val_raw_cosine:
-            best_val_raw_cosine = val_metrics["raw_cosine_mean"]
-            best_epoch = epoch
-            epochs_without_improvement = 0
-
-            checkpoint = {
-                "model_state_dict": model.state_dict(),
-                "config": config,
-                "input_dim": input_dim,
-                "output_dim": output_dim,
-                "x_mean": x_mean,
-                "x_std": x_std,
-                "y_mean": y_mean,
-                "y_std": y_std,
-                "best_epoch": best_epoch,
-                "best_val_raw_cosine": best_val_raw_cosine,
-            }
-
-            torch.save(checkpoint, run_dir / "best_model.pt")
+        
+        torch.save(checkpoint_data, ckpt_dir / "last.pt")
+        
+        if avg_val_cheap_loss < best_val_loss:
+            best_val_loss = avg_val_cheap_loss
+            torch.save(checkpoint_data, ckpt_dir / "best.pt")
+            print(f"--> Saved new best checkpoint based on Cheap Val to {ckpt_dir / 'best.pt'}")
+            
+        print(f"Epoch {epoch+1} | Train L1: {avg_train_loss:.4f} | Val Cheap L1: {avg_val_cheap_loss:.4f}", end="")
+        if val_tacos_loss is not None:
+            print(f" | Val TACOs L1: {val_tacos_loss:.4f}")
         else:
-            epochs_without_improvement += 1
+            print()
 
-        if epochs_without_improvement >= args.patience:
-            print(
-                f"Early stopping at epoch {epoch}. "
-                f"Best epoch={best_epoch}, best val raw cosine={best_val_raw_cosine:.6f}"
-            )
-            break
-
-    # Load best model.
-    checkpoint = torch.load(run_dir / "best_model.pt", map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint["model_state_dict"])
-
-    val_metrics, val_pred_raw, val_target_raw = evaluate(
-        model,
-        val_loader,
-        device=device,
-        y_mean=y_mean,
-        y_std=y_std,
-        cosine_weight=args.cosine_weight,
-    )
-
-    test_metrics, test_pred_raw, test_target_raw = evaluate(
-        model,
-        test_loader,
-        device=device,
-        y_mean=y_mean,
-        y_std=y_std,
-        cosine_weight=args.cosine_weight,
-    )
-
-    metrics = {
-        "best_epoch": int(best_epoch),
-        "best_val_raw_cosine_during_training": float(best_val_raw_cosine),
-        "val": val_metrics,
-        "test": test_metrics,
-    }
-
-    if args.compute_retrieval:
-        print("Computing retrieval diagnostics on test set...")
-        retrieval = retrieval_accuracy(test_pred_raw, test_target_raw, batch_size=512)
-        metrics["test"].update(retrieval)
-
-    save_json(metrics, run_dir / "metrics.json")
-
-    np.save(run_dir / "test_pred_diffae_zsem_raw.npy", test_pred_raw.astype(np.float32))
-    np.save(run_dir / "test_target_diffae_zsem_raw.npy", test_target_raw.astype(np.float32))
-
-    with open(run_dir / "report.txt", "w", encoding="utf-8") as f:
-        f.write("ArcFace embedding → DiffAE semantic embedding regression\n")
-        f.write("=" * 80 + "\n\n")
-
-        f.write(f"Run name: {args.run_name}\n")
-        f.write(f"Aligned samples: {n}\n")
-        f.write(f"Train/val/test: {n_train}/{n_val}/{n_test}\n")
-        f.write(f"Input dim: {input_dim}\n")
-        f.write(f"Output dim: {output_dim}\n\n")
-
-        f.write("Preprocessing\n")
-        f.write("-" * 80 + "\n")
-        f.write("ArcFace inputs: L2-normalized from extraction, then train-set feature standardized.\n")
-        f.write("DiffAE targets: raw z_sem vectors, train-set feature standardized.\n")
-        f.write("Model outputs: standardized DiffAE z_sem vectors.\n")
-        f.write("Evaluation: predictions are converted back to raw DiffAE z_sem space.\n\n")
-
-        f.write("Architecture\n")
-        f.write("-" * 80 + "\n")
-        f.write(
-            f"Residual MLP: hidden_dim={args.hidden_dim}, "
-            f"num_blocks={args.num_blocks}, dropout={args.dropout}\n\n"
-        )
-
-        f.write("Best model\n")
-        f.write("-" * 80 + "\n")
-        f.write(f"Best epoch: {best_epoch}\n")
-        f.write(f"Best validation raw cosine during training: {best_val_raw_cosine:.6f}\n\n")
-
-        f.write("Validation metrics\n")
-        f.write("-" * 80 + "\n")
-        for k, v in val_metrics.items():
-            f.write(f"{k}: {v}\n")
-
-        f.write("\nTest metrics\n")
-        f.write("-" * 80 + "\n")
-        for k, v in metrics["test"].items():
-            f.write(f"{k}: {v}\n")
-
-    print("\nDone.")
-    print(f"Saved experiment to: {run_dir}")
-    print(f"Best epoch: {best_epoch}")
-    print(f"Test raw cosine mean: {test_metrics['raw_cosine_mean']:.6f}")
-    print(f"Test raw MSE mean: {test_metrics['raw_mse_mean']:.6f}")
-    print(f"Test raw L2 mean: {test_metrics['raw_l2_mean']:.6f}")
-
+    wandb.finish()
 
 if __name__ == "__main__":
-    main()
+    train_cold_translation(
+        diffae_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy",
+        arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
+        run_name="arcface_to_diffae_100ts"
+    )

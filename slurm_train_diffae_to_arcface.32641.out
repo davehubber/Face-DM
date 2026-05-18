@@ -1,0 +1,72 @@
+Loading DiffAE embeddings...
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 1 | Train L1: 0.4034 | Val Cheap L1: 0.2755
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 2 | Train L1: 0.2316 | Val Cheap L1: 0.2128
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 3 | Train L1: 0.1941 | Val Cheap L1: 0.1876
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 4 | Train L1: 0.1764 | Val Cheap L1: 0.1781
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 5 | Train L1: 0.1668 | Val Cheap L1: 0.1653 | Val TACOs L1: 0.0356
+Epoch 6 | Train L1: 0.1595 | Val Cheap L1: 0.1658
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 7 | Train L1: 0.1546 | Val Cheap L1: 0.1620
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 8 | Train L1: 0.1503 | Val Cheap L1: 0.1517
+Epoch 9 | Train L1: 0.1440 | Val Cheap L1: 0.1543
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 10 | Train L1: 0.1410 | Val Cheap L1: 0.1470 | Val TACOs L1: 0.0342
+Epoch 11 | Train L1: 0.1393 | Val Cheap L1: 0.1478
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 12 | Train L1: 0.1369 | Val Cheap L1: 0.1452
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 13 | Train L1: 0.1347 | Val Cheap L1: 0.1421
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 14 | Train L1: 0.1316 | Val Cheap L1: 0.1409
+Epoch 15 | Train L1: 0.1311 | Val Cheap L1: 0.1414 | Val TACOs L1: 0.0338
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 16 | Train L1: 0.1281 | Val Cheap L1: 0.1376
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 17 | Train L1: 0.1281 | Val Cheap L1: 0.1331
+Epoch 18 | Train L1: 0.1259 | Val Cheap L1: 0.1380
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 19 | Train L1: 0.1235 | Val Cheap L1: 0.1323
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 20 | Train L1: 0.1215 | Val Cheap L1: 0.1316 | Val TACOs L1: 0.0332
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 21 | Train L1: 0.1212 | Val Cheap L1: 0.1303
+Epoch 22 | Train L1: 0.1202 | Val Cheap L1: 0.1320
+Epoch 23 | Train L1: 0.1176 | Val Cheap L1: 0.1336
+Epoch 24 | Train L1: 0.1173 | Val Cheap L1: 0.1311
+Epoch 25 | Train L1: 0.1159 | Val Cheap L1: 0.1316 | Val TACOs L1: 0.0331
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 26 | Train L1: 0.1163 | Val Cheap L1: 0.1250
+Epoch 27 | Train L1: 0.1133 | Val Cheap L1: 0.1300
+Epoch 28 | Train L1: 0.1129 | Val Cheap L1: 0.1307
+Epoch 29 | Train L1: 0.1118 | Val Cheap L1: 0.1278
+Epoch 30 | Train L1: 0.1099 | Val Cheap L1: 0.1269 | Val TACOs L1: 0.0331
+Epoch 31 | Train L1: 0.1089 | Val Cheap L1: 0.1252
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 32 | Train L1: 0.1086 | Val Cheap L1: 0.1243
+Epoch 33 | Train L1: 0.1082 | Val Cheap L1: 0.1269
+Epoch 34 | Train L1: 0.1065 | Val Cheap L1: 0.1253
+Epoch 35 | Train L1: 0.1061 | Val Cheap L1: 0.1284 | Val TACOs L1: 0.0331
+Epoch 36 | Train L1: 0.1055 | Val Cheap L1: 0.1270
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 37 | Train L1: 0.1042 | Val Cheap L1: 0.1234
+Epoch 38 | Train L1: 0.1035 | Val Cheap L1: 0.1251
+Epoch 39 | Train L1: 0.1025 | Val Cheap L1: 0.1261
+Epoch 40 | Train L1: 0.1012 | Val Cheap L1: 0.1243 | Val TACOs L1: 0.0330
+Epoch 41 | Train L1: 0.1008 | Val Cheap L1: 0.1256
+Epoch 42 | Train L1: 0.0994 | Val Cheap L1: 0.1276
+--> Saved new best checkpoint based on Cheap Val to experiments/diffae_to_arcface_64/checkpoints/best.pt
+Epoch 43 | Train L1: 0.0994 | Val Cheap L1: 0.1203
+Epoch 44 | Train L1: 0.0985 | Val Cheap L1: 0.1268
+Epoch 45 | Train L1: 0.0988 | Val Cheap L1: 0.1270 | Val TACOs L1: 0.0329
+Epoch 46 | Train L1: 0.0978 | Val Cheap L1: 0.1267
+Epoch 47 | Train L1: 0.0971 | Val Cheap L1: 0.1238
+Epoch 48 | Train L1: 0.0962 | Val Cheap L1: 0.1269
+Epoch 49 | Train L1: 0.0964 | Val Cheap L1: 0.1241
+Epoch 50 | Train L1: 0.0959 | Val Cheap L1: 0.1254 | Val TACOs L1: 0.0329
