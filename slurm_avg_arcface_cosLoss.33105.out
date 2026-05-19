@@ -1,0 +1,12 @@
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_cosLoss/checkpoints/best.pt
+Epoch 1 | Train L1: 0.2538 | Val Cheap L1: 0.1062
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_cosLoss/checkpoints/best.pt
+Epoch 2 | Train L1: 0.0971 | Val Cheap L1: 0.0914
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_cosLoss/checkpoints/best.pt
+Epoch 3 | Train L1: 0.0883 | Val Cheap L1: 0.0835
+Epoch 4 | Train L1: 0.0828 | Val Cheap L1: 0.0858
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_cosLoss/checkpoints/best.pt
+Epoch 5 | Train L1: 0.0792 | Val Cheap L1: 0.0785 | Val TACOs L1: 1.8266
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_cosLoss/checkpoints/best.pt
+Epoch 6 | Train L1: 0.0749 | Val Cheap L1: 0.0755
