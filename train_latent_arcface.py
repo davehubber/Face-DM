@@ -152,8 +152,8 @@ class DeterministicColdDemorph(nn.Module):
         # Predict the dominant clean embedding (z1)
         pred_z1 = self.model(x_t, t, c)
         
-        # Cosine distance loss: 1 - cosine_similarity
-        loss = (1.0 - F.cosine_similarity(pred_z1, z1, dim=-1)).mean()
+        # Direct L1 loss to z1 (no longer permutation invariant)
+        loss = F.l1_loss(pred_z1, z1)
         return loss
 
     @torch.no_grad()
@@ -212,7 +212,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
     if not metrics_path.exists():
         with open(metrics_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["Epoch", "Train_CosDist", "Val_Cheap_CosDist", "Val_TACOs_Reconstruct_CosDist"])
+            writer.writerow(["Epoch", "Train_L1", "Val_Cheap_L1", "Val_TACOs_Reconstruct_L1"])
             
     # Data Loading
     print("Loading ArcFace embeddings...")
@@ -241,11 +241,10 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
         "hidden_dim": 2048,
         "num_timesteps": num_timesteps,
         "latent_space": "ArcFace",
-        "mixture": "0.55 / 0.45 (Sampling extracts z2 using 0.5/0.5)",
-        "loss": "cosine_distance"
+        "mixture": "0.55 / 0.45 (Sampling extracts z2 using 0.5/0.5)"
     })
 
-    epochs = 10 
+    epochs = 50 
     best_val_loss = float("inf")
     
     for epoch in range(epochs):
@@ -262,7 +261,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
             optimizer.step()
             
             train_loss += loss.item()
-            pbar.set_postfix({"CosDist_loss": loss.item()})
+            pbar.set_postfix({"L1_loss": loss.item()})
             
         avg_train_loss = train_loss / len(train_loader)
         
@@ -303,8 +302,8 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
                     pred_z1 = F.normalize(pred_z1, p=2, dim=-1)
                     true_z1 = F.normalize(batch_z1, p=2, dim=-1)
                     
-                    # Direct loss tracking performance on recovering z1 (Cosine Distance)
-                    loss = (1.0 - F.cosine_similarity(pred_z1, true_z1, dim=-1)).mean()
+                    # Direct loss tracking performance on recovering z1
+                    loss = F.l1_loss(pred_z1, true_z1, reduction='none').mean()
                     val_tacos_loss_total += loss.item()
                     
             val_tacos_loss = val_tacos_loss_total / len(val_loader)
@@ -314,11 +313,11 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
         # ------------------------------------------
         log_dict = {
             "epoch": epoch + 1,
-            "train_cos_dist": avg_train_loss,
-            "val_cheap_cos_dist": avg_val_cheap_loss
+            "train_l1": avg_train_loss,
+            "val_cheap_l1": avg_val_cheap_loss
         }
         if val_tacos_loss is not None:
-            log_dict["val_tacos_reconstruct_cos_dist"] = val_tacos_loss
+            log_dict["val_tacos_reconstruct_l1"] = val_tacos_loss
             
         wandb.log(log_dict)
         
@@ -346,9 +345,9 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
             torch.save(checkpoint_data, ckpt_dir / "best.pt")
             print(f"--> Saved new best checkpoint based on Cheap Val to {ckpt_dir / 'best.pt'}")
             
-        print(f"Epoch {epoch+1} | Train CosDist: {avg_train_loss:.4f} | Val Cheap CosDist: {avg_val_cheap_loss:.4f}", end="")
+        print(f"Epoch {epoch+1} | Train L1: {avg_train_loss:.4f} | Val Cheap L1: {avg_val_cheap_loss:.4f}", end="")
         if val_tacos_loss is not None:
-            print(f" | Val TACOs CosDist: {val_tacos_loss:.4f}")
+            print(f" | Val TACOs L1: {val_tacos_loss:.4f}")
         else:
             print()
 
@@ -404,8 +403,8 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
     # ------------------------------------------
     # Evaluation Loop
     # ------------------------------------------
-    total_cos_dist_scaled = 0.0
-    total_cos_dist_raw = 0.0
+    total_l1_scaled = 0.0
+    total_l1_raw = 0.0
     total_cosine = 0.0
     num_batches = 0
     
@@ -427,29 +426,29 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
                 pred_z1_scaled = net(batch_c, t_batch, batch_c)
 
             # --- 2. Compute Metrics (Only tracking Dominant z1 Recovery) ---
-            # Metric 1: Scaled Cosine Distance
-            cos_dist_scaled = (1.0 - F.cosine_similarity(pred_z1_scaled, batch_z1, dim=-1)).mean()
+            # Metric 1: Scaled L1 (Matching the training loss magnitude)
+            l1_scaled = F.l1_loss(pred_z1_scaled, batch_z1)
             
             # Map back to strictly L2-normalized ArcFace domain
             pred_z1_raw = F.normalize(pred_z1_scaled / scale_factor, p=2, dim=-1)
             true_z1_raw = F.normalize(batch_z1 / scale_factor, p=2, dim=-1)
             
-            # Metric 2: Raw ArcFace Cosine Distance
-            cos_dist_raw = (1.0 - F.cosine_similarity(pred_z1_raw, true_z1_raw, dim=-1)).mean()
+            # Metric 2: Raw ArcFace L1
+            l1_raw = F.l1_loss(pred_z1_raw, true_z1_raw)
             
             # Metric 3: Cosine Similarity
             cos_sim = F.cosine_similarity(pred_z1_raw, true_z1_raw, dim=-1).mean()
             
-            total_cos_dist_scaled += cos_dist_scaled.item()
-            total_cos_dist_raw += cos_dist_raw.item()
+            total_l1_scaled += l1_scaled.item()
+            total_l1_raw += l1_raw.item()
             total_cosine += cos_sim.item()
             num_batches += 1
 
     # ------------------------------------------
     # Finalize & Save
     # ------------------------------------------
-    avg_cos_dist_scaled = total_cos_dist_scaled / num_batches
-    avg_cos_dist_raw = total_cos_dist_raw / num_batches
+    avg_l1_scaled = total_l1_scaled / num_batches
+    avg_l1_raw = total_l1_raw / num_batches
     avg_cosine = total_cosine / num_batches
 
     results_text = (
@@ -457,9 +456,9 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
         f"Run Name: {run_name}\n"
         f"Validation Pairs: 10,000\n"
         f"----------------------------------------\n"
-        f"Cosine Distance (Scaled space): {avg_cos_dist_scaled:.6f}\n"
-        f"Cosine Distance (Raw ArcFace):  {avg_cos_dist_raw:.6f}\n"
-        f"Cosine Similarity:              {avg_cosine:.6f}\n"
+        f"L1 Distance (Scaled space): {avg_l1_scaled:.6f}\n"
+        f"L1 Distance (Raw ArcFace):  {avg_l1_raw:.6f}\n"
+        f"Cosine Similarity:          {avg_cosine:.6f}\n"
     )
     
     print("\n" + results_text)
@@ -472,20 +471,20 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
 if __name__ == "__main__":
     train_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_55_45_cosLoss",
-        num_timesteps=10
+        run_name="avg_arcface_55_45_50e_50ts",
+        num_timesteps=50
     )
 
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_55_45_cosLoss",
-        num_timesteps=10,
+        run_name="avg_arcface_55_45_50e_50ts",
+        num_timesteps=50,
         mode='one_shot'
     )
     
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_55_45_cosLoss",
-        num_timesteps=10,
+        run_name="avg_arcface_55_45_50e_50ts",
+        num_timesteps=50,
         mode='iterative'
     )
