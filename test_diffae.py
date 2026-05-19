@@ -1,5 +1,4 @@
 import argparse
-import csv
 import os
 import sys
 import tempfile
@@ -149,11 +148,38 @@ def maybe_load_zscore(mean_path: Optional[str], std_path: Optional[str]):
     return mean, std
 
 
-def maybe_apply_zscore(x: np.ndarray, mean: Optional[np.ndarray], std: Optional[np.ndarray]) -> np.ndarray:
+def maybe_apply_zscore(
+    x: np.ndarray,
+    mean: Optional[np.ndarray],
+    std: Optional[np.ndarray],
+) -> np.ndarray:
     if mean is None or std is None:
         return x.astype(np.float32)
 
     return ((x.astype(np.float32) - mean) / std).astype(np.float32)
+
+
+def prepare_embeddings_for_measurement(
+    avg_zsem_raw: np.ndarray,
+    zsem_a_raw: np.ndarray,
+    zsem_b_raw: np.ndarray,
+    zscore_mean: Optional[np.ndarray],
+    zscore_std: Optional[np.ndarray],
+):
+    """
+    Applies the same optional z-score transform to ALL embeddings before metrics.
+
+    If zscore_mean/std are provided, this assumes:
+      - avg_zsem_raw is raw DiffAE z_sem from model.encode(avg_image)
+      - zsem_a_raw and zsem_b_raw are also raw DiffAE z_sem vectors loaded from disk
+
+    Do not pass z-score stats if your saved .npy embeddings are already z-scored.
+    """
+    avg_zsem = maybe_apply_zscore(avg_zsem_raw, zscore_mean, zscore_std)
+    zsem_a = maybe_apply_zscore(zsem_a_raw, zscore_mean, zscore_std)
+    zsem_b = maybe_apply_zscore(zsem_b_raw, zscore_mean, zscore_std)
+
+    return avg_zsem, zsem_a, zsem_b
 
 
 def main():
@@ -213,13 +239,13 @@ def main():
         "--zscore-mean",
         type=str,
         default=None,
-        help="Optional .npy mean vector if your saved DiffAE embeddings are z-scored.",
+        help="Optional .npy mean vector. If passed, ALL embeddings are z-scored before metrics.",
     )
     parser.add_argument(
         "--zscore-std",
         type=str,
         default=None,
-        help="Optional .npy std vector if your saved DiffAE embeddings are z-scored.",
+        help="Optional .npy std vector. If passed, ALL embeddings are z-scored before metrics.",
     )
 
     args = parser.parse_args()
@@ -315,15 +341,21 @@ def main():
                     device=device,
                 )
 
-                avg_zsem = maybe_apply_zscore(avg_zsem_raw, zscore_mean, zscore_std)
+                zsem_a_raw = embeddings[idx_a].astype(np.float32)
+                zsem_b_raw = embeddings[idx_b].astype(np.float32)
 
-                zsem_a = embeddings[idx_a].astype(np.float32)
-                zsem_b = embeddings[idx_b].astype(np.float32)
+                avg_zsem, zsem_a, zsem_b = prepare_embeddings_for_measurement(
+                    avg_zsem_raw=avg_zsem_raw,
+                    zsem_a_raw=zsem_a_raw,
+                    zsem_b_raw=zsem_b_raw,
+                    zscore_mean=zscore_mean,
+                    zscore_std=zscore_std,
+                )
 
                 sim_to_a = cosine_similarity(avg_zsem, zsem_a)
                 sim_to_b = cosine_similarity(avg_zsem, zsem_b)
 
-                zsem_pair_avg = l2_normalize((zsem_a + zsem_b) / 2.0)
+                zsem_pair_avg = ((zsem_a + zsem_b) / 2.0).astype(np.float32)
                 sim_to_embedding_average = cosine_similarity(avg_zsem, zsem_pair_avg)
 
                 successes.append({
@@ -373,13 +405,21 @@ def main():
             f.write("Z-score handling\n")
             f.write("-" * 80 + "\n")
             if zscore_mean is None:
-                f.write("No z-score applied to averaged-image z_sem.\n")
+                f.write("No z-score applied before metrics.\n")
                 f.write("Assumption: saved embeddings are raw DiffAE z_sem vectors.\n\n")
             else:
-                f.write(f"Applied z-score to averaged-image z_sem using:\n")
+                f.write("Applied z-score to ALL embeddings before metrics:\n")
+                f.write("- averaged-image z_sem encoded in this script\n")
+                f.write("- stored zsem_a loaded from embeddings file\n")
+                f.write("- stored zsem_b loaded from embeddings file\n")
                 f.write(f"mean: {args.zscore_mean}\n")
                 f.write(f"std: {args.zscore_std}\n")
-                f.write("Assumption: saved embeddings are already z-scored with these same statistics.\n\n")
+                f.write("Assumption: saved embeddings are raw DiffAE z_sem vectors, not already z-scored.\n\n")
+
+            f.write("Metric\n")
+            f.write("-" * 80 + "\n")
+            f.write("Cosine similarity after optional global z-score.\n")
+            f.write("The cosine function internally L2-normalizes each vector before dot product.\n\n")
 
             f.write("Summary\n")
             f.write("-" * 80 + "\n")
