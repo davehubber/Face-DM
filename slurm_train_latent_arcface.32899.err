@@ -1,0 +1,37 @@
+Evaluating (one_shot):   0%|          | 0/5 [00:00<?, ?it/s]Evaluating (one_shot):  20%|██        | 1/5 [00:00<00:01,  2.16it/s]Evaluating (one_shot):  60%|██████    | 3/5 [00:00<00:00,  5.68it/s]Evaluating (one_shot): 100%|██████████| 5/5 [00:00<00:00,  8.11it/s]Evaluating (one_shot): 100%|██████████| 5/5 [00:00<00:00,  6.19it/s]
+Evaluating (iterative):   0%|          | 0/5 [00:00<?, ?it/s]
+TACOs Sampling:   0%|          | 0/10 [00:00<?, ?it/s][A
+TACOs Sampling:  20%|██        | 2/10 [00:00<00:00, 15.10it/s][A
+TACOs Sampling:  40%|████      | 4/10 [00:00<00:00, 15.11it/s][A
+TACOs Sampling:  60%|██████    | 6/10 [00:00<00:00, 15.06it/s][A
+TACOs Sampling:  80%|████████  | 8/10 [00:00<00:00, 15.16it/s][A
+TACOs Sampling: 100%|██████████| 10/10 [00:00<00:00, 15.16it/s][A
+                                                               [AEvaluating (iterative):  20%|██        | 1/5 [00:01<00:04,  1.13s/it]
+TACOs Sampling:   0%|          | 0/10 [00:00<?, ?it/s][A
+TACOs Sampling:  20%|██        | 2/10 [00:00<00:00, 15.12it/s][A
+TACOs Sampling:  40%|████      | 4/10 [00:00<00:00, 15.18it/s][A
+TACOs Sampling:  60%|██████    | 6/10 [00:00<00:00, 15.15it/s][A
+TACOs Sampling:  80%|████████  | 8/10 [00:00<00:00, 15.19it/s][A
+TACOs Sampling: 100%|██████████| 10/10 [00:00<00:00, 15.09it/s][A
+                                                               [AEvaluating (iterative):  40%|████      | 2/5 [00:01<00:02,  1.17it/s]
+TACOs Sampling:   0%|          | 0/10 [00:00<?, ?it/s][A
+TACOs Sampling:  20%|██        | 2/10 [00:00<00:00, 15.32it/s][A
+TACOs Sampling:  40%|████      | 4/10 [00:00<00:00, 15.15it/s][A
+TACOs Sampling:  60%|██████    | 6/10 [00:00<00:00, 15.11it/s][A
+TACOs Sampling:  80%|████████  | 8/10 [00:00<00:00, 15.20it/s][A
+TACOs Sampling: 100%|██████████| 10/10 [00:00<00:00, 15.17it/s][A
+                                                               [AEvaluating (iterative):  60%|██████    | 3/5 [00:02<00:01,  1.30it/s]
+TACOs Sampling:   0%|          | 0/10 [00:00<?, ?it/s][A
+TACOs Sampling:  20%|██        | 2/10 [00:00<00:00, 15.34it/s][A
+TACOs Sampling:  40%|████      | 4/10 [00:00<00:00, 15.04it/s][A
+TACOs Sampling:  60%|██████    | 6/10 [00:00<00:00, 15.22it/s][A
+TACOs Sampling:  80%|████████  | 8/10 [00:00<00:00, 15.26it/s][A
+TACOs Sampling: 100%|██████████| 10/10 [00:00<00:00, 15.17it/s][A
+                                                               [AEvaluating (iterative):  80%|████████  | 4/5 [00:03<00:00,  1.37it/s]
+TACOs Sampling:   0%|          | 0/10 [00:00<?, ?it/s][A
+TACOs Sampling:  20%|██        | 2/10 [00:00<00:00, 14.85it/s][A
+TACOs Sampling:  40%|████      | 4/10 [00:00<00:00, 15.18it/s][A
+TACOs Sampling:  60%|██████    | 6/10 [00:00<00:00, 15.19it/s][A
+TACOs Sampling:  80%|████████  | 8/10 [00:00<00:00, 15.24it/s][A
+TACOs Sampling: 100%|██████████| 10/10 [00:00<00:00, 15.19it/s][A
+                                                               [AEvaluating (iterative): 100%|██████████| 5/5 [00:03<00:00,  1.41it/s]Evaluating (iterative): 100%|██████████| 5/5 [00:03<00:00,  1.30it/s]

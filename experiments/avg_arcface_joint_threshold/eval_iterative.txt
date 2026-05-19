@@ -1,0 +1,13 @@
+--- Evaluation Results: ITERATIVE ---
+Run Name: avg_arcface_joint_threshold
+Validation Pairs: 10000
+----------------------------------------
+[Embedding 1 (Primary Predicted)]
+L1 Distance (Scaled space): 0.515245
+L1 Distance (Raw ArcFace):  0.024124
+Cosine Similarity:          0.758773
+
+[Embedding 2 (Mathematically Extracted)]
+L1 Distance (Scaled space): 0.515245
+L1 Distance (Raw ArcFace):  0.024127
+Cosine Similarity:          0.758706

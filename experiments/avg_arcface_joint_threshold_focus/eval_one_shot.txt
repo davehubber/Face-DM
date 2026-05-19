@@ -1,0 +1,13 @@
+--- Evaluation Results: ONE_SHOT ---
+Run Name: avg_arcface_joint_threshold_focus
+Validation Pairs: 10000
+----------------------------------------
+[Embedding 1 (Primary Predicted)]
+L1 Distance (Scaled space): 0.436375
+L1 Distance (Raw ArcFace):  0.020149
+Cosine Similarity:          0.829441
+
+[Embedding 2 (Mathematically Extracted)]
+L1 Distance (Scaled space): 0.436375
+L1 Distance (Raw ArcFace):  0.020154
+Cosine Similarity:          0.829381

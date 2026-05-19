@@ -1,0 +1,112 @@
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 1 | Train L1: 0.8980 | Val Cheap L1: 0.7365
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 2 | Train L1: 0.6929 | Val Cheap L1: 0.6732
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 3 | Train L1: 0.6546 | Val Cheap L1: 0.6496
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 4 | Train L1: 0.6354 | Val Cheap L1: 0.6361
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 5 | Train L1: 0.6181 | Val Cheap L1: 0.6106 | Val TACOs L1: 0.0537
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 6 | Train L1: 0.6038 | Val Cheap L1: 0.5985
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 7 | Train L1: 0.5908 | Val Cheap L1: 0.5855
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 8 | Train L1: 0.5803 | Val Cheap L1: 0.5798
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 9 | Train L1: 0.5693 | Val Cheap L1: 0.5780
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 10 | Train L1: 0.5601 | Val Cheap L1: 0.5624 | Val TACOs L1: 0.0510
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 11 | Train L1: 0.5520 | Val Cheap L1: 0.5552
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 12 | Train L1: 0.5443 | Val Cheap L1: 0.5462
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 13 | Train L1: 0.5381 | Val Cheap L1: 0.5368
+Epoch 14 | Train L1: 0.5305 | Val Cheap L1: 0.5413
+Epoch 15 | Train L1: 0.5245 | Val Cheap L1: 0.5401 | Val TACOs L1: 0.0498
+Epoch 16 | Train L1: 0.5192 | Val Cheap L1: 0.5388
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 17 | Train L1: 0.5157 | Val Cheap L1: 0.5165
+Epoch 18 | Train L1: 0.5108 | Val Cheap L1: 0.5254
+Epoch 19 | Train L1: 0.5060 | Val Cheap L1: 0.5199
+Epoch 20 | Train L1: 0.5023 | Val Cheap L1: 0.5199 | Val TACOs L1: 0.0480
+Epoch 21 | Train L1: 0.4983 | Val Cheap L1: 0.5167
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 22 | Train L1: 0.4945 | Val Cheap L1: 0.5118
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 23 | Train L1: 0.4915 | Val Cheap L1: 0.5030
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 24 | Train L1: 0.4897 | Val Cheap L1: 0.4992
+Epoch 25 | Train L1: 0.4855 | Val Cheap L1: 0.5036 | Val TACOs L1: 0.0478
+Epoch 26 | Train L1: 0.4824 | Val Cheap L1: 0.5075
+Epoch 27 | Train L1: 0.4798 | Val Cheap L1: 0.5069
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 28 | Train L1: 0.4776 | Val Cheap L1: 0.4989
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 29 | Train L1: 0.4748 | Val Cheap L1: 0.4984
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 30 | Train L1: 0.4728 | Val Cheap L1: 0.4856 | Val TACOs L1: 0.0476
+Epoch 31 | Train L1: 0.4704 | Val Cheap L1: 0.5002
+Epoch 32 | Train L1: 0.4680 | Val Cheap L1: 0.4886
+Epoch 33 | Train L1: 0.4658 | Val Cheap L1: 0.4938
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 34 | Train L1: 0.4644 | Val Cheap L1: 0.4817
+Epoch 35 | Train L1: 0.4628 | Val Cheap L1: 0.4857 | Val TACOs L1: 0.0479
+Epoch 36 | Train L1: 0.4604 | Val Cheap L1: 0.4850
+Epoch 37 | Train L1: 0.4587 | Val Cheap L1: 0.4864
+Epoch 38 | Train L1: 0.4571 | Val Cheap L1: 0.4834
+Epoch 39 | Train L1: 0.4558 | Val Cheap L1: 0.4821
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 40 | Train L1: 0.4534 | Val Cheap L1: 0.4752 | Val TACOs L1: 0.0474
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 41 | Train L1: 0.4521 | Val Cheap L1: 0.4708
+Epoch 42 | Train L1: 0.4513 | Val Cheap L1: 0.4754
+Epoch 43 | Train L1: 0.4498 | Val Cheap L1: 0.4737
+Epoch 44 | Train L1: 0.4486 | Val Cheap L1: 0.4780
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 45 | Train L1: 0.4460 | Val Cheap L1: 0.4697 | Val TACOs L1: 0.0471
+Epoch 46 | Train L1: 0.4453 | Val Cheap L1: 0.4721
+Epoch 47 | Train L1: 0.4434 | Val Cheap L1: 0.4700
+Epoch 48 | Train L1: 0.4429 | Val Cheap L1: 0.4706
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt
+Epoch 49 | Train L1: 0.4411 | Val Cheap L1: 0.4685
+Epoch 50 | Train L1: 0.4394 | Val Cheap L1: 0.4688 | Val TACOs L1: 0.0472
+Loading ArcFace embeddings for one_shot evaluation...
+Loading weights from experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt...
+
+--- Evaluation Results: ONE_SHOT ---
+Run Name: avg_arcface_joint_threshold_focus
+Validation Pairs: 10000
+----------------------------------------
+[Embedding 1 (Primary Predicted)]
+L1 Distance (Scaled space): 0.436375
+L1 Distance (Raw ArcFace):  0.020149
+Cosine Similarity:          0.829441
+
+[Embedding 2 (Mathematically Extracted)]
+L1 Distance (Scaled space): 0.436375
+L1 Distance (Raw ArcFace):  0.020154
+Cosine Similarity:          0.829381
+
+Saved evaluation results to experiments/avg_arcface_joint_threshold_focus/eval_one_shot.txt
+Loading ArcFace embeddings for iterative evaluation...
+Loading weights from experiments/avg_arcface_joint_threshold_focus/checkpoints/best.pt...
+
+--- Evaluation Results: ITERATIVE ---
+Run Name: avg_arcface_joint_threshold_focus
+Validation Pairs: 10000
+----------------------------------------
+[Embedding 1 (Primary Predicted)]
+L1 Distance (Scaled space): 0.505924
+L1 Distance (Raw ArcFace):  0.023622
+Cosine Similarity:          0.769030
+
+[Embedding 2 (Mathematically Extracted)]
+L1 Distance (Scaled space): 0.505924
+L1 Distance (Raw ArcFace):  0.023625
+Cosine Similarity:          0.769036
+
+Saved evaluation results to experiments/avg_arcface_joint_threshold_focus/eval_iterative.txt

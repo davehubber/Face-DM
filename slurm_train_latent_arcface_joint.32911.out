@@ -1,0 +1,112 @@
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 1 | Train L1: 1.2698 | Val Cheap L1: 1.0894
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 2 | Train L1: 1.0261 | Val Cheap L1: 0.9428
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 3 | Train L1: 0.8471 | Val Cheap L1: 0.7868
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 4 | Train L1: 0.7127 | Val Cheap L1: 0.6555
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 5 | Train L1: 0.6271 | Val Cheap L1: 0.5875 | Val TACOs L1: 0.0523
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 6 | Train L1: 0.5659 | Val Cheap L1: 0.5559
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 7 | Train L1: 0.5209 | Val Cheap L1: 0.5137
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 8 | Train L1: 0.4819 | Val Cheap L1: 0.4688
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 9 | Train L1: 0.4511 | Val Cheap L1: 0.4513
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 10 | Train L1: 0.4280 | Val Cheap L1: 0.4085 | Val TACOs L1: 0.0508
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 11 | Train L1: 0.4057 | Val Cheap L1: 0.4063
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 12 | Train L1: 0.3887 | Val Cheap L1: 0.3766
+Epoch 13 | Train L1: 0.3732 | Val Cheap L1: 0.3778
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 14 | Train L1: 0.3599 | Val Cheap L1: 0.3481
+Epoch 15 | Train L1: 0.3480 | Val Cheap L1: 0.3599 | Val TACOs L1: 0.0509
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 16 | Train L1: 0.3390 | Val Cheap L1: 0.3241
+Epoch 17 | Train L1: 0.3306 | Val Cheap L1: 0.3273
+Epoch 18 | Train L1: 0.3215 | Val Cheap L1: 0.3460
+Epoch 19 | Train L1: 0.3145 | Val Cheap L1: 0.3301
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 20 | Train L1: 0.3072 | Val Cheap L1: 0.3107 | Val TACOs L1: 0.0490
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 21 | Train L1: 0.3014 | Val Cheap L1: 0.3080
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 22 | Train L1: 0.2964 | Val Cheap L1: 0.3048
+Epoch 23 | Train L1: 0.2907 | Val Cheap L1: 0.3160
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 24 | Train L1: 0.2859 | Val Cheap L1: 0.2783
+Epoch 25 | Train L1: 0.2810 | Val Cheap L1: 0.2812 | Val TACOs L1: 0.0480
+Epoch 26 | Train L1: 0.2771 | Val Cheap L1: 0.3050
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 27 | Train L1: 0.2735 | Val Cheap L1: 0.2611
+Epoch 28 | Train L1: 0.2693 | Val Cheap L1: 0.2625
+Epoch 29 | Train L1: 0.2660 | Val Cheap L1: 0.2675
+Epoch 30 | Train L1: 0.2626 | Val Cheap L1: 0.2650 | Val TACOs L1: 0.0474
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 31 | Train L1: 0.2601 | Val Cheap L1: 0.2544
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 32 | Train L1: 0.2569 | Val Cheap L1: 0.2458
+Epoch 33 | Train L1: 0.2540 | Val Cheap L1: 0.2485
+Epoch 34 | Train L1: 0.2520 | Val Cheap L1: 0.2512
+Epoch 35 | Train L1: 0.2487 | Val Cheap L1: 0.2641 | Val TACOs L1: 0.0459
+Epoch 36 | Train L1: 0.2465 | Val Cheap L1: 0.2574
+Epoch 37 | Train L1: 0.2450 | Val Cheap L1: 0.2665
+Epoch 38 | Train L1: 0.2430 | Val Cheap L1: 0.2619
+Epoch 39 | Train L1: 0.2409 | Val Cheap L1: 0.2615
+Epoch 40 | Train L1: 0.2385 | Val Cheap L1: 0.2497 | Val TACOs L1: 0.0456
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 41 | Train L1: 0.2363 | Val Cheap L1: 0.2303
+Epoch 42 | Train L1: 0.2349 | Val Cheap L1: 0.2512
+Epoch 43 | Train L1: 0.2334 | Val Cheap L1: 0.2339
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 44 | Train L1: 0.2314 | Val Cheap L1: 0.2291
+Epoch 45 | Train L1: 0.2295 | Val Cheap L1: 0.2367 | Val TACOs L1: 0.0448
+Epoch 46 | Train L1: 0.2287 | Val Cheap L1: 0.2318
+Epoch 47 | Train L1: 0.2269 | Val Cheap L1: 0.2540
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 48 | Train L1: 0.2257 | Val Cheap L1: 0.2249
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_joint/checkpoints/best.pt
+Epoch 49 | Train L1: 0.2245 | Val Cheap L1: 0.2209
+Epoch 50 | Train L1: 0.2228 | Val Cheap L1: 0.2230 | Val TACOs L1: 0.0443
+Loading ArcFace embeddings for one_shot evaluation...
+Loading weights from experiments/avg_arcface_joint/checkpoints/best.pt...
+
+--- Evaluation Results: ONE_SHOT ---
+Run Name: avg_arcface_joint
+Validation Pairs: 10000
+----------------------------------------
+[Embedding 1 (Primary Predicted)]
+L1 Distance (Scaled space): 0.467698
+L1 Distance (Raw ArcFace):  0.021772
+Cosine Similarity:          0.801660
+
+[Embedding 2 (Mathematically Extracted)]
+L1 Distance (Scaled space): 0.467698
+L1 Distance (Raw ArcFace):  0.021774
+Cosine Similarity:          0.801652
+
+Saved evaluation results to experiments/avg_arcface_joint/eval_one_shot.txt
+Loading ArcFace embeddings for iterative evaluation...
+Loading weights from experiments/avg_arcface_joint/checkpoints/best.pt...
+
+--- Evaluation Results: ITERATIVE ---
+Run Name: avg_arcface_joint
+Validation Pairs: 10000
+----------------------------------------
+[Embedding 1 (Primary Predicted)]
+L1 Distance (Scaled space): 0.474960
+L1 Distance (Raw ArcFace):  0.022072
+Cosine Similarity:          0.796129
+
+[Embedding 2 (Mathematically Extracted)]
+L1 Distance (Scaled space): 0.474960
+L1 Distance (Raw ArcFace):  0.022068
+Cosine Similarity:          0.796167
+
+Saved evaluation results to experiments/avg_arcface_joint/eval_iterative.txt

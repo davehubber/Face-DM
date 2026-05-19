@@ -1,0 +1,11 @@
+--- Evaluation Results: ONE_SHOT ---
+Run Name: avg_diffae
+Validation Pairs: 10000
+----------------------------------------
+[Embedding 1 (Primary Predicted)]
+L1 Distance:       0.527374
+Cosine Similarity: 0.745506
+
+[Embedding 2 (Mathematically Extracted)]
+L1 Distance:       0.527374
+Cosine Similarity: 0.745583

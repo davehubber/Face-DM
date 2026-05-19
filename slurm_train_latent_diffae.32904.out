@@ -1,0 +1,115 @@
+Loading DiffAE embeddings from: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy
+Z-score normalization applied successfully.
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 1 | Train L1: 0.5511 | Val Cheap L1: 0.3862
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 2 | Train L1: 0.3340 | Val Cheap L1: 0.3007
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 3 | Train L1: 0.2805 | Val Cheap L1: 0.2672
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 4 | Train L1: 0.2483 | Val Cheap L1: 0.2307
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 5 | Train L1: 0.2205 | Val Cheap L1: 0.2086 | Val TACOs L1: 1.2060
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 6 | Train L1: 0.2007 | Val Cheap L1: 0.1968
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 7 | Train L1: 0.1864 | Val Cheap L1: 0.1840
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 8 | Train L1: 0.1766 | Val Cheap L1: 0.1656
+Epoch 9 | Train L1: 0.1679 | Val Cheap L1: 0.1733
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 10 | Train L1: 0.1603 | Val Cheap L1: 0.1600 | Val TACOs L1: 1.2349
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 11 | Train L1: 0.1547 | Val Cheap L1: 0.1558
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 12 | Train L1: 0.1487 | Val Cheap L1: 0.1502
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 13 | Train L1: 0.1443 | Val Cheap L1: 0.1486
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 14 | Train L1: 0.1403 | Val Cheap L1: 0.1389
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 15 | Train L1: 0.1367 | Val Cheap L1: 0.1369 | Val TACOs L1: 1.1641
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 16 | Train L1: 0.1333 | Val Cheap L1: 0.1312
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 17 | Train L1: 0.1302 | Val Cheap L1: 0.1306
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 18 | Train L1: 0.1277 | Val Cheap L1: 0.1301
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 19 | Train L1: 0.1250 | Val Cheap L1: 0.1285
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 20 | Train L1: 0.1226 | Val Cheap L1: 0.1194 | Val TACOs L1: 1.1312
+Epoch 21 | Train L1: 0.1205 | Val Cheap L1: 0.1282
+Epoch 22 | Train L1: 0.1186 | Val Cheap L1: 0.1204
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 23 | Train L1: 0.1172 | Val Cheap L1: 0.1147
+Epoch 24 | Train L1: 0.1151 | Val Cheap L1: 0.1165
+Epoch 25 | Train L1: 0.1139 | Val Cheap L1: 0.1158 | Val TACOs L1: 1.1315
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 26 | Train L1: 0.1123 | Val Cheap L1: 0.1143
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 27 | Train L1: 0.1110 | Val Cheap L1: 0.1121
+Epoch 28 | Train L1: 0.1100 | Val Cheap L1: 0.1137
+Epoch 29 | Train L1: 0.1085 | Val Cheap L1: 0.1155
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 30 | Train L1: 0.1077 | Val Cheap L1: 0.1093 | Val TACOs L1: 1.1260
+Epoch 31 | Train L1: 0.1061 | Val Cheap L1: 0.1095
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 32 | Train L1: 0.1058 | Val Cheap L1: 0.1068
+Epoch 33 | Train L1: 0.1047 | Val Cheap L1: 0.1083
+Epoch 34 | Train L1: 0.1037 | Val Cheap L1: 0.1119
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 35 | Train L1: 0.1030 | Val Cheap L1: 0.1011 | Val TACOs L1: 1.1034
+Epoch 36 | Train L1: 0.1022 | Val Cheap L1: 0.1043
+Epoch 37 | Train L1: 0.1016 | Val Cheap L1: 0.1052
+Epoch 38 | Train L1: 0.1009 | Val Cheap L1: 0.1015
+Epoch 39 | Train L1: 0.0997 | Val Cheap L1: 0.1046
+Epoch 40 | Train L1: 0.0993 | Val Cheap L1: 0.1076 | Val TACOs L1: 1.1204
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 41 | Train L1: 0.0990 | Val Cheap L1: 0.0984
+Epoch 42 | Train L1: 0.0983 | Val Cheap L1: 0.1063
+Epoch 43 | Train L1: 0.0979 | Val Cheap L1: 0.0986
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_diffae/checkpoints/best.pt
+Epoch 44 | Train L1: 0.0974 | Val Cheap L1: 0.0972
+Epoch 45 | Train L1: 0.0961 | Val Cheap L1: 0.1071 | Val TACOs L1: 1.1327
+Epoch 46 | Train L1: 0.0964 | Val Cheap L1: 0.0990
+Epoch 47 | Train L1: 0.0970 | Val Cheap L1: 0.1053
+Epoch 48 | Train L1: 0.0994 | Val Cheap L1: 0.1003
+Epoch 49 | Train L1: 0.0974 | Val Cheap L1: 0.1015
+Epoch 50 | Train L1: 0.0972 | Val Cheap L1: 0.1006 | Val TACOs L1: 1.0839
+Loading DiffAE embeddings for one_shot evaluation...
+Loading DiffAE embeddings from: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy
+Z-score normalization applied successfully.
+Loading weights from experiments/avg_diffae/checkpoints/best.pt...
+
+--- Evaluation Results: ONE_SHOT ---
+Run Name: avg_diffae
+Validation Pairs: 10000
+----------------------------------------
+[Embedding 1 (Primary Predicted)]
+L1 Distance:       0.527374
+Cosine Similarity: 0.745506
+
+[Embedding 2 (Mathematically Extracted)]
+L1 Distance:       0.527374
+Cosine Similarity: 0.745583
+
+Saved evaluation results to experiments/avg_diffae/eval_one_shot.txt
+Loading DiffAE embeddings for iterative evaluation...
+Loading DiffAE embeddings from: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy
+Z-score normalization applied successfully.
+Loading weights from experiments/avg_diffae/checkpoints/best.pt...
+
+--- Evaluation Results: ITERATIVE ---
+Run Name: avg_diffae
+Validation Pairs: 10000
+----------------------------------------
+[Embedding 1 (Primary Predicted)]
+L1 Distance:       0.545360
+Cosine Similarity: 0.728783
+
+[Embedding 2 (Mathematically Extracted)]
+L1 Distance:       0.545360
+Cosine Similarity: 0.728857
+
+Saved evaluation results to experiments/avg_diffae/eval_iterative.txt
