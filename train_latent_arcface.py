@@ -176,9 +176,14 @@ class DeterministicColdDemorph(nn.Module):
         pred_z = self.model(x_t, t, c)
         pred_z = F.normalize(pred_z, p=2, dim=-1)
         
-        # Permutation invariant L1 loss against the dominant prediction
-        loss_1 = F.l1_loss(pred_z, z1, reduction='none').mean(dim=1)
-        loss_2 = F.l1_loss(pred_z, z2, reduction='none').mean(dim=1)
+        # --- COSINE DISTANCE HELPER ---
+        # 1.0 - Cos_Sim ensures that identical vectors yield a loss of 0.0
+        def cosine_distance(pred, target):
+            return 1.0 - F.cosine_similarity(pred, target, dim=-1)
+        
+        # Permutation invariant Cosine Distance against the dominant prediction
+        loss_1 = cosine_distance(pred_z, z1)
+        loss_2 = cosine_distance(pred_z, z2)
         
         return torch.min(loss_1, loss_2).mean()
 
@@ -341,11 +346,11 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
         # ------------------------------------------
         log_dict = {
             "epoch": epoch + 1,
-            "train_l1": avg_train_loss,
-            "val_cheap_l1": avg_val_cheap_loss
+            "train_cos": avg_train_loss,
+            "val_cheap_cos": avg_val_cheap_loss
         }
         if val_tacos_loss is not None:
-            log_dict["val_tacos_reconstruct_l1"] = val_tacos_loss
+            log_dict["val_tacos_reconstruct_cos"] = val_tacos_loss
             
         wandb.log(log_dict)
         
@@ -490,20 +495,20 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
 if __name__ == "__main__":
     train_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_slerp",
+        run_name="avg_arcface_slerp_cosLoss",
         num_timesteps=10
     )
 
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_slerp",
+        run_name="avg_arcface_slerp_cosLoss",
         num_timesteps=10,
         mode='one_shot'
     )
     
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_slerp",
+        run_name="avg_arcface_slerp_cosLoss",
         num_timesteps=10,
         mode='iterative'
     )

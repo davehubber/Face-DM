@@ -1,0 +1,6 @@
+--- Evaluation Results: ONE_SHOT ---
+Run Name: avg_arcface_slerp
+Validation Pairs: 10,000
+----------------------------------------
+L1 Distance:       0.023324
+Cosine Similarity: 0.644405
