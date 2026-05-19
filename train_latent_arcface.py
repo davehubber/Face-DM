@@ -10,30 +10,29 @@ from tqdm import tqdm
 import csv
 
 # ==========================================
-# 0. Module-level helpers
-# ==========================================
-def cosine_distance(pred, target):
-    """1.0 - Cos_Sim ensures that identical vectors yield a loss of 0.0"""
-    return 1.0 - F.cosine_similarity(pred, target, dim=-1)
-
-# ==========================================
 # 1. Dataset & Data Loading
 # ==========================================
 class ColdArcFaceDemorphDataset(Dataset):
     """
-    Dynamically generates pairs of ArcFace embeddings and their average.
+    Dynamically generates pairs of distinct ArcFace embeddings. 
+    Operates purely in L2 normalized space without arbitrary scaling.
     """
     def __init__(self, embeddings: np.ndarray, epoch_size: int = 1000000, deterministic: bool = False):
-        # Scale ArcFace by sqrt(512) to keep network inputs O(1).
-        # Convert to a torch tensor once here to avoid repeated allocation in __getitem__.
-        self.embeddings = torch.from_numpy((embeddings * np.sqrt(512)).astype(np.float32))
+        self.embeddings = embeddings
         self.epoch_size = epoch_size
         self.deterministic = deterministic
         self.num_samples = len(embeddings)
         
         if self.deterministic:
             np.random.seed(42)
-            self.pairs = np.random.randint(0, self.num_samples, size=(epoch_size, 2))
+            pairs = set()
+            # Ensure exactly epoch_size unique pairs without self-matches
+            while len(pairs) < epoch_size:
+                idx1 = np.random.randint(0, self.num_samples)
+                idx2 = np.random.randint(0, self.num_samples)
+                if idx1 != idx2:
+                    pairs.add((idx1, idx2))
+            self.pairs = np.array(list(pairs))
 
     def __len__(self):
         return self.epoch_size
@@ -42,9 +41,17 @@ class ColdArcFaceDemorphDataset(Dataset):
         if self.deterministic:
             idx1, idx2 = self.pairs[idx]
         else:
-            idx1, idx2 = np.random.randint(0, self.num_samples, size=2)
+            idx1 = np.random.randint(0, self.num_samples)
+            idx2 = np.random.randint(0, self.num_samples)
+            # Prevent self-pairing during dynamic sampling
+            while idx1 == idx2:
+                idx2 = np.random.randint(0, self.num_samples)
 
-        return self.embeddings[idx1], self.embeddings[idx2]
+        z1 = self.embeddings[idx1]
+        z2 = self.embeddings[idx2]
+
+        # z1 is treated as the dominant embedding in this setup
+        return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
 
 # ==========================================
 # 2. Network Architecture
@@ -79,7 +86,7 @@ class AdaLNBlock(nn.Module):
 
 class ColdDemorphNet(nn.Module):
     """
-    Predicts ONE 512D clean embedding given a degraded mixture and the average condition.
+    Predicts ONE 512D clean embedding given a degraded mixture and the condition.
     """
     def __init__(self, x_dim=512, c_dim=512, hidden_dim=2048, num_layers=10, time_emb_dim=512):
         super().__init__()
@@ -126,55 +133,54 @@ class DeterministicColdDemorph(nn.Module):
         """
         Forward degradation: Mixes z1 and z2.
         t=0: alpha=1.0 -> purely z1
-        t=T: alpha=0.5 -> purely (z1+z2)/2 (the average)
+        t=T: alpha=0.55 -> 0.55*z1 + 0.45*z2 (mixture tending toward z1)
         """
-        alpha = 1.0 - 0.5 * (t / self.num_timesteps).view(-1, 1).float()
+        alpha = 1.0 - 0.45 * (t / self.num_timesteps).view(-1, 1).float()
         return alpha * z1 + (1.0 - alpha) * z2
 
     def compute_loss(self, z1, z2):
         b = z1.shape[0]
-        # Calculate spherical midpoint
-        c = F.normalize(z1 + z2, p=2, dim=-1)
+        # Maximal degraded state (c) is heavily mixed but leans toward z1
+        c = 0.55 * z1 + 0.45 * z2
         
         # Sample random timestep
         t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
         
-        # Construct degraded state with z1 as the dominant component
+        # Construct degraded state
         x_t = self.degrade(z1, z2, t)
         
-        # Predict one of the clean embeddings and project onto the hypersphere
-        pred_z = self.model(x_t, t, c)
-        pred_z = F.normalize(pred_z, p=2, dim=-1)
+        # Predict the dominant clean embedding (z1)
+        pred_z1 = self.model(x_t, t, c)
         
-        # Permutation invariant Cosine Distance against the dominant prediction
-        loss_1 = cosine_distance(pred_z, z1)
-        loss_2 = cosine_distance(pred_z, z2)
-        
-        return torch.min(loss_1, loss_2).mean()
+        # Direct L1 loss to z1 (no longer permutation invariant)
+        loss = F.l1_loss(pred_z1, z1)
+        return loss
 
     @torch.no_grad()
-    def tacos_sample_loop(self, c):
+    def tacos_sample_loop(self, c, c_avg):
         """
         TACOs sampling for Demorphing.
-        Returns BOTH decomposed embeddings (pred_z1, pred_z2).
+        Args:
+            c: The 0.55/0.45 mixture condition passed to the model.
+            c_avg: The ground-truth 0.5/0.5 perfect average used strictly to extract z2.
         """
         device = c.device
         b = c.shape[0]
         
         timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
         
-        # Start sampling from the terminal degraded state (the average)
+        # Start sampling from the terminal degraded state
         x_t = c.clone()
         
         for t in tqdm(timesteps, desc='TACOs Sampling', leave=False):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
             
-            # 1. Predict one clean embedding
+            # 1. Predict the dominant clean embedding using the 0.55/0.45 condition
             pred_z1 = self.model(x_t, t_batch, c)
             
-            # 2. Mathematically extract the other embedding
-            # Since c = (z1 + z2) / 2, we have z2 = 2c - z1
-            pred_z2 = 2.0 * c - pred_z1
+            # 2. Mathematically extract the secondary embedding using the PERFECT AVERAGE
+            # Since c_avg = (z1 + z2) / 2, we have z2 = 2 * c_avg - z1
+            pred_z2 = 2.0 * c_avg - pred_z1
             
             t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
             
@@ -186,9 +192,8 @@ class DeterministicColdDemorph(nn.Module):
             x_t = x_t - deg_t + deg_t_prev
             
         # x_t eventually arrives at x_0, which maps cleanly to z1.
-        # We output the final state of x_t and its mathematically paired equivalent.
         final_z1 = x_t
-        final_z2 = 2.0 * c - final_z1
+        final_z2 = 2.0 * c_avg - final_z1
         
         return final_z1, final_z2
 
@@ -197,16 +202,7 @@ class DeterministicColdDemorph(nn.Module):
 # ==========================================
 def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int = 10):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Enable TF32 on Ampere+ GPUs for faster matmuls with negligible precision loss
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-
-    # AMP setup: prefer bfloat16 on supported GPUs (A100+), fall back to float16
-    amp_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
-    # GradScaler is only needed for float16 (bfloat16 doesn't suffer from underflow)
-    scaler = torch.cuda.amp.GradScaler(enabled=(amp_dtype == torch.float16))
-
+    
     # Directory Setup
     exp_dir = Path("experiments") / run_name
     ckpt_dir = exp_dir / "checkpoints"
@@ -230,16 +226,13 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
     train_dataset = ColdArcFaceDemorphDataset(train_embs, epoch_size=1_000_000, deterministic=False)
     val_dataset = ColdArcFaceDemorphDataset(val_embs, epoch_size=10_000, deterministic=True)
     
-    train_loader = DataLoader(train_dataset, batch_size=16_384, shuffle=True,
-                              num_workers=8, pin_memory=True, persistent_workers=True)
-    val_loader = DataLoader(val_dataset, batch_size=16_384, shuffle=False,
-                            num_workers=4, pin_memory=True, persistent_workers=True)
+    train_loader = DataLoader(train_dataset, batch_size=16_384, shuffle=True, num_workers=8)
+    val_loader = DataLoader(val_dataset, batch_size=16_384, shuffle=False, num_workers=4)
 
-    # Model Setup — optimizer is created before compile so it holds the original parameters
+    # Model Setup
     net = ColdDemorphNet(x_dim=512, c_dim=512, hidden_dim=2048, num_layers=10).to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
-    net = torch.compile(net)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
         "learning_rate": 1e-4,
@@ -247,10 +240,11 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
         "num_layers": 10,
         "hidden_dim": 2048,
         "num_timesteps": num_timesteps,
-        "latent_space": "ArcFace"
+        "latent_space": "ArcFace",
+        "mixture": "0.55 / 0.45 (Sampling extracts z2 using 0.5/0.5)"
     })
 
-    epochs = 50 
+    epochs = 10 
     best_val_loss = float("inf")
     
     for epoch in range(epochs):
@@ -261,14 +255,10 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
         for batch_z1, batch_z2 in pbar:
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
             
-            optimizer.zero_grad(set_to_none=True)
-
-            with torch.autocast(device_type="cuda", dtype=amp_dtype):
-                loss = diffusion.compute_loss(z1=batch_z1, z2=batch_z2)
-
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.zero_grad()
+            loss = diffusion.compute_loss(z1=batch_z1, z2=batch_z2)
+            loss.backward()
+            optimizer.step()
             
             train_loss += loss.item()
             pbar.set_postfix({"L1_loss": loss.item()})
@@ -285,9 +275,8 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
         with torch.no_grad():
             for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val Cheap]"):
                 batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-
-                with torch.autocast(device_type="cuda", dtype=amp_dtype):
-                    loss_cheap = diffusion.compute_loss(z1=batch_z1, z2=batch_z2)
+                
+                loss_cheap = diffusion.compute_loss(z1=batch_z1, z2=batch_z2)
                 val_cheap_loss += loss_cheap.item()
                 
         avg_val_cheap_loss = val_cheap_loss / len(val_loader)
@@ -301,17 +290,20 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
             with torch.no_grad():
                 for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val TACOs]"):
                     batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-                    # Use spherical average for condition
-                    batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1)
                     
-                    # Generate the decomposed pair using TACOs
-                    pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c)
+                    # Compute the conditions
+                    batch_c = 0.55 * batch_z1 + 0.45 * batch_z2
+                    batch_c_avg = (batch_z1 + batch_z2) / 2.0
                     
-                    # Permutation Invariant evaluation on the joint pair using Cosine Distance
-                    dist_a = cosine_distance(pred_z1, batch_z1) + cosine_distance(pred_z2, batch_z2)
-                    dist_b = cosine_distance(pred_z1, batch_z2) + cosine_distance(pred_z2, batch_z1)
-                             
-                    loss = torch.min(dist_a, dist_b).mean()
+                    # Generate the decomposed dominant embedding using TACOs
+                    pred_z1, _ = diffusion.tacos_sample_loop(batch_c, batch_c_avg)
+                    
+                    # Collapse back down to L2 Norm = 1 sphere for true evaluation
+                    pred_z1 = F.normalize(pred_z1, p=2, dim=-1)
+                    true_z1 = F.normalize(batch_z1, p=2, dim=-1)
+                    
+                    # Direct loss tracking performance on recovering z1
+                    loss = F.l1_loss(pred_z1, true_z1, reduction='none').mean()
                     val_tacos_loss_total += loss.item()
                     
             val_tacos_loss = val_tacos_loss_total / len(val_loader)
@@ -321,11 +313,11 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
         # ------------------------------------------
         log_dict = {
             "epoch": epoch + 1,
-            "train_cos": avg_train_loss,
-            "val_cheap_cos": avg_val_cheap_loss
+            "train_l1": avg_train_loss,
+            "val_cheap_l1": avg_val_cheap_loss
         }
         if val_tacos_loss is not None:
-            log_dict["val_tacos_reconstruct_cos"] = val_tacos_loss
+            log_dict["val_tacos_reconstruct_l1"] = val_tacos_loss
             
         wandb.log(log_dict)
         
@@ -373,13 +365,7 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
     """
     assert mode in ['iterative', 'one_shot'], "Mode must be 'iterative' or 'one_shot'"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Enable TF32 on Ampere+ GPUs
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-
-    amp_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
-
+    
     # ------------------------------------------
     # Directory & Checkpoint Setup
     # ------------------------------------------
@@ -401,8 +387,7 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
     
     # deterministic=True ensures we evaluate on the exact same pairs 
     val_dataset = ColdArcFaceDemorphDataset(val_embs, epoch_size=10_000, deterministic=True)
-    val_loader = DataLoader(val_dataset, batch_size=2048, shuffle=False,
-                            num_workers=4, pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(val_dataset, batch_size=2048, shuffle=False, num_workers=4)
 
     # ------------------------------------------
     # Model Setup
@@ -414,7 +399,6 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
     checkpoint = torch.load(ckpt_path, map_location=device)
     net.load_state_dict(checkpoint['model_state_dict'])
     net.eval()
-    net = torch.compile(net)
 
     # ------------------------------------------
     # Evaluation Loop
@@ -429,54 +413,31 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
     with torch.no_grad():
         for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Evaluating ({mode})"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-            batch_c = (batch_z1 + batch_z2) / 2.0
+            batch_c = 0.55 * batch_z1 + 0.45 * batch_z2
+            batch_c_avg = (batch_z1 + batch_z2) / 2.0
             b = batch_z1.shape[0]
             
             # --- 1. Generation ---
-            with torch.autocast(device_type="cuda", dtype=amp_dtype):
-                if mode == 'iterative':
-                    pred_z1_scaled, pred_z2_scaled = diffusion.tacos_sample_loop(batch_c)
-                else: # one_shot
-                    # Predict directly from the terminal timestep T
-                    t_batch = torch.full((b,), num_timesteps, device=device, dtype=torch.long)
-                    pred_z1_scaled = net(batch_c, t_batch, batch_c)
-                    pred_z2_scaled = 2.0 * batch_c - pred_z1_scaled
+            if mode == 'iterative':
+                pred_z1_scaled, _ = diffusion.tacos_sample_loop(batch_c, batch_c_avg)
+            else: # one_shot
+                # Predict directly from the terminal timestep T
+                t_batch = torch.full((b,), num_timesteps, device=device, dtype=torch.long)
+                pred_z1_scaled = net(batch_c, t_batch, batch_c)
 
-            # --- 2. Permutation Alignment ---
-            # We calculate L1 distances in the scaled space to determine the correct pairing path
-            dist_a = F.l1_loss(pred_z1_scaled, batch_z1, reduction='none').mean(dim=1) + \
-                     F.l1_loss(pred_z2_scaled, batch_z2, reduction='none').mean(dim=1)
-                     
-            dist_b = F.l1_loss(pred_z1_scaled, batch_z2, reduction='none').mean(dim=1) + \
-                     F.l1_loss(pred_z2_scaled, batch_z1, reduction='none').mean(dim=1)
-                     
-            # Create masks to dynamically swap predictions based on the lowest distance
-            mask_a = (dist_a <= dist_b).unsqueeze(-1)
-            mask_b = ~mask_a
-            
-            # Aligned predictions (Scaled Space)
-            aligned_pred_z1_scaled = torch.where(mask_a, pred_z1_scaled, pred_z2_scaled)
-            aligned_pred_z2_scaled = torch.where(mask_a, pred_z2_scaled, pred_z1_scaled)
-
-            # --- 3. Compute Metrics ---
+            # --- 2. Compute Metrics (Only tracking Dominant z1 Recovery) ---
             # Metric 1: Scaled L1 (Matching the training loss magnitude)
-            l1_scaled = (F.l1_loss(aligned_pred_z1_scaled, batch_z1) + 
-                         F.l1_loss(aligned_pred_z2_scaled, batch_z2)) / 2.0
+            l1_scaled = F.l1_loss(pred_z1_scaled, batch_z1)
             
             # Map back to strictly L2-normalized ArcFace domain
-            pred_z1_raw = F.normalize(aligned_pred_z1_scaled / scale_factor, p=2, dim=-1)
-            pred_z2_raw = F.normalize(aligned_pred_z2_scaled / scale_factor, p=2, dim=-1)
+            pred_z1_raw = F.normalize(pred_z1_scaled / scale_factor, p=2, dim=-1)
             true_z1_raw = F.normalize(batch_z1 / scale_factor, p=2, dim=-1)
-            true_z2_raw = F.normalize(batch_z2 / scale_factor, p=2, dim=-1)
             
             # Metric 2: Raw ArcFace L1
-            l1_raw = (F.l1_loss(pred_z1_raw, true_z1_raw) + 
-                      F.l1_loss(pred_z2_raw, true_z2_raw)) / 2.0
+            l1_raw = F.l1_loss(pred_z1_raw, true_z1_raw)
             
             # Metric 3: Cosine Similarity
-            cos_sim_1 = F.cosine_similarity(pred_z1_raw, true_z1_raw, dim=-1).mean()
-            cos_sim_2 = F.cosine_similarity(pred_z2_raw, true_z2_raw, dim=-1).mean()
-            cos_sim = (cos_sim_1 + cos_sim_2) / 2.0
+            cos_sim = F.cosine_similarity(pred_z1_raw, true_z1_raw, dim=-1).mean()
             
             total_l1_scaled += l1_scaled.item()
             total_l1_raw += l1_raw.item()
@@ -491,7 +452,7 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
     avg_cosine = total_cosine / num_batches
 
     results_text = (
-        f"--- Evaluation Results: {mode.upper()} ---\n"
+        f"--- Evaluation Results (Dominant z1): {mode.upper()} ---\n"
         f"Run Name: {run_name}\n"
         f"Validation Pairs: 10,000\n"
         f"----------------------------------------\n"
@@ -510,20 +471,20 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
 if __name__ == "__main__":
     train_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_cosLoss",
+        run_name="avg_arcface_55_45",
         num_timesteps=10
     )
 
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_cosLoss",
+        run_name="avg_arcface_55_45",
         num_timesteps=10,
         mode='one_shot'
     )
     
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_cosLoss",
+        run_name="avg_arcface_55_45",
         num_timesteps=10,
         mode='iterative'
     )

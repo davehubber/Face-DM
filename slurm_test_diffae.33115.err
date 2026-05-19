@@ -1,0 +1,32 @@
+Traceback (most recent call last):
+  File "test_diffae.py", line 428, in <module>
+    main()
+  File "test_diffae.py", line 266, in main
+    model = load_diffae_ffhq256_autoencoder(
+  File "test_diffae.py", line 72, in load_diffae_ffhq256_autoencoder
+    from templates import ffhq256_autoenc
+  File "/nas-ctm01/homes/dacordeiro/diffae/templates.py", line 1, in <module>
+    from experiment import *
+  File "/nas-ctm01/homes/dacordeiro/diffae/experiment.py", line 8, in <module>
+    import pytorch_lightning as pl
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/latent/lib/python3.8/site-packages/pytorch_lightning/__init__.py", line 21, in <module>
+    from pytorch_lightning.callbacks import Callback  # noqa: E402
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/latent/lib/python3.8/site-packages/pytorch_lightning/callbacks/__init__.py", line 24, in <module>
+    from pytorch_lightning.callbacks.pruning import ModelPruning
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/latent/lib/python3.8/site-packages/pytorch_lightning/callbacks/pruning.py", line 31, in <module>
+    from pytorch_lightning.core.lightning import LightningModule
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/latent/lib/python3.8/site-packages/pytorch_lightning/core/__init__.py", line 16, in <module>
+    from pytorch_lightning.core.lightning import LightningModule
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/latent/lib/python3.8/site-packages/pytorch_lightning/core/lightning.py", line 41, in <module>
+    from pytorch_lightning.trainer.connectors.logger_connector.fx_validator import FxValidator
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/latent/lib/python3.8/site-packages/pytorch_lightning/trainer/__init__.py", line 18, in <module>
+    from pytorch_lightning.trainer.trainer import Trainer
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/latent/lib/python3.8/site-packages/pytorch_lightning/trainer/trainer.py", line 31, in <module>
+    from pytorch_lightning.loggers import LightningLoggerBase
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/latent/lib/python3.8/site-packages/pytorch_lightning/loggers/__init__.py", line 26, in <module>
+    from pytorch_lightning.loggers.wandb import _WANDB_AVAILABLE, WandbLogger  # noqa: F401
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/latent/lib/python3.8/site-packages/pytorch_lightning/loggers/wandb.py", line 37, in <module>
+    _WANDB_GREATER_EQUAL_0_10_22 = _compare_version("wandb", operator.ge, "0.10.22")
+  File "/nas-ctm01/homes/dacordeiro/.conda/envs/latent/lib/python3.8/site-packages/pytorch_lightning/utilities/imports.py", line 58, in _compare_version
+    pkg_version = Version(pkg.__version__)
+AttributeError: module 'wandb' has no attribute '__version__'

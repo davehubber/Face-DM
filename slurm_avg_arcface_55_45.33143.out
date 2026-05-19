@@ -1,0 +1,45 @@
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_55_45/checkpoints/best.pt
+Epoch 1 | Train L1: 0.0504 | Val Cheap L1: 0.0300
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_55_45/checkpoints/best.pt
+Epoch 2 | Train L1: 0.0271 | Val Cheap L1: 0.0263
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_55_45/checkpoints/best.pt
+Epoch 3 | Train L1: 0.0226 | Val Cheap L1: 0.0201
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_55_45/checkpoints/best.pt
+Epoch 4 | Train L1: 0.0184 | Val Cheap L1: 0.0170
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_55_45/checkpoints/best.pt
+Epoch 5 | Train L1: 0.0161 | Val Cheap L1: 0.0151 | Val TACOs L1: 0.0206
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_55_45/checkpoints/best.pt
+Epoch 6 | Train L1: 0.0147 | Val Cheap L1: 0.0143
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_55_45/checkpoints/best.pt
+Epoch 7 | Train L1: 0.0137 | Val Cheap L1: 0.0134
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_55_45/checkpoints/best.pt
+Epoch 8 | Train L1: 0.0130 | Val Cheap L1: 0.0128
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_55_45/checkpoints/best.pt
+Epoch 9 | Train L1: 0.0125 | Val Cheap L1: 0.0123
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_55_45/checkpoints/best.pt
+Epoch 10 | Train L1: 0.0120 | Val Cheap L1: 0.0118 | Val TACOs L1: 0.0194
+Loading ArcFace embeddings for one_shot evaluation...
+Loading weights from experiments/avg_arcface_55_45/checkpoints/best.pt...
+
+--- Evaluation Results (Dominant z1): ONE_SHOT ---
+Run Name: avg_arcface_55_45
+Validation Pairs: 10,000
+----------------------------------------
+L1 Distance (Scaled space): 0.021801
+L1 Distance (Raw ArcFace):  0.023107
+Cosine Similarity:          0.780224
+
+Saved evaluation results to experiments/avg_arcface_55_45/eval_one_shot.txt
+Loading ArcFace embeddings for iterative evaluation...
+Loading weights from experiments/avg_arcface_55_45/checkpoints/best.pt...
+
+--- Evaluation Results (Dominant z1): ITERATIVE ---
+Run Name: avg_arcface_55_45
+Validation Pairs: 10,000
+----------------------------------------
+L1 Distance (Scaled space): 0.018635
+L1 Distance (Raw ArcFace):  0.019366
+Cosine Similarity:          0.845643
+
+Saved evaluation results to experiments/avg_arcface_55_45/eval_iterative.txt
