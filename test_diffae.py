@@ -13,16 +13,16 @@ from torchvision import transforms
 from tqdm import tqdm
 
 
-def l2_normalize(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    x = np.asarray(x, dtype=np.float32)
-    norm = float(np.linalg.norm(x))
-    return x / max(norm, eps)
+def l1_distance(a: np.ndarray, b: np.ndarray) -> float:
+    a = np.asarray(a, dtype=np.float32)
+    b = np.asarray(b, dtype=np.float32)
+    return float(np.abs(a - b).sum())
 
 
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    a = l2_normalize(a)
-    b = l2_normalize(b)
-    return float(np.dot(a, b))
+def mean_l1_distance(a: np.ndarray, b: np.ndarray) -> float:
+    a = np.asarray(a, dtype=np.float32)
+    b = np.asarray(b, dtype=np.float32)
+    return float(np.abs(a - b).mean())
 
 
 def average_two_images(path_a: str, path_b: str) -> Image.Image:
@@ -352,11 +352,16 @@ def main():
                     zscore_std=zscore_std,
                 )
 
-                sim_to_a = cosine_similarity(avg_zsem, zsem_a)
-                sim_to_b = cosine_similarity(avg_zsem, zsem_b)
+                l1_to_a = l1_distance(avg_zsem, zsem_a)
+                l1_to_b = l1_distance(avg_zsem, zsem_b)
+
+                mean_l1_to_a = mean_l1_distance(avg_zsem, zsem_a)
+                mean_l1_to_b = mean_l1_distance(avg_zsem, zsem_b)
 
                 zsem_pair_avg = ((zsem_a + zsem_b) / 2.0).astype(np.float32)
-                sim_to_embedding_average = cosine_similarity(avg_zsem, zsem_pair_avg)
+
+                l1_to_embedding_average = l1_distance(avg_zsem, zsem_pair_avg)
+                mean_l1_to_embedding_average = mean_l1_distance(avg_zsem, zsem_pair_avg)
 
                 successes.append({
                     "pair_idx": pair_idx,
@@ -365,9 +370,12 @@ def main():
                     "image_a": path_a,
                     "image_b": path_b,
                     "avg_image": str(avg_path) if args.keep_averaged_images else "not_saved",
-                    "cosine_to_a": sim_to_a,
-                    "cosine_to_b": sim_to_b,
-                    "cosine_to_embedding_average": sim_to_embedding_average,
+                    "l1_to_a": l1_to_a,
+                    "l1_to_b": l1_to_b,
+                    "mean_l1_to_a": mean_l1_to_a,
+                    "mean_l1_to_b": mean_l1_to_b,
+                    "l1_to_embedding_average": l1_to_embedding_average,
+                    "mean_l1_to_embedding_average": mean_l1_to_embedding_average,
                 })
 
             except Exception as e:
@@ -418,8 +426,9 @@ def main():
 
             f.write("Metric\n")
             f.write("-" * 80 + "\n")
-            f.write("Cosine similarity after optional global z-score.\n")
-            f.write("The cosine function internally L2-normalizes each vector before dot product.\n\n")
+            f.write("L1 distance after optional global z-score.\n")
+            f.write("Both total L1 distance and mean L1 per dimension are reported.\n")
+            f.write("No L2 normalization is applied before L1.\n\n")
 
             f.write("Summary\n")
             f.write("-" * 80 + "\n")
@@ -433,9 +442,12 @@ def main():
                     f"pair {item['pair_idx']:04d} | "
                     f"idx_a={item['idx_a']} | "
                     f"idx_b={item['idx_b']} | "
-                    f"cos(avg_img_zsem, zsem_a)={item['cosine_to_a']:.6f} | "
-                    f"cos(avg_img_zsem, zsem_b)={item['cosine_to_b']:.6f} | "
-                    f"cos(avg_img_zsem, avg_zsem_pair)={item['cosine_to_embedding_average']:.6f} | "
+                    f"L1(avg_img_zsem, zsem_a)={item['l1_to_a']:.6f} | "
+                    f"L1(avg_img_zsem, zsem_b)={item['l1_to_b']:.6f} | "
+                    f"L1(avg_img_zsem, avg_zsem_pair)={item['l1_to_embedding_average']:.6f} | "
+                    f"mean_L1(avg_img_zsem, zsem_a)={item['mean_l1_to_a']:.6f} | "
+                    f"mean_L1(avg_img_zsem, zsem_b)={item['mean_l1_to_b']:.6f} | "
+                    f"mean_L1(avg_img_zsem, avg_zsem_pair)={item['mean_l1_to_embedding_average']:.6f} | "
                     f"image_a={item['image_a']} | "
                     f"image_b={item['image_b']}\n"
                 )
