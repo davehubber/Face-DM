@@ -14,18 +14,25 @@ import csv
 # ==========================================
 class ColdArcFaceDemorphDataset(Dataset):
     """
-    Dynamically generates pairs of ArcFace embeddings and their average.
+    Dynamically generates pairs of distinct ArcFace embeddings. 
+    Operates purely in L2 normalized space without arbitrary scaling.
     """
     def __init__(self, embeddings: np.ndarray, epoch_size: int = 1000000, deterministic: bool = False):
-        # Scale ArcFace by sqrt(512) to keep network inputs O(1)
-        self.embeddings = embeddings * np.sqrt(512)
+        self.embeddings = embeddings
         self.epoch_size = epoch_size
         self.deterministic = deterministic
         self.num_samples = len(embeddings)
         
         if self.deterministic:
             np.random.seed(42)
-            self.pairs = np.random.randint(0, self.num_samples, size=(epoch_size, 2))
+            pairs = set()
+            # Ensure exactly epoch_size unique pairs without self-matches
+            while len(pairs) < epoch_size:
+                idx1 = np.random.randint(0, self.num_samples)
+                idx2 = np.random.randint(0, self.num_samples)
+                if idx1 != idx2:
+                    pairs.add((idx1, idx2))
+            self.pairs = np.array(list(pairs))
 
     def __len__(self):
         return self.epoch_size
@@ -34,7 +41,11 @@ class ColdArcFaceDemorphDataset(Dataset):
         if self.deterministic:
             idx1, idx2 = self.pairs[idx]
         else:
-            idx1, idx2 = np.random.randint(0, self.num_samples, size=2)
+            idx1 = np.random.randint(0, self.num_samples)
+            idx2 = np.random.randint(0, self.num_samples)
+            # Prevent self-pairing during dynamic sampling
+            while idx1 == idx2:
+                idx2 = np.random.randint(0, self.num_samples)
 
         z1 = self.embeddings[idx1]
         z2 = self.embeddings[idx2]
@@ -42,7 +53,31 @@ class ColdArcFaceDemorphDataset(Dataset):
         return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
 
 # ==========================================
-# 2. Network Architecture
+# 2. Spherical Math Utilities
+# ==========================================
+def slerp(val, low, high):
+    """
+    Spherical Linear Interpolation for PyTorch Tensors.
+    val: [B, 1] interpolation factor (0.0 to 1.0)
+    low, high: [B, D] unit-normalized vectors
+    """
+    # Clamp dot product to avoid NaN in acos due to floating point inaccuracies
+    dot = (low * high).sum(dim=-1, keepdim=True).clamp(-1 + 1e-7, 1 - 1e-7)
+    omega = torch.acos(dot)
+    so = torch.sin(omega)
+    
+    # Fallback to LERP for highly collinear vectors where sin(omega) approaches 0
+    mask = (so < 1e-7).float()
+    
+    res = (torch.sin((1.0 - val) * omega) / so) * low + (torch.sin(val * omega) / so) * high
+    lerp = (1.0 - val) * low + val * high
+    
+    # Ensure the output is strictly L2 normalized
+    out = mask * lerp + (1.0 - mask) * res
+    return F.normalize(out, p=2, dim=-1)
+
+# ==========================================
+# 3. Network Architecture
 # ==========================================
 class SinusoidalPositionEmbeddings(nn.Module):
     def __init__(self, dim):
@@ -109,7 +144,7 @@ class ColdDemorphNet(nn.Module):
         return self.final_linear(h)
 
 # ==========================================
-# 3. Cold Demorph Diffusion Process
+# 4. Cold Demorph Diffusion Process
 # ==========================================
 class DeterministicColdDemorph(nn.Module):
     def __init__(self, model, num_timesteps=10):
@@ -119,16 +154,17 @@ class DeterministicColdDemorph(nn.Module):
 
     def degrade(self, z1, z2, t):
         """
-        Forward degradation: Mixes z1 and z2.
-        t=0: alpha=1.0 -> purely z1
-        t=T: alpha=0.5 -> purely (z1+z2)/2 (the average)
+        Forward spherical degradation: SLERP between z1 and z2.
+        t=0: alpha=0.0 -> purely z1
+        t=T: alpha=0.5 -> spherical midpoint (L2 normalized average)
         """
-        alpha = 1.0 - 0.5 * (t / self.num_timesteps).view(-1, 1).float()
-        return alpha * z1 + (1.0 - alpha) * z2
+        alpha = 0.5 * (t / self.num_timesteps).view(-1, 1).float()
+        return slerp(alpha, z1, z2)
 
     def compute_loss(self, z1, z2):
         b = z1.shape[0]
-        c = (z1 + z2) / 2.0
+        # Calculate spherical midpoint
+        c = F.normalize(z1 + z2, p=2, dim=-1)
         
         # Sample random timestep
         t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
@@ -136,10 +172,11 @@ class DeterministicColdDemorph(nn.Module):
         # Construct degraded state with z1 as the dominant component
         x_t = self.degrade(z1, z2, t)
         
-        # Predict one of the clean embeddings
+        # Predict one of the clean embeddings and project onto the hypersphere
         pred_z = self.model(x_t, t, c)
+        pred_z = F.normalize(pred_z, p=2, dim=-1)
         
-        # Permutation invariant L1 loss
+        # Permutation invariant L1 loss against the dominant prediction
         loss_1 = F.l1_loss(pred_z, z1, reduction='none').mean(dim=1)
         loss_2 = F.l1_loss(pred_z, z2, reduction='none').mean(dim=1)
         
@@ -156,7 +193,7 @@ class DeterministicColdDemorph(nn.Module):
         
         timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
         
-        # Start sampling from the terminal degraded state (the average)
+        # Start sampling from the terminal degraded state (the spherical average)
         x_t = c.clone()
         
         for t in tqdm(timesteps, desc='TACOs Sampling', leave=False):
@@ -164,10 +201,12 @@ class DeterministicColdDemorph(nn.Module):
             
             # 1. Predict one clean embedding
             pred_z1 = self.model(x_t, t_batch, c)
+            pred_z1 = F.normalize(pred_z1, p=2, dim=-1)
             
-            # 2. Mathematically extract the other embedding
-            # Since c = (z1 + z2) / 2, we have z2 = 2c - z1
-            pred_z2 = 2.0 * c - pred_z1
+            # 2. Mathematically extract the other embedding via Hyperspherical Reflection
+            dot_product = (c * pred_z1).sum(dim=-1, keepdim=True)
+            pred_z2 = 2.0 * dot_product * c - pred_z1
+            pred_z2 = F.normalize(pred_z2, p=2, dim=-1)
             
             t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
             
@@ -175,18 +214,20 @@ class DeterministicColdDemorph(nn.Module):
             deg_t = self.degrade(pred_z1, pred_z2, t_batch)
             deg_t_prev = self.degrade(pred_z1, pred_z2, t_prev_batch)
             
-            # 4. TACOs update step
+            # 4. TACOs update step & reprojection
             x_t = x_t - deg_t + deg_t_prev
+            x_t = F.normalize(x_t, p=2, dim=-1)
             
-        # x_t eventually arrives at x_0, which maps cleanly to z1.
-        # We output the final state of x_t and its mathematically paired equivalent.
+        # Ensure final pairs maintain rigid geometric validity
         final_z1 = x_t
-        final_z2 = 2.0 * c - final_z1
+        dot_final = (c * final_z1).sum(dim=-1, keepdim=True)
+        final_z2 = 2.0 * dot_final * c - final_z1
+        final_z2 = F.normalize(final_z2, p=2, dim=-1)
         
         return final_z1, final_z2
 
 # ==========================================
-# 4. Evaluation & Training Loop
+# 5. Evaluation & Training Loop
 # ==========================================
 def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int = 10):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -277,23 +318,18 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
             with torch.no_grad():
                 for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val TACOs]"):
                     batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-                    batch_c = (batch_z1 + batch_z2) / 2.0
+                    # Use spherical average for condition
+                    batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1)
                     
                     # Generate the decomposed pair using TACOs
                     pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c)
                     
-                    # Collapse back down to L2 Norm = 1 sphere for true rigid evaluation
-                    pred_z1 = F.normalize(pred_z1, p=2, dim=-1)
-                    pred_z2 = F.normalize(pred_z2, p=2, dim=-1)
-                    true_z1 = F.normalize(batch_z1, p=2, dim=-1)
-                    true_z2 = F.normalize(batch_z2, p=2, dim=-1)
-                    
                     # Permutation Invariant evaluation on the joint pair
-                    dist_a = F.l1_loss(pred_z1, true_z1, reduction='none').mean(dim=1) + \
-                             F.l1_loss(pred_z2, true_z2, reduction='none').mean(dim=1)
+                    dist_a = F.l1_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + \
+                             F.l1_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
                              
-                    dist_b = F.l1_loss(pred_z1, true_z2, reduction='none').mean(dim=1) + \
-                             F.l1_loss(pred_z2, true_z1, reduction='none').mean(dim=1)
+                    dist_b = F.l1_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + \
+                             F.l1_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
                              
                     loss = torch.min(dist_a, dist_b).mean()
                     val_tacos_loss_total += loss.item()
@@ -345,23 +381,17 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
 
     wandb.finish()
 
+
+# ==========================================
+# 6. Evaluation Script
+# ==========================================
 def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int = 10, mode: str = 'iterative'):
     """
     Evaluates the trained Cold Diffusion Demorph model on the validation set.
-    Reports metrics separately for the primary predicted embedding (z1) and the extracted embedding (z2).
-    
-    Args:
-        arcface_path_str: Path to the raw ArcFace embeddings.
-        run_name: The name of the experiment folder.
-        num_timesteps: Number of timesteps used during training.
-        mode: 'iterative' for TACOs sampling, 'one_shot' for a single direct prediction.
     """
     assert mode in ['iterative', 'one_shot'], "Mode must be 'iterative' or 'one_shot'"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # ------------------------------------------
-    # Directory & Checkpoint Setup
-    # ------------------------------------------
     exp_dir = Path("experiments") / run_name
     ckpt_path = exp_dir / "checkpoints" / "best.pt"
     
@@ -370,21 +400,14 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
         
     out_file_path = exp_dir / f"eval_{mode}.txt"
     
-    # ------------------------------------------
-    # Data Loading (Exact same split as training)
-    # ------------------------------------------
     print(f"Loading ArcFace embeddings for {mode} evaluation...")
     arcface_embs = np.load(Path(arcface_path_str).resolve()).astype(np.float32)
     split_idx = int(len(arcface_embs) * 0.9)
     val_embs = arcface_embs[split_idx:]
     
-    # deterministic=True ensures we evaluate on the exact same pairs 
     val_dataset = ColdArcFaceDemorphDataset(val_embs, epoch_size=10_000, deterministic=True)
     val_loader = DataLoader(val_dataset, batch_size=2048, shuffle=False, num_workers=4)
 
-    # ------------------------------------------
-    # Model Setup
-    # ------------------------------------------
     net = ColdDemorphNet(x_dim=512, c_dim=512, hidden_dim=2048, num_layers=10).to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
     
@@ -393,108 +416,68 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
     net.load_state_dict(checkpoint['model_state_dict'])
     net.eval()
 
-    # ------------------------------------------
-    # Evaluation Loop
-    # ------------------------------------------
-    # Separate trackers for Embedding 1 (Predicted) and Embedding 2 (Extracted)
-    total_l1_scaled_1 = 0.0
-    total_l1_scaled_2 = 0.0
-    
-    total_l1_raw_1 = 0.0
-    total_l1_raw_2 = 0.0
-    
-    total_cosine_1 = 0.0
-    total_cosine_2 = 0.0
-    
+    total_l1 = 0.0
+    total_cosine = 0.0
     num_batches = 0
-    scale_factor = math.sqrt(512)
 
     with torch.no_grad():
         for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Evaluating ({mode})"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-            batch_c = (batch_z1 + batch_z2) / 2.0
+            # Use spherical average for condition
+            batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1)
             b = batch_z1.shape[0]
             
             # --- 1. Generation ---
             if mode == 'iterative':
-                pred_z1_scaled, pred_z2_scaled = diffusion.tacos_sample_loop(batch_c)
+                pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c)
             else: # one_shot
-                # Predict directly from the terminal timestep T
                 t_batch = torch.full((b,), num_timesteps, device=device, dtype=torch.long)
-                pred_z1_scaled = net(batch_c, t_batch, batch_c)
-                pred_z2_scaled = 2.0 * batch_c - pred_z1_scaled
+                pred_z1 = net(batch_c, t_batch, batch_c)
+                pred_z1 = F.normalize(pred_z1, p=2, dim=-1)
+                
+                # Mathematical extraction
+                dot_product = (batch_c * pred_z1).sum(dim=-1, keepdim=True)
+                pred_z2 = 2.0 * dot_product * batch_c - pred_z1
+                pred_z2 = F.normalize(pred_z2, p=2, dim=-1)
 
             # --- 2. Permutation Alignment ---
-            # We calculate L1 distances in the scaled space to determine the correct pairing path
-            dist_a = F.l1_loss(pred_z1_scaled, batch_z1, reduction='none').mean(dim=1) + \
-                     F.l1_loss(pred_z2_scaled, batch_z2, reduction='none').mean(dim=1)
+            dist_a = F.l1_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + \
+                     F.l1_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
                      
-            dist_b = F.l1_loss(pred_z1_scaled, batch_z2, reduction='none').mean(dim=1) + \
-                     F.l1_loss(pred_z2_scaled, batch_z1, reduction='none').mean(dim=1)
+            dist_b = F.l1_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + \
+                     F.l1_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
                      
-            # Create masks to dynamically swap predictions based on the lowest distance
             mask_a = (dist_a <= dist_b).unsqueeze(-1)
+            mask_b = ~mask_a
             
-            # Aligned predictions (Scaled Space)
-            aligned_pred_z1_scaled = torch.where(mask_a, pred_z1_scaled, pred_z2_scaled)
-            aligned_pred_z2_scaled = torch.where(mask_a, pred_z2_scaled, pred_z1_scaled)
+            aligned_pred_z1 = torch.where(mask_a, pred_z1, pred_z2)
+            aligned_pred_z2 = torch.where(mask_a, pred_z2, pred_z1)
 
-            # --- 3. Compute Metrics ---
-            # Metric 1: Scaled L1 (Matching the training loss magnitude)
-            l1_scaled_1 = F.l1_loss(aligned_pred_z1_scaled, batch_z1)
-            l1_scaled_2 = F.l1_loss(aligned_pred_z2_scaled, batch_z2)
+            # --- 3. Compute Metrics directly in the L2-Normalized space ---
+            l1 = (F.l1_loss(aligned_pred_z1, batch_z1) + 
+                  F.l1_loss(aligned_pred_z2, batch_z2)) / 2.0
             
-            # Map back to strictly L2-normalized ArcFace domain
-            pred_z1_raw = F.normalize(aligned_pred_z1_scaled / scale_factor, p=2, dim=-1)
-            pred_z2_raw = F.normalize(aligned_pred_z2_scaled / scale_factor, p=2, dim=-1)
-            true_z1_raw = F.normalize(batch_z1 / scale_factor, p=2, dim=-1)
-            true_z2_raw = F.normalize(batch_z2 / scale_factor, p=2, dim=-1)
+            cos_sim_1 = F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1).mean()
+            cos_sim_2 = F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1).mean()
+            cos_sim = (cos_sim_1 + cos_sim_2) / 2.0
             
-            # Metric 2: Raw ArcFace L1
-            l1_raw_1 = F.l1_loss(pred_z1_raw, true_z1_raw)
-            l1_raw_2 = F.l1_loss(pred_z2_raw, true_z2_raw)
-            
-            # Metric 3: Cosine Similarity
-            cos_sim_1 = F.cosine_similarity(pred_z1_raw, true_z1_raw, dim=-1).mean()
-            cos_sim_2 = F.cosine_similarity(pred_z2_raw, true_z2_raw, dim=-1).mean()
-            
-            # Accumulate totals
-            total_l1_scaled_1 += l1_scaled_1.item()
-            total_l1_scaled_2 += l1_scaled_2.item()
-            
-            total_l1_raw_1 += l1_raw_1.item()
-            total_l1_raw_2 += l1_raw_2.item()
-            
-            total_cosine_1 += cos_sim_1.item()
-            total_cosine_2 += cos_sim_2.item()
-            
+            total_l1 += l1.item()
+            total_cosine += cos_sim.item()
             num_batches += 1
 
     # ------------------------------------------
     # Finalize & Save
     # ------------------------------------------
-    avg_l1_scaled_1 = total_l1_scaled_1 / num_batches
-    avg_l1_scaled_2 = total_l1_scaled_2 / num_batches
-    
-    avg_l1_raw_1 = total_l1_raw_1 / num_batches
-    avg_l1_raw_2 = total_l1_raw_2 / num_batches
-    
-    avg_cosine_1 = total_cosine_1 / num_batches
-    avg_cosine_2 = total_cosine_2 / num_batches
+    avg_l1 = total_l1 / num_batches
+    avg_cosine = total_cosine / num_batches
 
     results_text = (
         f"--- Evaluation Results: {mode.upper()} ---\n"
         f"Run Name: {run_name}\n"
-        f"Validation Pairs: {len(val_dataset)}\n"
+        f"Validation Pairs: 10,000\n"
         f"----------------------------------------\n"
-        f"[Embedding 1 (Primary Predicted)]\n"
-        f"L1 Distance (Scaled space): {avg_l1_scaled_1:.6f}\n"
-        f"L1 Distance (Raw ArcFace):  {avg_l1_raw_1:.6f}\n"
-        f"Cosine Similarity:          {avg_cosine_1:.6f}\n\n"
-        f"[Embedding 2 (Mathematically Extracted)]\n"
-        f"L1 Distance (Scaled space): {avg_l1_scaled_2:.6f}\n"
-        f"L1 Distance (Raw ArcFace):  {avg_l1_raw_2:.6f}\n"
-        f"Cosine Similarity:          {avg_cosine_2:.6f}\n"
+        f"L1 Distance:       {avg_l1:.6f}\n"
+        f"Cosine Similarity: {avg_cosine:.6f}\n"
     )
     
     print("\n" + results_text)
@@ -505,22 +488,22 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
     print(f"Saved evaluation results to {out_file_path}")
 
 if __name__ == "__main__":
-    # train_cold_demorph(
-    #     arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-    #     run_name="avg_arcface",
-    #     num_timesteps=10
-    # )
+    train_cold_demorph(
+        arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
+        run_name="avg_arcface_slerp",
+        num_timesteps=10
+    )
 
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface",
+        run_name="avg_arcface_slerp",
         num_timesteps=10,
         mode='one_shot'
     )
     
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface",
+        run_name="avg_arcface_slerp",
         num_timesteps=10,
         mode='iterative'
     )
