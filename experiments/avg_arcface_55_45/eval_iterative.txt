@@ -1,7 +1,0 @@
---- Evaluation Results (Dominant z1): ITERATIVE ---
-Run Name: avg_arcface_55_45
-Validation Pairs: 10,000
-----------------------------------------
-L1 Distance (Scaled space): 0.018635
-L1 Distance (Raw ArcFace):  0.019366
-Cosine Similarity:          0.845643

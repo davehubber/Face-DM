@@ -1,0 +1,110 @@
+Loading ArcFace embeddings...
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 1 | Train Loss: 1.3319 | Val Loss: 1.1088
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 2 | Train Loss: 1.0786 | Val Loss: 1.0526
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 3 | Train Loss: 1.0445 | Val Loss: 1.0326
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 4 | Train Loss: 1.0293 | Val Loss: 1.0231
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 5 | Train Loss: 1.0179 | Val Loss: 1.0148
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 6 | Train Loss: 1.0080 | Val Loss: 1.0091
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 7 | Train Loss: 0.9977 | Val Loss: 0.9977
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 8 | Train Loss: 0.9874 | Val Loss: 0.9873
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 9 | Train Loss: 0.9769 | Val Loss: 0.9794
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 10 | Train Loss: 0.9670 | Val Loss: 0.9667
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 11 | Train Loss: 0.9574 | Val Loss: 0.9602
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 12 | Train Loss: 0.9483 | Val Loss: 0.9564
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 13 | Train Loss: 0.9397 | Val Loss: 0.9466
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 14 | Train Loss: 0.9312 | Val Loss: 0.9378
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 15 | Train Loss: 0.9235 | Val Loss: 0.9341
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 16 | Train Loss: 0.9164 | Val Loss: 0.9264
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 17 | Train Loss: 0.9093 | Val Loss: 0.9213
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 18 | Train Loss: 0.9033 | Val Loss: 0.9166
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 19 | Train Loss: 0.8975 | Val Loss: 0.9103
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 20 | Train Loss: 0.8921 | Val Loss: 0.9053
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 21 | Train Loss: 0.8865 | Val Loss: 0.9030
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 22 | Train Loss: 0.8819 | Val Loss: 0.9022
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 23 | Train Loss: 0.8770 | Val Loss: 0.8942
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 24 | Train Loss: 0.8723 | Val Loss: 0.8894
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 25 | Train Loss: 0.8685 | Val Loss: 0.8882
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 26 | Train Loss: 0.8643 | Val Loss: 0.8847
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 27 | Train Loss: 0.8607 | Val Loss: 0.8831
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 28 | Train Loss: 0.8572 | Val Loss: 0.8793
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 29 | Train Loss: 0.8537 | Val Loss: 0.8750
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 30 | Train Loss: 0.8511 | Val Loss: 0.8729
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 31 | Train Loss: 0.8483 | Val Loss: 0.8704
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 32 | Train Loss: 0.8455 | Val Loss: 0.8673
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 33 | Train Loss: 0.8430 | Val Loss: 0.8632
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 34 | Train Loss: 0.8409 | Val Loss: 0.8617
+Epoch 35 | Train Loss: 0.8388 | Val Loss: 0.8627
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 36 | Train Loss: 0.8367 | Val Loss: 0.8579
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 37 | Train Loss: 0.8349 | Val Loss: 0.8570
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 38 | Train Loss: 0.8334 | Val Loss: 0.8555
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 39 | Train Loss: 0.8319 | Val Loss: 0.8531
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 40 | Train Loss: 0.8307 | Val Loss: 0.8522
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 41 | Train Loss: 0.8296 | Val Loss: 0.8513
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 42 | Train Loss: 0.8284 | Val Loss: 0.8502
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 43 | Train Loss: 0.8276 | Val Loss: 0.8491
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 44 | Train Loss: 0.8264 | Val Loss: 0.8482
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 45 | Train Loss: 0.8262 | Val Loss: 0.8478
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 46 | Train Loss: 0.8255 | Val Loss: 0.8472
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 47 | Train Loss: 0.8252 | Val Loss: 0.8467
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 48 | Train Loss: 0.8250 | Val Loss: 0.8465
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 49 | Train Loss: 0.8248 | Val Loss: 0.8464
+--> Saved best checkpoint to experiments/oneshot_arcface_pit/checkpoints/best.pt
+Epoch 50 | Train Loss: 0.8246 | Val Loss: 0.8463
+Loading ArcFace embeddings for evaluation...
+
+--- Evaluation Results: ONE-SHOT PERMUTATION INVARIANT ---
+Run Name: oneshot_arcface_pit
+Validation Pairs Evaluated: 10000
+---------------------------------------------------------
+Mean L1 Distance (Scaled space): 0.422766
+Mean L1 Distance (Raw ArcFace):  0.019472
+Mean Cosine Similarity:          0.840151
+

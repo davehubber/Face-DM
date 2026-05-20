@@ -1,7 +1,0 @@
---- Evaluation Results (Dominant z1): ONE_SHOT ---
-Run Name: avg_arcface_55_45_cosLoss
-Validation Pairs: 10,000
-----------------------------------------
-Cosine Distance (Scaled space): 0.215258
-Cosine Distance (Raw ArcFace):  0.215258
-Cosine Similarity:              0.784742

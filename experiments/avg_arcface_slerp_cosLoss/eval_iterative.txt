@@ -1,6 +1,0 @@
---- Evaluation Results: ITERATIVE ---
-Run Name: avg_arcface_slerp_cosLoss
-Validation Pairs: 10,000
-----------------------------------------
-L1 Distance:       0.023433
-Cosine Similarity: 0.771408

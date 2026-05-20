@@ -1,0 +1,9 @@
+--- Evaluation Results (Coupled Model): ITERATIVE ---
+Run Name: coupled_arcface_img
+Validation Pairs: 7000
+----------------------------------------
+Total Shared L1 Distance (Scaled space): 0.772671
+Target z1 L1 Distance (Raw ArcFace):     0.035737
+Target z2 L1 Distance (Raw ArcFace):     0.041888
+Target z1 Cosine Similarity:             0.468586
+Target z2 Cosine Similarity:             0.273679
