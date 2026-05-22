@@ -1,7 +1,0 @@
---- One-Shot Embedding Magnitude Evaluation (Validation Set) ---
-Checkpoint: experiments/avg_diffae_pit_l1cos1.0_10ts_constLR/checkpoints/mlp_ema.pt
-alpha_init: 0.5
-init_timestep: 10
-Total validation samples checked: 100000
-Predicted Embedding Average L2 Magnitude: 16.80899429
-Extracted Embedding Average L2 Magnitude: 17.04945564

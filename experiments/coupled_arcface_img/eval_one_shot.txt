@@ -1,9 +1,0 @@
---- Evaluation Results (Coupled Model): ONE_SHOT ---
-Run Name: coupled_arcface_img
-Validation Pairs: 7000
-----------------------------------------
-Total Shared L1 Distance (Scaled space): 0.723505
-Target z1 L1 Distance (Raw ArcFace):     0.034364
-Target z2 L1 Distance (Raw ArcFace):     0.040750
-Target z1 Cosine Similarity:             0.507541
-Target z2 Cosine Similarity:             0.312030

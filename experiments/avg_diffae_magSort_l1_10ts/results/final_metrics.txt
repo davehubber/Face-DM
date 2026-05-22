@@ -1,4 +1,0 @@
---- Iterative Evaluation (Validation Set) ---
-Dominant L1: 0.56460583
-Recovered Recessive L1: 0.56460583
-Total L1: 0.56460583

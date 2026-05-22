@@ -1,7 +1,0 @@
---- Iterative Evaluation (Validation Set) ---
-Predicted Clean L1: 0.52210575
-Predicted Clean Cosine Similarity: 0.75944906
-Extracted Other L1: 0.52210569
-Extracted Other Cosine Similarity: 0.75571299
-Permutation-Invariant Pair L1: 0.52210569
-Permutation-Invariant Pair Cosine Similarity: 0.75758100

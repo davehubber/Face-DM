@@ -1,4 +1,0 @@
---- One-Shot Evaluation (Validation Set) ---
-Predicted Clean L1: 0.54010385
-Extracted Other L1: 0.54010385
-Permutation-Invariant Pair L1: 0.54010385

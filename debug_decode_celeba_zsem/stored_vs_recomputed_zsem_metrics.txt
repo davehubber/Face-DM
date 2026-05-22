@@ -1,3 +1,0 @@
-cosine_similarity: 1.00000000
-mean_l1: 0.00000000
-mse: 0.00000000
