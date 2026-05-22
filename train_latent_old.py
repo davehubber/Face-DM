@@ -11,7 +11,7 @@ from accelerate import Accelerator
 from diffusers.training_utils import EMAModel
 from torch import optim
 
-from utils_latent import get_data, setup_logging
+from utils_latent_old import get_data, setup_logging
 
 
 class TimeEmbedding(nn.Module):
