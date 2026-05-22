@@ -133,9 +133,9 @@ class DeterministicColdDemorph(nn.Module):
         """
         Forward degradation: Mixes z1 and z2.
         t=0: alpha=1.0 -> purely z1
-        t=T: alpha=0.55 -> 0.55*z1 + 0.45*z2 (mixture tending toward z1)
+        t=T: alpha=0.50 -> 0.50*z1 + 0.50*z2 (perfect average mixture)
         """
-        alpha = 1.0 - 0.45 * (t / self.num_timesteps).view(-1, 1).float()
+        alpha = 1.0 - 0.50 * (t / self.num_timesteps).view(-1, 1).float()
         return alpha * z1 + (1.0 - alpha) * z2
 
     def compute_loss(self, z1, z2):
@@ -159,7 +159,7 @@ class DeterministicColdDemorph(nn.Module):
         """
         TACOs sampling for Demorphing.
         Args:
-            c: The terminal 0.55/0.45 mixture used as the initial state x_T.
+            c: The terminal 0.50/0.50 mixture used as the initial state x_T.
             c_avg: The ground-truth 0.5/0.5 perfect average used strictly to extract z2.
         """
         device = c.device
@@ -233,16 +233,16 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
     # Model Setup
     net = ColdDemorphNet(x_dim=512, hidden_dim=2048, num_layers=10).to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
-    optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=3e-4, weight_decay=0.01)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4,
+        "learning_rate": 3e-4,
         "batch_size": 16_384,
         "num_layers": 10,
         "hidden_dim": 2048,
         "num_timesteps": num_timesteps,
         "latent_space": "ArcFace",
-        "mixture": "0.55 / 0.45 (Sampling extracts z2 using 0.5/0.5)",
+        "mixture": "0.50 / 0.50 (Perfect average mixture)",
         "scaled_by_sqrt_512": True
     })
 
@@ -295,8 +295,8 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
                 for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val TACOs]"):
                     batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
                     
-                    # Compute the conditions
-                    batch_c = 0.55 * batch_z1 + 0.45 * batch_z2
+                    # Compute the conditions (Terminal mix is now a perfect 50/50 average)
+                    batch_c = 0.50 * batch_z1 + 0.50 * batch_z2
                     batch_c_avg = (batch_z1 + batch_z2) / 2.0
                     
                     # Generate the decomposed dominant embedding using TACOs
@@ -416,7 +416,8 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
     with torch.no_grad():
         for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Evaluating ({mode})"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-            batch_c = 0.55 * batch_z1 + 0.45 * batch_z2
+            batch_c = 0.50 * batch_z1 + 0.40 * batch_z2  # Modified to perfect 50/50 split
+            batch_c = 0.50 * batch_z1 + 0.50 * batch_z2
             batch_c_avg = (batch_z1 + batch_z2) / 2.0
             b = batch_z1.shape[0]
             
@@ -470,20 +471,20 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
 if __name__ == "__main__":
     train_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_55_45_50ts_nonC",
-        num_timesteps=50
+        run_name="avg_arcface_50_50",
+        num_timesteps=5,
     )
 
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_55_45_50ts_nonC",
-        num_timesteps=50,
+        run_name="avg_arcface_50_50",
+        num_timesteps=5,
         mode='one_shot'
     )
     
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_55_45_50ts_nonC",
-        num_timesteps=50,
+        run_name="avg_arcface_50_50",
+        num_timesteps=5,
         mode='iterative'
     )
