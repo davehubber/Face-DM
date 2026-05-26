@@ -1,0 +1,90 @@
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 1 | Train L1: 1.1919 | Val Cheap L1: 1.0052
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 2 | Train L1: 0.9855 | Val Cheap L1: 0.9793
+Epoch 3 | Train L1: 0.9722 | Val Cheap L1: 0.9805
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 4 | Train L1: 0.9653 | Val Cheap L1: 0.9683
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 5 | Train L1: 0.9582 | Val Cheap L1: 0.9588 | Val TACOs L1: 0.5518
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 6 | Train L1: 0.9502 | Val Cheap L1: 0.9542
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 7 | Train L1: 0.9405 | Val Cheap L1: 0.9460
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 8 | Train L1: 0.9297 | Val Cheap L1: 0.9336
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 9 | Train L1: 0.9172 | Val Cheap L1: 0.9290
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 10 | Train L1: 0.9057 | Val Cheap L1: 0.9240 | Val TACOs L1: 0.5472
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 11 | Train L1: 0.8952 | Val Cheap L1: 0.9158
+Epoch 12 | Train L1: 0.8855 | Val Cheap L1: 0.9173
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 13 | Train L1: 0.8766 | Val Cheap L1: 0.9141
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 14 | Train L1: 0.8689 | Val Cheap L1: 0.9102
+Epoch 15 | Train L1: 0.8611 | Val Cheap L1: 0.9107 | Val TACOs L1: 0.5326
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt
+Epoch 16 | Train L1: 0.8539 | Val Cheap L1: 0.9061
+Epoch 17 | Train L1: 0.8468 | Val Cheap L1: 0.9127
+Epoch 18 | Train L1: 0.8401 | Val Cheap L1: 0.9163
+Epoch 19 | Train L1: 0.8332 | Val Cheap L1: 0.9099
+Epoch 20 | Train L1: 0.8271 | Val Cheap L1: 0.9099 | Val TACOs L1: 0.5239
+Epoch 21 | Train L1: 0.8217 | Val Cheap L1: 0.9156
+Epoch 22 | Train L1: 0.8179 | Val Cheap L1: 0.9122
+Epoch 23 | Train L1: 0.8111 | Val Cheap L1: 0.9120
+Epoch 24 | Train L1: 0.8057 | Val Cheap L1: 0.9198
+Epoch 25 | Train L1: 0.8016 | Val Cheap L1: 0.9223 | Val TACOs L1: 0.5203
+Epoch 26 | Train L1: 0.7961 | Val Cheap L1: 0.9213
+Epoch 27 | Train L1: 0.7917 | Val Cheap L1: 0.9251
+Epoch 28 | Train L1: 0.7870 | Val Cheap L1: 0.9253
+Epoch 29 | Train L1: 0.7822 | Val Cheap L1: 0.9291
+Epoch 30 | Train L1: 0.7783 | Val Cheap L1: 0.9251 | Val TACOs L1: 0.5136
+Epoch 31 | Train L1: 0.7730 | Val Cheap L1: 0.9365
+Epoch 32 | Train L1: 0.7701 | Val Cheap L1: 0.9321
+Epoch 33 | Train L1: 0.7649 | Val Cheap L1: 0.9325
+Epoch 34 | Train L1: 0.7615 | Val Cheap L1: 0.9352
+Epoch 35 | Train L1: 0.7571 | Val Cheap L1: 0.9445 | Val TACOs L1: 0.5147
+Epoch 36 | Train L1: 0.7536 | Val Cheap L1: 0.9428
+Epoch 37 | Train L1: 0.7500 | Val Cheap L1: 0.9428
+Epoch 38 | Train L1: 0.7461 | Val Cheap L1: 0.9464
+Epoch 39 | Train L1: 0.7424 | Val Cheap L1: 0.9443
+Epoch 40 | Train L1: 0.7388 | Val Cheap L1: 0.9519 | Val TACOs L1: 0.5140
+Epoch 41 | Train L1: 0.7352 | Val Cheap L1: 0.9494
+Epoch 42 | Train L1: 0.7318 | Val Cheap L1: 0.9522
+Epoch 43 | Train L1: 0.7287 | Val Cheap L1: 0.9562
+Epoch 44 | Train L1: 0.7254 | Val Cheap L1: 0.9525
+Epoch 45 | Train L1: 0.7211 | Val Cheap L1: 0.9582 | Val TACOs L1: 0.5111
+Epoch 46 | Train L1: 0.7182 | Val Cheap L1: 0.9563
+Epoch 47 | Train L1: 0.7155 | Val Cheap L1: 0.9587
+Epoch 48 | Train L1: 0.7121 | Val Cheap L1: 0.9594
+Epoch 49 | Train L1: 0.7088 | Val Cheap L1: 0.9606
+Epoch 50 | Train L1: 0.7053 | Val Cheap L1: 0.9622 | Val TACOs L1: 0.5107
+Loading ArcFace embeddings for one_shot evaluation...
+Loading weights from experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt...
+
+--- Evaluation Results (Dual Prediction Symmetrical Slerp): ONE_SHOT ---
+Run Name: avg_arcface_dual_predict_alpha_60
+Validation Pairs: 10,000
+Terminal Alpha Config: 0.60
+----------------------------------------
+Average L1 Distance (Scaled space): 0.476161
+Average L1 Distance (Raw ArcFace):  0.022349
+Average Cosine Similarity:          0.781391
+
+Saved evaluation results to experiments/avg_arcface_dual_predict_alpha_60/eval_one_shot.txt
+Loading ArcFace embeddings for iterative evaluation...
+Loading weights from experiments/avg_arcface_dual_predict_alpha_60/checkpoints/best.pt...
+
+--- Evaluation Results (Dual Prediction Symmetrical Slerp): ITERATIVE ---
+Run Name: avg_arcface_dual_predict_alpha_60
+Validation Pairs: 10,000
+Terminal Alpha Config: 0.60
+----------------------------------------
+Average L1 Distance (Scaled space): 0.530409
+Average L1 Distance (Raw ArcFace):  0.025323
+Average Cosine Similarity:          0.707073
+
+Saved evaluation results to experiments/avg_arcface_dual_predict_alpha_60/eval_iterative.txt

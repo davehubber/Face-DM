@@ -1,0 +1,61 @@
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 1 | Train L1: 0.3705 | Val Cheap L1: 0.2460
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 2 | Train L1: 0.2289 | Val Cheap L1: 0.2222
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 3 | Train L1: 0.2190 | Val Cheap L1: 0.2180
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 4 | Train L1: 0.2149 | Val Cheap L1: 0.2136
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 5 | Train L1: 0.2111 | Val Cheap L1: 0.2099 | Val TACOs L1: 0.2891
+Epoch 6 | Train L1: 0.2083 | Val Cheap L1: 0.2116
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 7 | Train L1: 0.2053 | Val Cheap L1: 0.2060
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 8 | Train L1: 0.2025 | Val Cheap L1: 0.2043
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 9 | Train L1: 0.1998 | Val Cheap L1: 0.2041
+Epoch 10 | Train L1: 0.1975 | Val Cheap L1: 0.2044 | Val TACOs L1: 0.2758
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 11 | Train L1: 0.1955 | Val Cheap L1: 0.2020
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 12 | Train L1: 0.1934 | Val Cheap L1: 0.1997
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 13 | Train L1: 0.1912 | Val Cheap L1: 0.1997
+Epoch 14 | Train L1: 0.1896 | Val Cheap L1: 0.2005
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 15 | Train L1: 0.1880 | Val Cheap L1: 0.1973 | Val TACOs L1: 0.2668
+Epoch 16 | Train L1: 0.1866 | Val Cheap L1: 0.1980
+Epoch 17 | Train L1: 0.1853 | Val Cheap L1: 0.1980
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 18 | Train L1: 0.1839 | Val Cheap L1: 0.1952
+Epoch 19 | Train L1: 0.1827 | Val Cheap L1: 0.2009
+--> Saved new best checkpoint based on Cheap Val to experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt
+Epoch 20 | Train L1: 0.1817 | Val Cheap L1: 0.1939 | Val TACOs L1: 0.2630
+Loading ArcFace embeddings for one_shot evaluation...
+Loading weights from experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt...
+
+--- Evaluation Results (Dominant z1 Target Tracking): ONE_SHOT ---
+Run Name: asymmetric_arcface_z1_alpha_60
+Validation Pairs: 10,000
+Terminal Alpha Config: 0.60
+----------------------------------------
+L1 Distance (Scaled space): 0.375150
+L1 Distance (Raw ArcFace):  0.017102
+Cosine Similarity:          0.876812
+
+Saved evaluation results to experiments/asymmetric_arcface_z1_alpha_60/eval_one_shot.txt
+Loading ArcFace embeddings for iterative evaluation...
+Loading weights from experiments/asymmetric_arcface_z1_alpha_60/checkpoints/best.pt...
+
+--- Evaluation Results (Dominant z1 Target Tracking): ITERATIVE ---
+Run Name: asymmetric_arcface_z1_alpha_60
+Validation Pairs: 10,000
+Terminal Alpha Config: 0.60
+----------------------------------------
+L1 Distance (Scaled space): 0.263002
+L1 Distance (Raw ArcFace):  0.011793
+Cosine Similarity:          0.941527
+
+Saved evaluation results to experiments/asymmetric_arcface_z1_alpha_60/eval_iterative.txt

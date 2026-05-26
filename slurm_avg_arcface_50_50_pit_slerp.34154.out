@@ -1,0 +1,96 @@
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 1 | Train L1: 0.4514 | Val Cheap L1: 0.3488
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 2 | Train L1: 0.3428 | Val Cheap L1: 0.3394
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 3 | Train L1: 0.3365 | Val Cheap L1: 0.3374
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 4 | Train L1: 0.3307 | Val Cheap L1: 0.3290
+Epoch 5 | Train L1: 0.3232 | Val Cheap L1: 0.3303 | Val TACOs L1: 0.5398
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 6 | Train L1: 0.3184 | Val Cheap L1: 0.3187
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 7 | Train L1: 0.3126 | Val Cheap L1: 0.3158
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 8 | Train L1: 0.3079 | Val Cheap L1: 0.3109
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 9 | Train L1: 0.3028 | Val Cheap L1: 0.3082
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 10 | Train L1: 0.3001 | Val Cheap L1: 0.3061 | Val TACOs L1: 0.4986
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 11 | Train L1: 0.2971 | Val Cheap L1: 0.3049
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 12 | Train L1: 0.2944 | Val Cheap L1: 0.3028
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 13 | Train L1: 0.2918 | Val Cheap L1: 0.3008
+Epoch 14 | Train L1: 0.2897 | Val Cheap L1: 0.3020
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 15 | Train L1: 0.2875 | Val Cheap L1: 0.3000 | Val TACOs L1: 0.4800
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 16 | Train L1: 0.2862 | Val Cheap L1: 0.2969
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 17 | Train L1: 0.2842 | Val Cheap L1: 0.2934
+Epoch 18 | Train L1: 0.2827 | Val Cheap L1: 0.2945
+Epoch 19 | Train L1: 0.2811 | Val Cheap L1: 0.2975
+Epoch 20 | Train L1: 0.2800 | Val Cheap L1: 0.2960 | Val TACOs L1: 0.4702
+Epoch 21 | Train L1: 0.2787 | Val Cheap L1: 0.2941
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 22 | Train L1: 0.2773 | Val Cheap L1: 0.2912
+Epoch 23 | Train L1: 0.2757 | Val Cheap L1: 0.2928
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 24 | Train L1: 0.2751 | Val Cheap L1: 0.2905
+Epoch 25 | Train L1: 0.2736 | Val Cheap L1: 0.2925 | Val TACOs L1: 0.4626
+Epoch 26 | Train L1: 0.2726 | Val Cheap L1: 0.2908
+Epoch 27 | Train L1: 0.2722 | Val Cheap L1: 0.2923
+Epoch 28 | Train L1: 0.2705 | Val Cheap L1: 0.2923
+Epoch 29 | Train L1: 0.2706 | Val Cheap L1: 0.2915
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 30 | Train L1: 0.2690 | Val Cheap L1: 0.2899 | Val TACOs L1: 0.4559
+Epoch 31 | Train L1: 0.2676 | Val Cheap L1: 0.2900
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 32 | Train L1: 0.2672 | Val Cheap L1: 0.2897
+Epoch 33 | Train L1: 0.2663 | Val Cheap L1: 0.2903
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 34 | Train L1: 0.2662 | Val Cheap L1: 0.2866
+Epoch 35 | Train L1: 0.2649 | Val Cheap L1: 0.2880 | Val TACOs L1: 0.4507
+Epoch 36 | Train L1: 0.2636 | Val Cheap L1: 0.2878
+Epoch 37 | Train L1: 0.2629 | Val Cheap L1: 0.2870
+Epoch 38 | Train L1: 0.2630 | Val Cheap L1: 0.2892
+Epoch 39 | Train L1: 0.2613 | Val Cheap L1: 0.2883
+Epoch 40 | Train L1: 0.2608 | Val Cheap L1: 0.2868 | Val TACOs L1: 0.4515
+Epoch 41 | Train L1: 0.2600 | Val Cheap L1: 0.2887
+Epoch 42 | Train L1: 0.2595 | Val Cheap L1: 0.2883
+Epoch 43 | Train L1: 0.2587 | Val Cheap L1: 0.2875
+Epoch 44 | Train L1: 0.2582 | Val Cheap L1: 0.2894
+Epoch 45 | Train L1: 0.2572 | Val Cheap L1: 0.2879 | Val TACOs L1: 0.4476
+Epoch 46 | Train L1: 0.2567 | Val Cheap L1: 0.2879
+Epoch 47 | Train L1: 0.2560 | Val Cheap L1: 0.2883
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt
+Epoch 48 | Train L1: 0.2553 | Val Cheap L1: 0.2862
+Epoch 49 | Train L1: 0.2547 | Val Cheap L1: 0.2901
+Epoch 50 | Train L1: 0.2544 | Val Cheap L1: 0.2866 | Val TACOs L1: 0.4465
+Loading ArcFace embeddings for one_shot evaluation...
+Loading weights from experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt...
+
+--- Evaluation Results (Permutation Invariant & Slerp TACOs): ONE_SHOT ---
+Run Name: avg_arcface_50_50_pit_slerp
+Validation Pairs: 10,000
+----------------------------------------
+L1 Distance (Scaled space): 0.420740
+L1 Distance (Raw ArcFace):  0.019369
+Cosine Similarity:          0.841952
+
+Saved evaluation results to experiments/avg_arcface_50_50_pit_slerp/eval_one_shot.txt
+Loading ArcFace embeddings for iterative evaluation...
+Loading weights from experiments/avg_arcface_50_50_pit_slerp/checkpoints/best.pt...
+
+--- Evaluation Results (Permutation Invariant & Slerp TACOs): ITERATIVE ---
+Run Name: avg_arcface_50_50_pit_slerp
+Validation Pairs: 10,000
+----------------------------------------
+L1 Distance (Scaled space): 0.444566
+L1 Distance (Raw ArcFace):  0.019696
+Cosine Similarity:          0.836753
+
+Saved evaluation results to experiments/avg_arcface_50_50_pit_slerp/eval_iterative.txt

@@ -1,0 +1,8 @@
+--- Evaluation Results (Dual Prediction Symmetrical Slerp): ITERATIVE ---
+Run Name: avg_arcface_dual_predict_alpha_60_2ts
+Validation Pairs: 10,000
+Terminal Alpha Config: 0.60
+----------------------------------------
+Average L1 Distance (Scaled space): 0.491952
+Average L1 Distance (Raw ArcFace):  0.023408
+Average Cosine Similarity:          0.750135
