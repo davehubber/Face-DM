@@ -153,17 +153,17 @@ def train_oneshot_demorph(arcface_path_str: str, run_name: str):
     train_dataset = OneShotArcFaceDemorphDataset(train_embs, epoch_size=1_000_000, deterministic=False)
     val_dataset = OneShotArcFaceDemorphDataset(val_embs, epoch_size=10_000, deterministic=True)
     
-    train_loader = DataLoader(train_dataset, batch_size=8192, shuffle=True, num_workers=8)
-    val_loader = DataLoader(val_dataset, batch_size=8192, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=16384, shuffle=True, num_workers=8)
+    val_loader = DataLoader(val_dataset, batch_size=2048, shuffle=False, num_workers=4)
 
     net = OneShotDemorphNet(in_dim=512, hidden_dim=2048, out_dim=1024, num_blocks=6).to(device)
     wrapper = PermutationInvariantDemorpher(net).to(device)
-    optimizer = torch.optim.AdamW(net.parameters(), lr=2e-4, weight_decay=0.01)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=3e-4, weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50, eta_min=1e-6)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 2e-4,
-        "batch_size": 8192,
+        "learning_rate": 3e-4,
+        "batch_size": 16384,
         "num_blocks": 6,
         "hidden_dim": 2048,
         "latent_space": "ArcFace",
@@ -181,7 +181,7 @@ def train_oneshot_demorph(arcface_path_str: str, run_name: str):
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]")
         for batch_z1, batch_z2 in pbar:
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-            batch_c = (batch_z1 + batch_z2) / 2.0
+            batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1) * math.sqrt(512)
             
             optimizer.zero_grad()
             loss = wrapper.compute_loss(batch_c, batch_z1, batch_z2)
@@ -201,7 +201,7 @@ def train_oneshot_demorph(arcface_path_str: str, run_name: str):
         with torch.no_grad():
             for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]"):
                 batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-                batch_c = (batch_z1 + batch_z2) / 2.0
+                batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1) * math.sqrt(512)
                 
                 loss_val = wrapper.compute_loss(batch_c, batch_z1, batch_z2)
                 val_loss_total += loss_val.item()
@@ -266,7 +266,7 @@ def evaluate_oneshot_demorph(arcface_path_str: str, run_name: str):
     with torch.no_grad():
         for batch_z1, batch_z2 in tqdm(val_loader, desc="Evaluating One-Shot"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-            batch_c = (batch_z1 + batch_z2) / 2.0
+            batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1) * math.sqrt(512)
             
             # Extract predictions
             pred_z1, pred_z2 = wrapper.predict(batch_c)
@@ -321,7 +321,7 @@ def evaluate_oneshot_demorph(arcface_path_str: str, run_name: str):
 
 if __name__ == "__main__":
     DATA_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
-    RUN_ID = "oneshot_arcface_pit"
+    RUN_ID = "oneshot_arcface_real"
 
     train_oneshot_demorph(arcface_path_str=DATA_PATH, run_name=RUN_ID)
     evaluate_oneshot_demorph(arcface_path_str=DATA_PATH, run_name=RUN_ID)
