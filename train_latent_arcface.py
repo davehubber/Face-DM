@@ -139,7 +139,6 @@ class DeterministicColdDemorph(nn.Module):
     def compute_loss(self, z1, z2):
         b = z1.shape[0]
         
-        # 50% of the batch targets the final symmetric step t=T; the rest targets t < T
         is_terminal = torch.rand(b, device=z1.device) < 0.5
         t_non_terminal = torch.randint(1, self.num_timesteps, (b,), device=z1.device).long()
         t = torch.where(is_terminal, torch.tensor(self.num_timesteps, device=z1.device), t_non_terminal)
@@ -147,13 +146,23 @@ class DeterministicColdDemorph(nn.Module):
         x_t = self.degrade(z1, z2, t)
         pred_z1, pred_z2 = self.model(x_t, t)
         
-        # --- Loss for Terminal Timestep t=T (Permutation Invariant) ---
+        # 1. Terminal Timestep t=T Loss (Permutation Invariant)
         loss_opt_A = F.l1_loss(pred_z1, z1, reduction='none').mean(dim=-1) + F.l1_loss(pred_z2, z2, reduction='none').mean(dim=-1)
         loss_opt_B = F.l1_loss(pred_z1, z2, reduction='none').mean(dim=-1) + F.l1_loss(pred_z2, z1, reduction='none').mean(dim=-1)
         loss_terminal = torch.min(loss_opt_A, loss_opt_B) / 2.0
         
-        # --- Loss for Intermediate Timesteps t < T (Strictly targeting z1) ---
-        loss_non_terminal = F.l1_loss(pred_z1, z1, reduction='none').mean(dim=-1)
+        # 2. Intermediate Timesteps t < T Loss (Targeting z1 + Input Reconstruction)
+        alpha = 1.0 - 0.50 * (t / self.num_timesteps).view(-1, 1).float()
+        
+        # Primary objective: Slot 1 must find the dominant embedding
+        loss_z1_target = F.l1_loss(pred_z1, z1, reduction='none').mean(dim=-1)
+        
+        # Secondary objective: Combined outputs must perfectly explain the input mixture
+        x_t_recon = alpha * pred_z1 + (1.0 - alpha) * pred_z2
+        loss_recon = F.l1_loss(x_t_recon, x_t, reduction='none').mean(dim=-1)
+        
+        # Blend them together (a 1:1 weight works well here because they share the same scale)
+        loss_non_terminal = loss_z1_target + loss_recon
         
         loss = torch.where(is_terminal, loss_terminal, loss_non_terminal).mean()
         return loss
@@ -244,7 +253,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
     train_dataset = ColdArcFaceDemorphDataset(train_embs, epoch_size=1_000_000, deterministic=False)
     val_dataset = ColdArcFaceDemorphDataset(val_embs, epoch_size=10_000, deterministic=True)
     
-    train_loader = DataLoader(train_dataset, batch_size=16_384, shuffle=True, num_workers=8)
+    train_loader = DataLoader(train_dataset, batch_size=12_288, shuffle=True, num_workers=8)
     val_loader = DataLoader(val_dataset, batch_size=2_048, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet(x_dim=512, hidden_dim=2048, num_layers=10).to(device)
@@ -253,7 +262,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
         "learning_rate": 3e-4,
-        "batch_size": 16_384,
+        "batch_size": 12_288,
         "num_layers": 10,
         "hidden_dim": 2048,
         "num_timesteps": num_timesteps,
@@ -474,7 +483,7 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
 
 
 if __name__ == "__main__":
-    RUN_NAME = "arcface_decoupled_dual_path_deaveraging"
+    RUN_NAME = "arcface_decoupled_dual_path_deaveraging_double_objective"
     EMB_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
 
     train_cold_demorph(

@@ -1,0 +1,169 @@
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 1 | Train L1: 0.5122 | Val Cheap L1: 0.4113
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 2 | Train L1: 0.3988 | Val Cheap L1: 0.3938
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 3 | Train L1: 0.3903 | Val Cheap L1: 0.3914
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 4 | Train L1: 0.3852 | Val Cheap L1: 0.3861
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 5 | Train L1: 0.3790 | Val Cheap L1: 0.3810 | TACOs z1 L1: 0.5202 | TACOs z2 L1: 0.5203
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 6 | Train L1: 0.3730 | Val Cheap L1: 0.3736
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 7 | Train L1: 0.3659 | Val Cheap L1: 0.3666
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 8 | Train L1: 0.3588 | Val Cheap L1: 0.3618
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 9 | Train L1: 0.3529 | Val Cheap L1: 0.3585
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 10 | Train L1: 0.3477 | Val Cheap L1: 0.3564 | TACOs z1 L1: 0.4815 | TACOs z2 L1: 0.4824
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 11 | Train L1: 0.3432 | Val Cheap L1: 0.3510
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 12 | Train L1: 0.3395 | Val Cheap L1: 0.3492
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 13 | Train L1: 0.3360 | Val Cheap L1: 0.3458
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 14 | Train L1: 0.3330 | Val Cheap L1: 0.3450
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 15 | Train L1: 0.3298 | Val Cheap L1: 0.3437 | TACOs z1 L1: 0.4607 | TACOs z2 L1: 0.4613
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 16 | Train L1: 0.3275 | Val Cheap L1: 0.3369
+Epoch 17 | Train L1: 0.3250 | Val Cheap L1: 0.3395
+Epoch 18 | Train L1: 0.3228 | Val Cheap L1: 0.3377
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 19 | Train L1: 0.3205 | Val Cheap L1: 0.3362
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 20 | Train L1: 0.3186 | Val Cheap L1: 0.3352 | TACOs z1 L1: 0.4527 | TACOs z2 L1: 0.4531
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 21 | Train L1: 0.3169 | Val Cheap L1: 0.3320
+Epoch 22 | Train L1: 0.3155 | Val Cheap L1: 0.3344
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 23 | Train L1: 0.3137 | Val Cheap L1: 0.3274
+Epoch 24 | Train L1: 0.3120 | Val Cheap L1: 0.3335
+Epoch 25 | Train L1: 0.3106 | Val Cheap L1: 0.3292 | TACOs z1 L1: 0.4416 | TACOs z2 L1: 0.4417
+Epoch 26 | Train L1: 0.3086 | Val Cheap L1: 0.3279
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 27 | Train L1: 0.3074 | Val Cheap L1: 0.3264
+Epoch 28 | Train L1: 0.3065 | Val Cheap L1: 0.3316
+Epoch 29 | Train L1: 0.3051 | Val Cheap L1: 0.3279
+Epoch 30 | Train L1: 0.3038 | Val Cheap L1: 0.3273 | TACOs z1 L1: 0.4376 | TACOs z2 L1: 0.4383
+Epoch 31 | Train L1: 0.3027 | Val Cheap L1: 0.3280
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 32 | Train L1: 0.3015 | Val Cheap L1: 0.3255
+Epoch 33 | Train L1: 0.3007 | Val Cheap L1: 0.3260
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 34 | Train L1: 0.3000 | Val Cheap L1: 0.3252
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 35 | Train L1: 0.2983 | Val Cheap L1: 0.3241 | TACOs z1 L1: 0.4329 | TACOs z2 L1: 0.4329
+Epoch 36 | Train L1: 0.2979 | Val Cheap L1: 0.3247
+Epoch 37 | Train L1: 0.2967 | Val Cheap L1: 0.3250
+Epoch 38 | Train L1: 0.2956 | Val Cheap L1: 0.3253
+Epoch 39 | Train L1: 0.2946 | Val Cheap L1: 0.3245
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 40 | Train L1: 0.2938 | Val Cheap L1: 0.3218 | TACOs z1 L1: 0.4312 | TACOs z2 L1: 0.4319
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 41 | Train L1: 0.2929 | Val Cheap L1: 0.3204
+Epoch 42 | Train L1: 0.2922 | Val Cheap L1: 0.3223
+Epoch 43 | Train L1: 0.2915 | Val Cheap L1: 0.3232
+Epoch 44 | Train L1: 0.2907 | Val Cheap L1: 0.3229
+Epoch 45 | Train L1: 0.2900 | Val Cheap L1: 0.3236 | TACOs z1 L1: 0.4287 | TACOs z2 L1: 0.4290
+Epoch 46 | Train L1: 0.2891 | Val Cheap L1: 0.3230
+Epoch 47 | Train L1: 0.2882 | Val Cheap L1: 0.3232
+Epoch 48 | Train L1: 0.2880 | Val Cheap L1: 0.3240
+Epoch 49 | Train L1: 0.2869 | Val Cheap L1: 0.3227
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 50 | Train L1: 0.2860 | Val Cheap L1: 0.3197 | TACOs z1 L1: 0.4279 | TACOs z2 L1: 0.4281
+Epoch 51 | Train L1: 0.2853 | Val Cheap L1: 0.3217
+Epoch 52 | Train L1: 0.2846 | Val Cheap L1: 0.3227
+Epoch 53 | Train L1: 0.2844 | Val Cheap L1: 0.3240
+Epoch 54 | Train L1: 0.2837 | Val Cheap L1: 0.3240
+Epoch 55 | Train L1: 0.2832 | Val Cheap L1: 0.3200 | TACOs z1 L1: 0.4275 | TACOs z2 L1: 0.4281
+Epoch 56 | Train L1: 0.2823 | Val Cheap L1: 0.3216
+Epoch 57 | Train L1: 0.2821 | Val Cheap L1: 0.3210
+Epoch 58 | Train L1: 0.2813 | Val Cheap L1: 0.3232
+Epoch 59 | Train L1: 0.2809 | Val Cheap L1: 0.3216
+Epoch 60 | Train L1: 0.2799 | Val Cheap L1: 0.3203 | TACOs z1 L1: 0.4257 | TACOs z2 L1: 0.4256
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 61 | Train L1: 0.2792 | Val Cheap L1: 0.3194
+Epoch 62 | Train L1: 0.2790 | Val Cheap L1: 0.3218
+Epoch 63 | Train L1: 0.2785 | Val Cheap L1: 0.3212
+Epoch 64 | Train L1: 0.2780 | Val Cheap L1: 0.3205
+Epoch 65 | Train L1: 0.2774 | Val Cheap L1: 0.3201 | TACOs z1 L1: 0.4254 | TACOs z2 L1: 0.4254
+Epoch 66 | Train L1: 0.2763 | Val Cheap L1: 0.3204
+Epoch 67 | Train L1: 0.2760 | Val Cheap L1: 0.3219
+Epoch 68 | Train L1: 0.2753 | Val Cheap L1: 0.3202
+Epoch 69 | Train L1: 0.2751 | Val Cheap L1: 0.3213
+Epoch 70 | Train L1: 0.2751 | Val Cheap L1: 0.3222 | TACOs z1 L1: 0.4238 | TACOs z2 L1: 0.4250
+Epoch 71 | Train L1: 0.2753 | Val Cheap L1: 0.3207
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 72 | Train L1: 0.2740 | Val Cheap L1: 0.3190
+Epoch 73 | Train L1: 0.2734 | Val Cheap L1: 0.3212
+Epoch 74 | Train L1: 0.2731 | Val Cheap L1: 0.3225
+Epoch 75 | Train L1: 0.2724 | Val Cheap L1: 0.3218 | TACOs z1 L1: 0.4256 | TACOs z2 L1: 0.4257
+Epoch 76 | Train L1: 0.2725 | Val Cheap L1: 0.3218
+Epoch 77 | Train L1: 0.2719 | Val Cheap L1: 0.3198
+Epoch 78 | Train L1: 0.2710 | Val Cheap L1: 0.3216
+Epoch 79 | Train L1: 0.2712 | Val Cheap L1: 0.3220
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 80 | Train L1: 0.2703 | Val Cheap L1: 0.3190 | TACOs z1 L1: 0.4217 | TACOs z2 L1: 0.4221
+Epoch 81 | Train L1: 0.2697 | Val Cheap L1: 0.3213
+Epoch 82 | Train L1: 0.2694 | Val Cheap L1: 0.3231
+Epoch 83 | Train L1: 0.2687 | Val Cheap L1: 0.3199
+Epoch 84 | Train L1: 0.2685 | Val Cheap L1: 0.3214
+Epoch 85 | Train L1: 0.2683 | Val Cheap L1: 0.3229 | TACOs z1 L1: 0.4223 | TACOs z2 L1: 0.4225
+Epoch 86 | Train L1: 0.2674 | Val Cheap L1: 0.3196
+Epoch 87 | Train L1: 0.2668 | Val Cheap L1: 0.3202
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 88 | Train L1: 0.2666 | Val Cheap L1: 0.3184
+--> Saved new best checkpoint based on Cheap Val to experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt
+Epoch 89 | Train L1: 0.2664 | Val Cheap L1: 0.3173
+Epoch 90 | Train L1: 0.2660 | Val Cheap L1: 0.3175 | TACOs z1 L1: 0.4218 | TACOs z2 L1: 0.4221
+Epoch 91 | Train L1: 0.2654 | Val Cheap L1: 0.3235
+Epoch 92 | Train L1: 0.2649 | Val Cheap L1: 0.3195
+Epoch 93 | Train L1: 0.2650 | Val Cheap L1: 0.3221
+Epoch 94 | Train L1: 0.2640 | Val Cheap L1: 0.3231
+Epoch 95 | Train L1: 0.2640 | Val Cheap L1: 0.3191 | TACOs z1 L1: 0.4206 | TACOs z2 L1: 0.4210
+Epoch 96 | Train L1: 0.2632 | Val Cheap L1: 0.3220
+Epoch 97 | Train L1: 0.2634 | Val Cheap L1: 0.3243
+Epoch 98 | Train L1: 0.2629 | Val Cheap L1: 0.3227
+Epoch 99 | Train L1: 0.2627 | Val Cheap L1: 0.3219
+Epoch 100 | Train L1: 0.2623 | Val Cheap L1: 0.3206 | TACOs z1 L1: 0.4212 | TACOs z2 L1: 0.4216
+Loading ArcFace embeddings for one_shot evaluation...
+Loading weights from experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt...
+
+--- Evaluation Results (Decoupled Parallel Tracking): ONE_SHOT ---
+Run Name: arcface_decoupled_dual_path_deaveraging
+Validation Pairs: 10,000
+----------------------------------------------------
+PATH 1 RECOVERY METRICS (Targeting z1):
+  L1 Distance (Scaled space): 0.415167
+  L1 Distance (Raw ArcFace):  0.018990
+  Cosine Similarity:          0.847981
+----------------------------------------------------
+PATH 2 RECOVERY METRICS (Targeting z2):
+  L1 Distance (Scaled space): 0.415138
+  L1 Distance (Raw ArcFace):  0.018992
+  Cosine Similarity:          0.847974
+
+Saved evaluation results to experiments/arcface_decoupled_dual_path_deaveraging/eval_one_shot.txt
+Loading ArcFace embeddings for iterative evaluation...
+Loading weights from experiments/arcface_decoupled_dual_path_deaveraging/checkpoints/best.pt...
+
+--- Evaluation Results (Decoupled Parallel Tracking): ITERATIVE ---
+Run Name: arcface_decoupled_dual_path_deaveraging
+Validation Pairs: 10,000
+----------------------------------------------------
+PATH 1 RECOVERY METRICS (Targeting z1):
+  L1 Distance (Scaled space): 0.421558
+  L1 Distance (Raw ArcFace):  0.019181
+  Cosine Similarity:          0.844231
+----------------------------------------------------
+PATH 2 RECOVERY METRICS (Targeting z2):
+  L1 Distance (Scaled space): 0.421820
+  L1 Distance (Raw ArcFace):  0.019199
+  Cosine Similarity:          0.843985
+
+Saved evaluation results to experiments/arcface_decoupled_dual_path_deaveraging/eval_iterative.txt
