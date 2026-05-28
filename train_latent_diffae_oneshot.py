@@ -188,7 +188,7 @@ def train_oneshot_diffae(diffae_path_str: str, run_name: str):
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]")
         for batch_z1, batch_z2 in pbar:
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-            batch_c = (batch_z1 + batch_z2) / math.sqrt(2)
+            batch_c = (batch_z1 + batch_z2) / 2
             
             optimizer.zero_grad()
             loss = wrapper.compute_loss(batch_c, batch_z1, batch_z2)
@@ -208,7 +208,7 @@ def train_oneshot_diffae(diffae_path_str: str, run_name: str):
         with torch.no_grad():
             for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]"):
                 batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-                batch_c = (batch_z1 + batch_z2) / math.sqrt(2)
+                batch_c = (batch_z1 + batch_z2) / 2
                 
                 loss_val = wrapper.compute_loss(batch_c, batch_z1, batch_z2)
                 val_loss_total += loss_val.item()
@@ -271,7 +271,7 @@ def evaluate_oneshot_diffae(diffae_path_str: str, run_name: str):
     with torch.no_grad():
         for batch_z1, batch_z2 in tqdm(val_loader, desc="Evaluating One-Shot"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-            batch_c = (batch_z1 + batch_z2) / math.sqrt(2)
+            batch_c = (batch_z1 + batch_z2) / 2
             
             # Extract predictions [batch, 512]
             pred_z1, pred_z2 = wrapper.predict(batch_c)
