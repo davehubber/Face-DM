@@ -1,0 +1,33 @@
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 1 | Train Loss: 0.2517 | Val Cheap Loss: 0.1324
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 2 | Train Loss: 0.1324 | Val Cheap Loss: 0.1262
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 3 | Train Loss: 0.1211 | Val Cheap Loss: 0.1181
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 4 | Train Loss: 0.1150 | Val Cheap Loss: 0.1146
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 5 | Train Loss: 0.1094 | Val Cheap Loss: 0.1073 | Val TACOs Cos: 0.7084
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 6 | Train Loss: 0.1040 | Val Cheap Loss: 0.1024
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 7 | Train Loss: 0.0995 | Val Cheap Loss: 0.1004
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 8 | Train Loss: 0.0956 | Val Cheap Loss: 0.0967
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 9 | Train Loss: 0.0930 | Val Cheap Loss: 0.0957
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 10 | Train Loss: 0.0904 | Val Cheap Loss: 0.0930 | Val TACOs Cos: 0.7378
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 11 | Train Loss: 0.0884 | Val Cheap Loss: 0.0920
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 12 | Train Loss: 0.0857 | Val Cheap Loss: 0.0901
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 13 | Train Loss: 0.0856 | Val Cheap Loss: 0.0892
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 14 | Train Loss: 0.0830 | Val Cheap Loss: 0.0857
+Epoch 15 | Train Loss: 0.0819 | Val Cheap Loss: 0.0859 | Val TACOs Cos: 0.7662
+Epoch 16 | Train Loss: 0.0809 | Val Cheap Loss: 0.0860
+--> Saved new best checkpoint based on Cheap Val to experiments/quadratic_ortho_loss_run_20ts/checkpoints/best.pt
+Epoch 17 | Train Loss: 0.0795 | Val Cheap Loss: 0.0832

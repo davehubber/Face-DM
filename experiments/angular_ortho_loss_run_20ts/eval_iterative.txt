@@ -8,20 +8,20 @@ Target Space:     ArcFace 512-D (L2-Normalized Base)
 
 1. GROUND TRUTH Z1 RECONSTRUCTION
 --------------------------------------------------
-  - L1 Distance (Scaled space): 0.585905
-  - L1 Distance (Raw ArcFace):  0.021442
-  - Cosine Similarity vs Z1:    0.805458
+  - L1 Distance (Scaled space): 0.573727
+  - L1 Distance (Raw ArcFace):  0.021175
+  - Cosine Similarity vs Z1:    0.810285
 
 2. GROUND TRUTH Z2 RECONSTRUCTION
 --------------------------------------------------
-  - L1 Distance (Scaled space): 0.585831
-  - L1 Distance (Raw ArcFace):  0.021444
-  - Cosine Similarity vs Z2:    0.805458
+  - L1 Distance (Scaled space): 0.573642
+  - L1 Distance (Raw ArcFace):  0.021176
+  - Cosine Similarity vs Z2:    0.810285
 
 3. GEOMETRIC ALIGNMENT & ORTHOGONALITY COMPARISON
 --------------------------------------------------
   - Baseline Cosine Sim (True Z1 vs True Z2):  0.069538
-  - Generated Cosine Sim (Pred_Z1 vs Pred_Z2): 0.169315
+  - Generated Cosine Sim (Pred_Z1 vs Pred_Z2): 0.193470
 
   Interpretation:
   The Baseline metric proves how uncorrelated the target parents naturally

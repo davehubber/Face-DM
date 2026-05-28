@@ -14,7 +14,7 @@ def load_diffae_model(diffae_root: Path, device: torch.device):
     """Loads the DiffAE model checkpoint following the official autoencoder configuration."""
     diffae_root = Path(diffae_root).resolve()
     sys.path.insert(0, str(diffae_root))
-    
+
     old_cwd = os.getcwd()
     os.chdir(diffae_root)
     try:
@@ -23,18 +23,20 @@ def load_diffae_model(diffae_root: Path, device: torch.device):
 
         conf = ffhq256_autoenc()
         model = LitModel(conf)
-        checkpoint_path = conf.name / "last.ckpt"
         
+        # Fixed: Wrapped the relative string path into a pathlib Path object
+        checkpoint_path = Path("../Face-DM/ffhq256_autoenc/last.ckpt")
+
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Could not find checkpoint at {checkpoint_path}")
-            
+
         state = torch.load(checkpoint_path, map_location='cpu')
         model.load_state_dict(state['state_dict'], strict=False)
         model.ema_model.eval()
         model.ema_model.to(device)
     finally:
         os.chdir(old_cwd)
-        
+
     return model, conf.img_size
 
 def build_frll_index(frll_root: Path):
@@ -42,7 +44,7 @@ def build_frll_index(frll_root: Path):
     index = {}
     exts = {".png", ".jpg", ".jpeg"}
     subdirs = ["neutral_front", "smiling_front"]
-    
+
     for subdir in subdirs:
         dir_path = frll_root / subdir
         if not dir_path.exists():
@@ -57,15 +59,15 @@ def parse_parents(filename: str):
     stem = Path(filename).stem
     if "_and_" not in stem:
         return None, None
-        
+
     parts = stem.split("_and_")
     part1, part2 = parts[0], parts[1]
-    
+
     # Clean out common script prefixes
     for prefix in ["morph_", "morphed_", "comparison_"]:
         if part1.startswith(prefix):
             part1 = part1[len(prefix):]
-            
+
     return part1, part2
 
 def main():
@@ -79,11 +81,11 @@ def main():
     device = torch.device(args.device)
     mordiff_root = Path(args.mordiff_root)
     frll_root = Path(args.frll_root)
-    
+
     # 1. Load Model & Setup Exact Image Transformation Pipeline
     print("Loading DiffAE model...")
     model, image_size = load_diffae_model(args.diffae_root, device)
-    
+
     transform = transforms.Compose([
         transforms.Resize(image_size),
         transforms.CenterCrop(image_size),
@@ -114,35 +116,35 @@ def main():
     # 4. Processing Loop
     for m_path in tqdm(morph_paths, desc="Evaluating Semantic Code Linearity"):
         p1_id, p2_id = parse_parents(m_path.name)
-        
+
         if p1_id not in frll_index or p2_id not in frll_index:
             skipped_count += 1
             continue
-            
+
         p1_path = frll_index[p1_id]
         p2_path = frll_index[p2_id]
-        
+
         with torch.no_grad():
             # Load and process triplets
             img_morph = load_and_prep(m_path)
             img_p1 = load_and_prep(p1_path)
             img_p2 = load_and_prep(p2_path)
-            
+
             # Extract direct semantic embeddings [1, 512]
             z_morph_direct = model.encode(img_morph.unsqueeze(0))
             z_p1 = model.encode(img_p1.unsqueeze(0))
             z_p2 = model.encode(img_p2.unsqueeze(0))
-            
+
             # Generate the true linear midpoint interpolation used by the generator (alpha = 0.5)
             z_interpolated = 0.5 * z_p1 + 0.5 * z_p2
-            
+
             # Compute Euclidean Deviation metrics (Primary)
             l1_dist = F.l1_loss(z_morph_direct, z_interpolated).item()
             mse_dist = F.mse_loss(z_morph_direct, z_interpolated).item()
-            
+
             # Compute Angular Metric (Secondary check)
             cos_sim = F.cosine_similarity(z_morph_direct.flatten(), z_interpolated.flatten(), dim=0).item()
-            
+
             l1_distances.append(l1_dist)
             mse_distances.append(mse_dist)
             cosine_similarities.append(cos_sim)
@@ -153,7 +155,7 @@ def main():
 
     # 5. Compile Statistical Summary Focused on Euclidean Properties
     report_path = mordiff_root / "morph_semantic_linearity_report.txt"
-    
+
     report = f"""===================================================================
 DIFFAE MORPH SEMANTIC CODE LINEARITY REPORT (EUCLIDEAN ALIGNED)
 ===================================================================
@@ -198,30 +200,30 @@ MSE Distance Percentiles:
 
 3. GEOMETRIC & MATHEMATICAL INTERPRETATION
 -------------------------------------------------------------------
-- Why Euclidean Metrics Dominate Here: 
+- Why Euclidean Metrics Dominate Here:
   Unlike facial identity vectors (which reside on a hypersphere crust),
-  DiffAE semantic codes ($z_sem$) represent a continuous density cloud 
-  where vector magnitude directly determines feature scaling and structural 
-  intensity (e.g., degree of expression, lighting context). Linear blending 
+  DiffAE semantic codes ($z_sem$) represent a continuous density cloud
+  where vector magnitude directly determines feature scaling and structural
+  intensity (e.g., degree of expression, lighting context). Linear blending
   travels through the interior of the cluster ellipsoid. Tracking L1 and MSE
   is the only way to accurately evaluate absolute coordinate position preservation.
 
 - Evaluating the Distances:
-  A low Mean L1/MSE confirms that the autoencoder can translate pixel-level 
-  morph images back into the precise coordinate positions dictated by the linear 
+  A low Mean L1/MSE confirms that the autoencoder can translate pixel-level
+  morph images back into the precise coordinate positions dictated by the linear
   averaging operation, validating the semantic consistency of the image space.
 
-- Interpreting Cosine Stability: 
-  Because linear mixtures cut across the interior of the density cloud rather 
-  than tracing a spherical arc, cosine velocity is naturally non-linear here. 
-  Use Section 2 purely to monitor if the global orientation experiences severe 
+- Interpreting Cosine Stability:
+  Because linear mixtures cut across the interior of the density cloud rather
+  than tracing a spherical arc, cosine velocity is naturally non-linear here.
+  Use Section 2 purely to monitor if the global orientation experiences severe
   warping during the T=20 diffusion rendering process.
 ===================================================================
 """
 
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report)
-        
+
     print(f"\nEvaluation successful. Detailed breakdown written to:\n{report_path}\n")
     print(report)
 

@@ -1,0 +1,74 @@
+Loading DiffAE model...
+Model params: 160.69 M
+Indexing FRLL reference images...
+Indexed 204 unique reference faces.
+Locating morph folders inside dataset partitions...
+Found 1000 morph targets to analyze.
+
+Evaluation successful. Detailed breakdown written to:
+MorDIFF_crop/morph_semantic_linearity_report.txt
+
+===================================================================
+DIFFAE MORPH SEMANTIC CODE LINEARITY REPORT (EUCLIDEAN ALIGNED)
+===================================================================
+Evaluated Dataset Partition: MorDIFF_crop
+Total Morph Images Located:  1000
+Successfully Evaluated:      1000
+Skipped (Missing Parents):   0
+
+This test measures the geometric drift and coordinate deviation between:
+  A. The direct semantic encoding of the generated morph image: model.encode(M)
+  B. The mathematical midpoint of the parent codes: 0.5 * model.encode(P1) + 0.5 * model.encode(P2)
+
+1. PRIMARY METRICS: EUCLIDEAN COORDINATE DEVIATION
+-------------------------------------------------------------------
+MEAN ABSOLUTE ERROR (L1 Distance):
+  - Mean L1 Distance:       0.115912
+  - Standard Deviation L1:   0.003612
+  - Minimum Observed L1:     0.105095
+  - Maximum Observed L1:     0.125934
+
+L1 Distance Percentiles:
+  - 25th Percentile:        0.113349
+  - 50th Percentile (Med):  0.116008
+  - 75th Percentile:        0.118434
+
+MEAN SQUARED ERROR (MSE / L2 squared Distance):
+  - Mean MSE Distance:      0.021277
+  - Standard Deviation MSE:  0.001233
+  - Minimum Observed MSE:    0.017566
+  - Maximum Observed MSE:    0.025136
+
+MSE Distance Percentiles:
+  - 25th Percentile:        0.020420
+  - 50th Percentile (Med):  0.021306
+  - 75th Percentile:        0.022095
+
+2. SECONDARY DIAGNOSTIC: ANGULAR ALIGNMENT (Cosine Similarity)
+-------------------------------------------------------------------
+  - Mean Cosine Similarity: 0.8980
+  - Standard Deviation:     0.0064
+  - 50th Percentile (Med):  0.8979
+
+3. GEOMETRIC & MATHEMATICAL INTERPRETATION
+-------------------------------------------------------------------
+- Why Euclidean Metrics Dominate Here:
+  Unlike facial identity vectors (which reside on a hypersphere crust),
+  DiffAE semantic codes ($z_sem$) represent a continuous density cloud
+  where vector magnitude directly determines feature scaling and structural
+  intensity (e.g., degree of expression, lighting context). Linear blending
+  travels through the interior of the cluster ellipsoid. Tracking L1 and MSE
+  is the only way to accurately evaluate absolute coordinate position preservation.
+
+- Evaluating the Distances:
+  A low Mean L1/MSE confirms that the autoencoder can translate pixel-level
+  morph images back into the precise coordinate positions dictated by the linear
+  averaging operation, validating the semantic consistency of the image space.
+
+- Interpreting Cosine Stability:
+  Because linear mixtures cut across the interior of the density cloud rather
+  than tracing a spherical arc, cosine velocity is naturally non-linear here.
+  Use Section 2 purely to monitor if the global orientation experiences severe
+  warping during the T=20 diffusion rendering process.
+===================================================================
+

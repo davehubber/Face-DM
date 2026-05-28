@@ -121,17 +121,13 @@ class DeterministicColdDemorph(nn.Module):
 
     def degrade(self, z1, z2, t):
         """
-        Forward degradation: Non-linear Quadratic Schedule.
-        Packs massive step resolution near t=0 to isolate fine-grained 
-        identity signatures and minimize leakage.
+        Forward degradation: RESTORED TO UNIFORM LINEAR SCHEDULE.
+        Training operates exactly as it was originally designed.
         """
         scale_factor = math.sqrt(512)
         zm = F.normalize(z1 + z2, p=2, dim=-1) * scale_factor
         
-        # Warp time non-linearly by squaring the step ratio
-        time_ratio = (t / self.num_timesteps).view(-1, 1).float()
-        alpha = 1.0 - torch.pow(time_ratio, 2.0)
-        
+        alpha = 1.0 - (t / self.num_timesteps).view(-1, 1).float()
         return alpha * z1 + (1.0 - alpha) * zm
 
     def compute_loss(self, z1, z2):
@@ -153,7 +149,7 @@ class DeterministicColdDemorph(nn.Module):
         z1_raw = F.normalize(z1, p=2, dim=-1)
         z2_raw = F.normalize(z2, p=2, dim=-1)
         
-        # 1. Permutation Invariant Target Loss (Maximize max cosine similarity)
+        # 1. Permutation Invariant Target Loss
         cos_to_z1 = F.cosine_similarity(p1_raw, z1_raw, dim=-1)
         cos_to_z2 = F.cosine_similarity(p1_raw, z2_raw, dim=-1)
         loss_target = 1.0 - torch.max(cos_to_z1, cos_to_z2).mean()
@@ -163,21 +159,37 @@ class DeterministicColdDemorph(nn.Module):
         cos_predicted_inter = F.cosine_similarity(p1_raw, p2_raw, dim=-1)
         loss_ortho = F.mse_loss(cos_predicted_inter, cos_real_baseline)
         
-        # Combined hybrid loss
         return loss_target + 0.5 * loss_ortho
 
     @torch.no_grad()
     def tacos_sample_loop(self, c):
         """
-        Permutation-Aware TACOs sampling for Hypersphere Demorphing.
-        Automatically utilizes the quadratic schedule changes via degrade().
+        Permutation-Aware TACOs sampling with a custom inference trajectory.
+        Takes large jumps early on, and switches to 1-by-1 fine-tuning near t=0.
         """
         device = c.device
         b = c.shape[0]
-        timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
+        
+        # Dynamically build the sub-sampled inference sequence
+        # For T=20, this generates exactly: [20, 15, 11, 8, 6, 4, 3, 2, 1]
+        sampled_ticks = []
+        t_curr = self.num_timesteps
+        step = 5
+        while t_curr > 0:
+            sampled_ticks.append(t_curr)
+            if t_curr <= 5:
+                step = 1
+            elif t_curr <= 8:
+                step = 2
+            elif t_curr <= 12:
+                step = 3
+            elif t_curr <= 16:
+                step = 4
+            t_curr -= step
+
         x_t = c.clone()
         
-        for t in tqdm(timesteps, desc='TACOs Sampling', leave=False):
+        for i, t in enumerate(tqdm(sampled_ticks, desc='TACOs Sub-Sampling', leave=False)):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
             
             # 1. Predict one clean embedding component
@@ -203,13 +215,15 @@ class DeterministicColdDemorph(nn.Module):
             z1_est = torch.where(is_opt1, opt1_z1, opt2_z1)
             z2_est = torch.where(is_opt1, opt1_z2, opt2_z2)
             
-            t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
+            # Look up the next step in our sequence. If we are on the final element, next is 0.
+            t_prev = sampled_ticks[i+1] if (i + 1) < len(sampled_ticks) else 0
+            t_prev_batch = torch.full((b,), t_prev, device=device, dtype=torch.long)
             
             # 5. Get trajectory updates
             deg_t = self.degrade(z1_est, z2_est, t_batch)
             deg_t_prev = self.degrade(z1_est, z2_est, t_prev_batch)
             
-            # 6. TACOs adjustment step (Preserves non-linear schedule updates perfectly)
+            # 6. TACOs adjustment step bridging custom intervals
             x_t = x_t - deg_t + deg_t_prev
             
         # Extract both final un-morphed outputs cleanly
@@ -261,7 +275,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
         "num_timesteps": num_timesteps,
         "latent_space": "ArcFace",
         "mixture": "Angular PIT Loss + Orthogonality Penalty Constraint",
-        "scheduler": "Quadratic Schedule (Warped Resolution)",
+        "scheduler": "Linear Training + Sub-sampled Custom Trajectory Inference",
         "scaled_by_sqrt_512": True
     })
 
@@ -500,23 +514,22 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
 
 
 if __name__ == "__main__":
-    # Updated run_name to reflect both 20 steps and the quadratic scheduler setup
-    train_cold_demorph(
-        arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="quadratic_ortho_loss_run_20ts",
-        num_timesteps=20,
-    )
+    #train_cold_demorph(
+    #    arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
+    #    run_name="ortho_loss_run_20ts",
+    #    num_timesteps=20,
+    #)
 
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="quadratic_ortho_loss_run_20ts",
+        run_name="angular_ortho_loss_run_20ts",
         num_timesteps=20,
         mode='one_shot'
     )
     
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="quadratic_ortho_loss_run_20ts",
+        run_name="angular_ortho_loss_run_20ts",
         num_timesteps=20,
         mode='iterative'
     )
