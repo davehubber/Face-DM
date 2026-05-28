@@ -386,6 +386,7 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
         "l1_scaled_z1": 0.0, "l1_scaled_z2": 0.0,
         "l1_raw_z1": 0.0, "l1_raw_z2": 0.0,
         "cos_z1": 0.0, "cos_z2": 0.0,
+        "cos_real_z1_z2": 0.0,
         "cos_inter_pred": 0.0
     }
     num_batches = 0
@@ -413,14 +414,11 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
             true_z2_raw = F.normalize(batch_z2, p=2, dim=-1)
             
             # --- 3. Dynamic Permutation Alignment (Resolving PIT) ---
-            # Measure distance from prediction 1 to true z1 vs true z2
             l1_p1_z1 = F.l1_loss(pred_z1_scaled, batch_z1, reduction='none').mean(dim=-1)
             l1_p1_z2 = F.l1_loss(pred_z1_scaled, batch_z2, reduction='none').mean(dim=-1)
             
-            # True if prediction 1 is closer to z1 than to z2
             is_p1_to_z1 = (l1_p1_z1 <= l1_p1_z2).unsqueeze(-1)
             
-            # Map predictions to their matched ground truths based on proximity
             z1_pred_scaled = torch.where(is_p1_to_z1, pred_z1_scaled, pred_z2_scaled)
             z2_pred_scaled = torch.where(is_p1_to_z1, pred_z2_scaled, pred_z1_scaled)
             
@@ -438,6 +436,9 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
             m_l1_raw_z2 = F.l1_loss(z2_pred_raw, true_z2_raw, reduction='none').mean(dim=-1).mean()
             m_cos_z2 = F.cosine_similarity(z2_pred_raw, true_z2_raw, dim=-1).mean()
             
+            # Baseline Cosine Similarity between Ground Truth targets
+            m_cos_real = F.cosine_similarity(true_z1_raw, true_z2_raw, dim=-1).mean()
+            
             # Inter-Prediction Cosine Similarity
             m_cos_inter = F.cosine_similarity(p1_raw, p2_raw, dim=-1).mean()
             
@@ -448,6 +449,7 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
             metrics["l1_raw_z2"] += m_l1_raw_z2.item()
             metrics["cos_z1"] += m_cos_z1.item()
             metrics["cos_z2"] += m_cos_z2.item()
+            metrics["cos_real_z1_z2"] += m_cos_real.item()
             metrics["cos_inter_pred"] += m_cos_inter.item()
             
             num_batches += 1
@@ -474,13 +476,15 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
         f"  - L1 Distance (Scaled space): {metrics['l1_scaled_z2']:.6f}\n"
         f"  - L1 Distance (Raw ArcFace):  {metrics['l1_raw_z2']:.6f}\n"
         f"  - Cosine Similarity vs Z2:    {metrics['cos_z2']:.6f}\n\n"
-        f"3. INTER-PREDICTION ORTHOGONALITY ANALYSIS\n"
+        f"3. GEOMETRIC ALIGNMENT & ORTHOGONALITY COMPARISON\n"
         f"--------------------------------------------------\n"
-        f"  - Cosine Sim (Pred_Z1 vs Pred_Z2): {metrics['cos_inter_pred']:.6f}\n\n"
-        f"  Interpretation: This measures how separate the two unmixed\n"
-        f"  identities are from each other. Given that random pairs sit\n"
-        f"  around ~0.0673, we expect this value to remain close to that\n"
-        f"  noise floor if the model is extracting distinct parents.\n"
+        f"  - Baseline Cosine Sim (True Z1 vs True Z2):  {metrics['cos_real_z1_z2']:.6f}\n"
+        f"  - Generated Cosine Sim (Pred_Z1 vs Pred_Z2): {metrics['cos_inter_pred']:.6f}\n\n"
+        f"  Interpretation:\n"
+        f"  The Baseline metric proves how uncorrelated the target parents naturally\n"
+        f"  are (expecting ~0.0673 based on global dataset tests). For a perfect \n"
+        f"  separation, the Generated Cosine Similarity should converge closely to\n"
+        f"  or match that exact baseline window.\n"
         f"==================================================\n"
     )
     
