@@ -114,21 +114,24 @@ class ColdDemorphNet(nn.Module):
 # 3. Cold Demorph Diffusion Process
 # ==========================================
 class DeterministicColdDemorph(nn.Module):
-    def __init__(self, model, num_timesteps=10):
+    def __init__(self, model, num_timesteps=20):
         super().__init__()
         self.model = model
         self.num_timesteps = num_timesteps
 
     def degrade(self, z1, z2, t):
         """
-        Forward degradation: Interpolates between z1 and the hypersphere-normalized mixture zm.
-        t=0: alpha=1.0 -> purely z1
-        t=T: alpha=0.0 -> zm (looks like a valid scaled ArcFace embedding)
+        Forward degradation: Non-linear Quadratic Schedule.
+        Packs massive step resolution near t=0 to isolate fine-grained 
+        identity signatures and minimize leakage.
         """
         scale_factor = math.sqrt(512)
         zm = F.normalize(z1 + z2, p=2, dim=-1) * scale_factor
         
-        alpha = 1.0 - (t / self.num_timesteps).view(-1, 1).float()
+        # Warp time non-linearly by squaring the step ratio
+        time_ratio = (t / self.num_timesteps).view(-1, 1).float()
+        alpha = 1.0 - torch.pow(time_ratio, 2.0)
+        
         return alpha * z1 + (1.0 - alpha) * zm
 
     def compute_loss(self, z1, z2):
@@ -167,7 +170,7 @@ class DeterministicColdDemorph(nn.Module):
     def tacos_sample_loop(self, c):
         """
         Permutation-Aware TACOs sampling for Hypersphere Demorphing.
-        Updated to use Cosine Similarity path alignment.
+        Automatically utilizes the quadratic schedule changes via degrade().
         """
         device = c.device
         b = c.shape[0]
@@ -206,7 +209,7 @@ class DeterministicColdDemorph(nn.Module):
             deg_t = self.degrade(z1_est, z2_est, t_batch)
             deg_t_prev = self.degrade(z1_est, z2_est, t_prev_batch)
             
-            # 6. TACOs adjustment step
+            # 6. TACOs adjustment step (Preserves non-linear schedule updates perfectly)
             x_t = x_t - deg_t + deg_t_prev
             
         # Extract both final un-morphed outputs cleanly
@@ -219,7 +222,7 @@ class DeterministicColdDemorph(nn.Module):
 # ==========================================
 # 4. Evaluation & Training Loop
 # ==========================================
-def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int = 10):
+def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int = 20):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     exp_dir = Path("experiments") / run_name
@@ -258,6 +261,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
         "num_timesteps": num_timesteps,
         "latent_space": "ArcFace",
         "mixture": "Angular PIT Loss + Orthogonality Penalty Constraint",
+        "scheduler": "Quadratic Schedule (Warped Resolution)",
         "scaled_by_sqrt_512": True
     })
 
@@ -359,7 +363,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
     wandb.finish()
 
 
-def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int = 10, mode: str = 'iterative'):
+def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int = 20, mode: str = 'iterative'):
     assert mode in ['iterative', 'one_shot'], "Mode must be 'iterative' or 'one_shot'"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -496,23 +500,23 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
 
 
 if __name__ == "__main__":
-    # Feel free to update run_name to reflect your new loss configuration!
+    # Updated run_name to reflect both 20 steps and the quadratic scheduler setup
     train_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="angular_ortho_loss_run_20ts",
+        run_name="quadratic_ortho_loss_run_20ts",
         num_timesteps=20,
     )
 
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="angular_ortho_loss_run_20ts",
+        run_name="quadratic_ortho_loss_run_20ts",
         num_timesteps=20,
         mode='one_shot'
     )
     
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="angular_ortho_loss_run_20ts",
+        run_name="quadratic_ortho_loss_run_20ts",
         num_timesteps=20,
         mode='iterative'
     )

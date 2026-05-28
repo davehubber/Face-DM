@@ -23,7 +23,7 @@ def load_diffae_model(diffae_root: Path, device: torch.device):
 
         conf = ffhq256_autoenc()
         model = LitModel(conf)
-        checkpoint_path = diffae_root / "checkpoints" / conf.name / "last.ckpt"
+        checkpoint_path = conf.name / "last.ckpt"
         
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Could not find checkpoint at {checkpoint_path}")
