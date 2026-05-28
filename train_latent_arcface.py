@@ -51,7 +51,7 @@ class ColdArcFaceDemorphDataset(Dataset):
         return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
 
 # ==========================================
-# 2. Transformer Network Architecture (DiT-style)
+# 2. Network Architecture
 # ==========================================
 class SinusoidalPositionEmbeddings(nn.Module):
     def __init__(self, dim):
@@ -67,61 +67,23 @@ class SinusoidalPositionEmbeddings(nn.Module):
         embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
         return embeddings
 
-class DiTBlock(nn.Module):
-    """
-    Diffusion Transformer Block using Adaptive Layer Normalization (AdaLN-Modulation)
-    to dynamically scale and shift feature configurations based on the timestep.
-    """
-    def __init__(self, d_model: int, nhead: int, dim_feedforward: int, cond_dim: int):
+class AdaLNBlock(nn.Module):
+    def __init__(self, in_dim: int, hidden_dim: int, cond_dim: int):
         super().__init__()
-        self.norm1 = nn.LayerNorm(d_model, elementwise_affine=False)
-        self.attn = nn.MultiheadAttention(d_model, nhead, batch_first=True)
-        self.norm2 = nn.LayerNorm(d_model, elementwise_affine=False)
-        
-        self.mlp = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
-            nn.SiLU(),
-            nn.Linear(dim_feedforward, d_model)
-        )
-        
-        # Generates scale, shift, and gate parameters for both MHA and MLP blocks
-        self.adaLN_mod = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(cond_dim, 6 * d_model)
-        )
+        self.linear = nn.Linear(in_dim, hidden_dim)
+        self.norm = nn.LayerNorm(hidden_dim, elementwise_affine=False)
+        self.silu = nn.SiLU()
+        self.cond_proj = nn.Linear(cond_dim, hidden_dim * 2)
 
     def forward(self, x, cond):
-        # x: [B, N, d_model], cond: [B, cond_dim]
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_mod(cond).chunk(6, dim=-1)
-        
-        # Unsqueeze conditioning vectors to broadcast across sequence length dimension (N)
-        shift_msa, scale_msa, gate_msa = shift_msa.unsqueeze(1), scale_msa.unsqueeze(1), gate_msa.unsqueeze(1)
-        shift_mlp, scale_mlp, gate_mlp = shift_mlp.unsqueeze(1), scale_mlp.unsqueeze(1), gate_mlp.unsqueeze(1)
-        
-        # Attention Branch
-        h1 = self.norm1(x) * (1 + scale_msa) + shift_msa
-        h1, _ = self.attn(h1, h1, h1)
-        x = x + gate_msa * h1
-        
-        # Feed-Forward Branch
-        h2 = self.norm2(x) * (1 + scale_mlp) + shift_mlp
-        h2 = self.mlp(h2)
-        x = x + gate_mlp * h2
-        
-        return x
+        h = self.linear(x)
+        scale, shift = self.cond_proj(cond).chunk(2, dim=-1)
+        h = self.norm(h) * (1 + scale) + shift
+        return self.silu(h)
 
-class ColdDemorphTransformer(nn.Module):
-    """
-    Transformer backbone that chunks a 512-dim ArcFace embedding into a token sequence,
-    allowing self-attention to identify anomalous feature compositions.
-    """
-    def __init__(self, x_dim=512, num_tokens=16, d_model=512, nhead=8, dim_feedforward=2048, num_layers=8, time_emb_dim=512):
+class ColdDemorphNet(nn.Module):
+    def __init__(self, x_dim=512, hidden_dim=2048, num_layers=10, time_emb_dim=512):
         super().__init__()
-        assert x_dim % num_tokens == 0, f"Embedding dimension {x_dim} must be divisible by num_tokens {num_tokens}"
-        
-        self.num_tokens = num_tokens
-        self.token_dim = x_dim // num_tokens
-        
         self.time_mlp = nn.Sequential(
             SinusoidalPositionEmbeddings(time_emb_dim),
             nn.Linear(time_emb_dim, time_emb_dim * 2),
@@ -129,59 +91,24 @@ class ColdDemorphTransformer(nn.Module):
             nn.Linear(time_emb_dim * 2, time_emb_dim)
         )
         
-        # Project vector chunks into Transformer hidden space
-        self.input_proj = nn.Linear(self.token_dim, d_model)
+        cond_dim = time_emb_dim
+        self.blocks = nn.ModuleList()
+        self.blocks.append(AdaLNBlock(x_dim, hidden_dim, cond_dim))
         
-        # Learnable spatial position embeddings for the 1D token sequence
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_tokens, d_model))
-        
-        self.blocks = nn.ModuleList([
-            DiTBlock(d_model, nhead, dim_feedforward, cond_dim=time_emb_dim)
-            for _ in range(num_layers)
-        ])
-        
-        # Final output layer norm and modulation projection
-        self.final_norm = nn.LayerNorm(d_model, elementwise_affine=False)
-        self.final_adaLN_mod = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(time_emb_dim, 2 * d_model)
-        )
-        self.output_proj = nn.Linear(d_model, self.token_dim)
-        
-        self._init_weights()
-
-    def _init_weights(self):
-        nn.init.trunc_normal_(self.pos_embed, std=0.02)
-        
-        # Zero-initialize the AdaLN linear projections so the network starts off acting close to an identity mapping
-        for block in self.blocks:
-            nn.init.constant_(block.adaLN_mod[-1].weight, 0)
-            nn.init.constant_(block.adaLN_mod[-1].bias, 0)
-        nn.init.constant_(self.final_adaLN_mod[-1].weight, 0)
-        nn.init.constant_(self.final_adaLN_mod[-1].bias, 0)
+        for _ in range(num_layers - 1):
+            self.blocks.append(AdaLNBlock(hidden_dim + x_dim, hidden_dim, cond_dim))
+            
+        self.final_linear = nn.Linear(hidden_dim, x_dim)
 
     def forward(self, x, t):
-        # x: [B, 512], t: [B]
-        B = x.shape[0]
         cond = self.time_mlp(t)
-        
-        # Chunk 512-dim vector into sequence: [B, 16, 32]
-        x_seq = x.view(B, self.num_tokens, self.token_dim)
-        
-        # Linear project and add positional info
-        h = self.input_proj(x_seq) + self.pos_embed
-        
-        # Process through DiT layers
-        for block in self.blocks:
-            h = block(h, cond)
-            
-        # Apply final modulated layer norm
-        scale, shift = self.final_adaLN_mod(cond).chunk(2, dim=-1)
-        h = self.final_norm(h) * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
-        
-        # Map back to token space and flatten back to [B, 512]
-        out_seq = self.output_proj(h)
-        return out_seq.view(B, -1)
+        h = x
+        for i, block in enumerate(self.blocks):
+            if i == 0:
+                h = block(h, cond)
+            else:
+                h = block(torch.cat([h, x], dim=-1), cond)
+        return self.final_linear(h)
 
 # ==========================================
 # 3. Cold Demorph Diffusion Process
@@ -195,6 +122,8 @@ class DeterministicColdDemorph(nn.Module):
     def degrade(self, z1, z2, t):
         """
         Forward degradation: Interpolates between z1 and the hypersphere-normalized mixture zm.
+        t=0: alpha=1.0 -> purely z1
+        t=T: alpha=0.0 -> zm (looks like a valid scaled ArcFace embedding)
         """
         scale_factor = math.sqrt(512)
         zm = F.normalize(z1 + z2, p=2, dim=-1) * scale_factor
@@ -219,6 +148,7 @@ class DeterministicColdDemorph(nn.Module):
     def tacos_sample_loop(self, c):
         """
         Permutation-Aware TACOs sampling for Hypersphere Demorphing.
+        c: input normalized morphed embedding scaled by sqrt(512)
         """
         device = c.device
         b = c.shape[0]
@@ -294,32 +224,20 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
     train_dataset = ColdArcFaceDemorphDataset(train_embs, epoch_size=1_000_000, deterministic=False)
     val_dataset = ColdArcFaceDemorphDataset(val_embs, epoch_size=10_000, deterministic=True)
     
-    train_loader = DataLoader(train_dataset, batch_size=1_024, shuffle=True, num_workers=8)
-    val_loader = DataLoader(val_dataset, batch_size=512, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=16_384, shuffle=True, num_workers=8)
+    val_loader = DataLoader(val_dataset, batch_size=2_048, shuffle=False, num_workers=4)
 
-    # Initializing the Transformer model instead of the simple MLP network
-    net = ColdDemorphTransformer(
-        x_dim=512, 
-        num_tokens=16, 
-        d_model=512, 
-        nhead=8, 
-        dim_feedforward=2048, 
-        num_layers=8
-    ).to(device)
-    
+    net = ColdDemorphNet(x_dim=512, hidden_dim=2048, num_layers=10).to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=3e-4, weight_decay=0.01)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
         "learning_rate": 3e-4,
-        "batch_size": 1_024,
-        "num_layers": 8,
-        "d_model": 512,
-        "nhead": 8,
-        "dim_feedforward": 2048,
+        "batch_size": 16_384,
+        "num_layers": 10,
+        "hidden_dim": 2048,
         "num_timesteps": num_timesteps,
         "latent_space": "ArcFace",
-        "architecture": "Diffusion Transformer (DiT-1D Chunks)",
         "mixture": "Hypersphere Projected Normal Mixture (Permutation-aware TACOs)",
         "scaled_by_sqrt_512": True
     })
@@ -335,7 +253,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
         for batch_z1, batch_z2 in pbar:
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
             
-            optimizer.zero_zero_grad() if hasattr(optimizer, "zero_zero_grad") else optimizer.zero_grad()
+            optimizer.zero_grad()
             loss = diffusion.compute_loss(z1=batch_z1, z2=batch_z2)
             loss.backward()
             optimizer.step()
@@ -368,6 +286,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
                 for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val TACOs]"):
                     batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
                     
+                    # Compute the proper normalized mixture vector matching the ArcFace sphere radius scale
                     batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1) * math.sqrt(512)
                     
                     pred_z1, _ = diffusion.tacos_sample_loop(batch_c)
@@ -452,17 +371,9 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
     val_embs = arcface_embs[split_idx:]
     
     val_dataset = ColdArcFaceDemorphDataset(val_embs, epoch_size=10_000, deterministic=True)
-    val_loader = DataLoader(val_dataset, batch_size=512, shuffle=False, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=2_048, shuffle=False, num_workers=4)
 
-    net = ColdDemorphTransformer(
-        x_dim=512, 
-        num_tokens=16, 
-        d_model=512, 
-        nhead=8, 
-        dim_feedforward=2048, 
-        num_layers=8
-    ).to(device)
-    
+    net = ColdDemorphNet(x_dim=512, hidden_dim=2048, num_layers=10).to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
     
     print(f"Loading weights from {ckpt_path}...")
@@ -470,9 +381,13 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
     net.load_state_dict(checkpoint['model_state_dict'])
     net.eval()
 
-    total_l1_scaled = 0.0
-    total_l1_raw = 0.0
-    total_cosine = 0.0
+    # Metrics accumulators
+    metrics = {
+        "l1_scaled_z1": 0.0, "l1_scaled_z2": 0.0,
+        "l1_raw_z1": 0.0, "l1_raw_z2": 0.0,
+        "cos_z1": 0.0, "cos_z2": 0.0,
+        "cos_inter_pred": 0.0
+    }
     num_batches = 0
 
     with torch.no_grad():
@@ -481,47 +396,92 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
             batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1) * scale_factor
             b = batch_z1.shape[0]
             
-            # --- 1. Generation ---
+            # --- 1. Generation of Both Components ---
             if mode == 'iterative':
-                pred_z_scaled, _ = diffusion.tacos_sample_loop(batch_c)
+                pred_z1_scaled, pred_z2_scaled = diffusion.tacos_sample_loop(batch_c)
             else: # one_shot
                 t_batch = torch.full((b,), num_timesteps, device=device, dtype=torch.long)
-                pred_z_scaled = net(batch_c, t_batch)
+                pred_z1_scaled = net(batch_c, t_batch)
+                # Recover the exact complementary component from the hypersphere geometry
+                kappa = 2.0 * torch.sum(batch_c * pred_z1_scaled, dim=-1, keepdim=True) / 512.0
+                pred_z2_scaled = kappa * batch_c - pred_z1_scaled
 
-            # --- 2. Compute Permutation-Invariant Metrics ---
-            l1_scaled_z1 = F.l1_loss(pred_z_scaled, batch_z1, reduction='none').mean(dim=-1)
-            l1_scaled_z2 = F.l1_loss(pred_z_scaled, batch_z2, reduction='none').mean(dim=-1)
-            l1_scaled = torch.min(l1_scaled_z1, l1_scaled_z2).mean()
+            # --- 2. Raw Space Conversion (L2 Normalized Hypersphere) ---
+            p1_raw = F.normalize(pred_z1_scaled, p=2, dim=-1)
+            p2_raw = F.normalize(pred_z2_scaled, p=2, dim=-1)
+            true_z1_raw = F.normalize(batch_z1, p=2, dim=-1)
+            true_z2_raw = F.normalize(batch_z2, p=2, dim=-1)
             
-            pred_z_raw = F.normalize(pred_z_scaled / scale_factor, p=2, dim=-1)
-            true_z1_raw = F.normalize(batch_z1 / scale_factor, p=2, dim=-1)
-            true_z2_raw = F.normalize(batch_z2 / scale_factor, p=2, dim=-1)
+            # --- 3. Dynamic Permutation Alignment (Resolving PIT) ---
+            # Measure distance from prediction 1 to true z1 vs true z2
+            l1_p1_z1 = F.l1_loss(pred_z1_scaled, batch_z1, reduction='none').mean(dim=-1)
+            l1_p1_z2 = F.l1_loss(pred_z1_scaled, batch_z2, reduction='none').mean(dim=-1)
             
-            l1_raw_z1 = F.l1_loss(pred_z_raw, true_z1_raw, reduction='none').mean(dim=-1)
-            l1_raw_z2 = F.l1_loss(pred_z_raw, true_z2_raw, reduction='none').mean(dim=-1)
-            l1_raw = torch.min(l1_raw_z1, l1_raw_z2).mean()
+            # True if prediction 1 is closer to z1 than to z2
+            is_p1_to_z1 = (l1_p1_z1 <= l1_p1_z2).unsqueeze(-1)
             
-            cos_sim_z1 = F.cosine_similarity(pred_z_raw, true_z1_raw, dim=-1)
-            cos_sim_z2 = F.cosine_similarity(pred_z_raw, true_z2_raw, dim=-1)
-            cos_sim = torch.max(cos_sim_z1, cos_sim_z2).mean()
+            # Map predictions to their matched ground truths based on proximity
+            z1_pred_scaled = torch.where(is_p1_to_z1, pred_z1_scaled, pred_z2_scaled)
+            z2_pred_scaled = torch.where(is_p1_to_z1, pred_z2_scaled, pred_z1_scaled)
             
-            total_l1_scaled += l1_scaled.item()
-            total_l1_raw += l1_raw.item()
-            total_cosine += cos_sim.item()
+            z1_pred_raw = torch.where(is_p1_to_z1, p1_raw, p2_raw)
+            z2_pred_raw = torch.where(is_p1_to_z1, p2_raw, p1_raw)
+
+            # --- 4. Compute Metrics ---
+            # Separated Z1 Metrics
+            m_l1_scaled_z1 = F.l1_loss(z1_pred_scaled, batch_z1, reduction='none').mean(dim=-1).mean()
+            m_l1_raw_z1 = F.l1_loss(z1_pred_raw, true_z1_raw, reduction='none').mean(dim=-1).mean()
+            m_cos_z1 = F.cosine_similarity(z1_pred_raw, true_z1_raw, dim=-1).mean()
+            
+            # Separated Z2 Metrics
+            m_l1_scaled_z2 = F.l1_loss(z2_pred_scaled, batch_z2, reduction='none').mean(dim=-1).mean()
+            m_l1_raw_z2 = F.l1_loss(z2_pred_raw, true_z2_raw, reduction='none').mean(dim=-1).mean()
+            m_cos_z2 = F.cosine_similarity(z2_pred_raw, true_z2_raw, dim=-1).mean()
+            
+            # Inter-Prediction Cosine Similarity
+            m_cos_inter = F.cosine_similarity(p1_raw, p2_raw, dim=-1).mean()
+            
+            # Accumulate running sums
+            metrics["l1_scaled_z1"] += m_l1_scaled_z1.item()
+            metrics["l1_scaled_z2"] += m_l1_scaled_z2.item()
+            metrics["l1_raw_z1"] += m_l1_raw_z1.item()
+            metrics["l1_raw_z2"] += m_l1_raw_z2.item()
+            metrics["cos_z1"] += m_cos_z1.item()
+            metrics["cos_z2"] += m_cos_z2.item()
+            metrics["cos_inter_pred"] += m_cos_inter.item()
+            
             num_batches += 1
 
-    avg_l1_scaled = total_l1_scaled / num_batches
-    avg_l1_raw = total_l1_raw / num_batches
-    avg_cosine = total_cosine / num_batches
+    # Compute batch averages
+    for k in metrics:
+        metrics[k] /= num_batches
 
     results_text = (
-        f"--- Evaluation Results (Permutation Invariant & Spherical TACOs): {mode.upper()} ---\n"
-        f"Run Name: {run_name}\n"
+        f"==================================================\n"
+        f"DIFFAE/ARCFACE DEMORPH EVALUATION REPORT ({mode.upper()})\n"
+        f"==================================================\n"
+        f"Run Name:         {run_name}\n"
         f"Validation Pairs: 10,000\n"
-        f"----------------------------------------\n"
-        f"L1 Distance (Scaled space): {avg_l1_scaled:.6f}\n"
-        f"L1 Distance (Raw ArcFace):  {avg_l1_raw:.6f}\n"
-        f"Cosine Similarity:          {avg_cosine:.6f}\n"
+        f"Target Space:     ArcFace 512-D (L2-Normalized Base)\n"
+        f"--------------------------------------------------\n\n"
+        f"1. GROUND TRUTH Z1 RECONSTRUCTION\n"
+        f"--------------------------------------------------\n"
+        f"  - L1 Distance (Scaled space): {metrics['l1_scaled_z1']:.6f}\n"
+        f"  - L1 Distance (Raw ArcFace):  {metrics['l1_raw_z1']:.6f}\n"
+        f"  - Cosine Similarity vs Z1:    {metrics['cos_z1']:.6f}\n\n"
+        f"2. GROUND TRUTH Z2 RECONSTRUCTION\n"
+        f"--------------------------------------------------\n"
+        f"  - L1 Distance (Scaled space): {metrics['l1_scaled_z2']:.6f}\n"
+        f"  - L1 Distance (Raw ArcFace):  {metrics['l1_raw_z2']:.6f}\n"
+        f"  - Cosine Similarity vs Z2:    {metrics['cos_z2']:.6f}\n\n"
+        f"3. INTER-PREDICTION ORTHOGONALITY ANALYSIS\n"
+        f"--------------------------------------------------\n"
+        f"  - Cosine Sim (Pred_Z1 vs Pred_Z2): {metrics['cos_inter_pred']:.6f}\n\n"
+        f"  Interpretation: This measures how separate the two unmixed\n"
+        f"  identities are from each other. Given that random pairs sit\n"
+        f"  around ~0.0673, we expect this value to remain close to that\n"
+        f"  noise floor if the model is extracting distinct parents.\n"
+        f"==================================================\n"
     )
     
     print("\n" + results_text)
@@ -532,22 +492,22 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
 
 
 if __name__ == "__main__":
-    train_cold_demorph(
-        arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_50_50_pit_dit",
-        num_timesteps=5,
-    )
+    #train_cold_demorph(
+    #    arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
+    #    run_name="avg_arcface_50_50_pit_real",
+    #    num_timesteps=5,
+    #)
 
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_50_50_pit_dit",
+        run_name="avg_arcface_50_50_pit_real",
         num_timesteps=5,
         mode='one_shot'
     )
     
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_50_50_pit_dit",
+        run_name="avg_arcface_50_50_pit_real",
         num_timesteps=5,
         mode='iterative'
     )
