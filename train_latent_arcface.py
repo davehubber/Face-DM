@@ -136,19 +136,38 @@ class DeterministicColdDemorph(nn.Module):
         t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
         
         x_t = self.degrade(z1, z2, t)
-        pred_z = self.model(x_t, t)
+        pred_z1 = self.model(x_t, t)
         
-        loss_z1 = F.l1_loss(pred_z, z1, reduction='none').mean(dim=-1)
-        loss_z2 = F.l1_loss(pred_z, z2, reduction='none').mean(dim=-1)
-        loss = torch.min(loss_z1, loss_z2).mean()
+        # Reconstruct twin via hypersphere mirror geometry
+        scale_factor = math.sqrt(512)
+        c = F.normalize(z1 + z2, p=2, dim=-1) * scale_factor
+        kappa = 2.0 * torch.sum(c * pred_z1, dim=-1, keepdim=True) / 512.0
+        pred_z2 = kappa * c - pred_z1
         
-        return loss
+        # Project everything into raw L2 space for angular optimization
+        p1_raw = F.normalize(pred_z1, p=2, dim=-1)
+        p2_raw = F.normalize(pred_z2, p=2, dim=-1)
+        z1_raw = F.normalize(z1, p=2, dim=-1)
+        z2_raw = F.normalize(z2, p=2, dim=-1)
+        
+        # 1. Permutation Invariant Target Loss (Maximize max cosine similarity)
+        cos_to_z1 = F.cosine_similarity(p1_raw, z1_raw, dim=-1)
+        cos_to_z2 = F.cosine_similarity(p1_raw, z2_raw, dim=-1)
+        loss_target = 1.0 - torch.max(cos_to_z1, cos_to_z2).mean()
+        
+        # 2. Explicit Inter-Prediction Orthogonality Loss
+        cos_real_baseline = F.cosine_similarity(z1_raw, z2_raw, dim=-1)
+        cos_predicted_inter = F.cosine_similarity(p1_raw, p2_raw, dim=-1)
+        loss_ortho = F.mse_loss(cos_predicted_inter, cos_real_baseline)
+        
+        # Combined hybrid loss
+        return loss_target + 0.5 * loss_ortho
 
     @torch.no_grad()
     def tacos_sample_loop(self, c):
         """
         Permutation-Aware TACOs sampling for Hypersphere Demorphing.
-        c: input normalized morphed embedding scaled by sqrt(512)
+        Updated to use Cosine Similarity path alignment.
         """
         device = c.device
         b = c.shape[0]
@@ -169,14 +188,14 @@ class DeterministicColdDemorph(nn.Module):
             opt1_z1, opt1_z2 = pred_z, comp_z
             opt2_z1, opt2_z2 = comp_z, pred_z
             
-            # 4. Determine which trajectory configuration matches current x_t
+            # 4. Determine which trajectory matches current x_t using Cosine Similarity
             deg_t_opt1 = self.degrade(opt1_z1, opt1_z2, t_batch)
             deg_t_opt2 = self.degrade(opt2_z1, opt2_z2, t_batch)
             
-            dist_opt1 = F.l1_loss(deg_t_opt1, x_t, reduction='none').mean(dim=-1)
-            dist_opt2 = F.l1_loss(deg_t_opt2, x_t, reduction='none').mean(dim=-1)
+            cos_opt1 = F.cosine_similarity(deg_t_opt1, x_t, dim=-1)
+            cos_opt2 = F.cosine_similarity(deg_t_opt2, x_t, dim=-1)
             
-            is_opt1 = (dist_opt1 <= dist_opt2).unsqueeze(-1)
+            is_opt1 = (cos_opt1 >= cos_opt2).unsqueeze(-1)
             
             z1_est = torch.where(is_opt1, opt1_z1, opt2_z1)
             z2_est = torch.where(is_opt1, opt1_z2, opt2_z2)
@@ -211,7 +230,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
     if not metrics_path.exists():
         with open(metrics_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["Epoch", "Train_L1", "Val_Cheap_L1", "Val_TACOs_Reconstruct_L1"])
+            writer.writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_TACOs_Reconstruct_Raw_Cos"])
             
     print("Loading ArcFace embeddings...")
     arcface_path = Path(arcface_path_str).resolve()
@@ -238,7 +257,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
         "hidden_dim": 2048,
         "num_timesteps": num_timesteps,
         "latent_space": "ArcFace",
-        "mixture": "Hypersphere Projected Normal Mixture (Permutation-aware TACOs)",
+        "mixture": "Angular PIT Loss + Orthogonality Penalty Constraint",
         "scaled_by_sqrt_512": True
     })
 
@@ -259,15 +278,14 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
             optimizer.step()
             
             train_loss += loss.item()
-            pbar.set_postfix({"L1_loss": loss.item()})
+            pbar.set_postfix({"Loss": loss.item()})
             
         avg_train_loss = train_loss / len(train_loader)
         
         # Validation Loop (Cheap Metric)
         net.eval()
         val_cheap_loss = 0.0
-        val_tacos_loss = None
-        val_tacos_raw_loss = None
+        val_tacos_cos = None
         
         with torch.no_grad():
             for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val Cheap]"):
@@ -279,43 +297,32 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
 
         # Validation Loop (Expensive TACOs Metric)
         if (epoch + 1) % 5 == 0 or (epoch + 1) == epochs:
-            val_tacos_loss_total = 0.0
-            val_tacos_raw_loss_total = 0.0
+            val_tacos_cos_total = 0.0
             
             with torch.no_grad():
                 for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val TACOs]"):
                     batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-                    
-                    # Compute the proper normalized mixture vector matching the ArcFace sphere radius scale
-                    batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1) * math.sqrt(512)
+                    batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1) * scale_factor
                     
                     pred_z1, _ = diffusion.tacos_sample_loop(batch_c)
                     
-                    loss_scaled_z1 = F.l1_loss(pred_z1, batch_z1, reduction='none').mean(dim=-1)
-                    loss_scaled_z2 = F.l1_loss(pred_z1, batch_z2, reduction='none').mean(dim=-1)
-                    loss_scaled = torch.min(loss_scaled_z1, loss_scaled_z2).mean()
-                    val_tacos_loss_total += loss_scaled.item()
+                    pred_z1_raw = F.normalize(pred_z1, p=2, dim=-1)
+                    true_z1_raw = F.normalize(batch_z1, p=2, dim=-1)
+                    true_z2_raw = F.normalize(batch_z2, p=2, dim=-1)
                     
-                    pred_z1_raw = F.normalize(pred_z1 / math.sqrt(512), p=2, dim=-1)
-                    true_z1_raw = F.normalize(batch_z1 / math.sqrt(512), p=2, dim=-1)
-                    true_z2_raw = F.normalize(batch_z2 / math.sqrt(512), p=2, dim=-1)
+                    cos_z1 = F.cosine_similarity(pred_z1_raw, true_z1_raw, dim=-1)
+                    cos_z2 = F.cosine_similarity(pred_z1_raw, true_z2_raw, dim=-1)
+                    val_tacos_cos_total += torch.max(cos_z1, cos_z2).mean().item()
                     
-                    loss_raw_z1 = F.l1_loss(pred_z1_raw, true_z1_raw, reduction='none').mean(dim=-1)
-                    loss_raw_z2 = F.l1_loss(pred_z1_raw, true_z2_raw, reduction='none').mean(dim=-1)
-                    loss_raw = torch.min(loss_raw_z1, loss_raw_z2).mean()
-                    val_tacos_raw_loss_total += loss_raw.item()
-                    
-            val_tacos_loss = val_tacos_loss_total / len(val_loader)
-            val_tacos_raw_loss = val_tacos_raw_loss_total / len(val_loader)
+            val_tacos_cos = val_tacos_cos_total / len(val_loader)
             
         log_dict = {
             "epoch": epoch + 1,
-            "train_l1": avg_train_loss,
-            "val_cheap_l1": avg_val_cheap_loss
+            "train_loss": avg_train_loss,
+            "val_cheap_loss": avg_val_cheap_loss
         }
-        if val_tacos_loss is not None:
-            log_dict["val_tacos_reconstruct_l1"] = val_tacos_loss
-            log_dict["val_tacos_reconstruct_raw_l1"] = val_tacos_raw_loss
+        if val_tacos_cos is not None:
+            log_dict["val_tacos_reconstruct_cos"] = val_tacos_cos
             
         wandb.log(log_dict)
         
@@ -325,7 +332,7 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
                 epoch + 1, 
                 f"{avg_train_loss:.6f}", 
                 f"{avg_val_cheap_loss:.6f}", 
-                f"{val_tacos_loss:.6f}" if val_tacos_loss is not None else "N/A"
+                f"{val_tacos_cos:.6f}" if val_tacos_cos is not None else "N/A"
             ])
             
         checkpoint_data = {
@@ -343,9 +350,9 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
             torch.save(checkpoint_data, ckpt_dir / "best.pt")
             print(f"--> Saved new best checkpoint based on Cheap Val to {ckpt_dir / 'best.pt'}")
             
-        print(f"Epoch {epoch+1} | Train L1: {avg_train_loss:.4f} | Val Cheap L1: {avg_val_cheap_loss:.4f}", end="")
-        if val_tacos_loss is not None:
-            print(f" | Val TACOs L1: {val_tacos_loss:.4f}")
+        print(f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} | Val Cheap Loss: {avg_val_cheap_loss:.4f}", end="")
+        if val_tacos_cos is not None:
+            print(f" | Val TACOs Cos: {val_tacos_cos:.4f}")
         else:
             print()
 
@@ -403,7 +410,6 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
             else: # one_shot
                 t_batch = torch.full((b,), num_timesteps, device=device, dtype=torch.long)
                 pred_z1_scaled = net(batch_c, t_batch)
-                # Recover the exact complementary component from the hypersphere geometry
                 kappa = 2.0 * torch.sum(batch_c * pred_z1_scaled, dim=-1, keepdim=True) / 512.0
                 pred_z2_scaled = kappa * batch_c - pred_z1_scaled
 
@@ -413,11 +419,11 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
             true_z1_raw = F.normalize(batch_z1, p=2, dim=-1)
             true_z2_raw = F.normalize(batch_z2, p=2, dim=-1)
             
-            # --- 3. Dynamic Permutation Alignment (Resolving PIT) ---
-            l1_p1_z1 = F.l1_loss(pred_z1_scaled, batch_z1, reduction='none').mean(dim=-1)
-            l1_p1_z2 = F.l1_loss(pred_z1_scaled, batch_z2, reduction='none').mean(dim=-1)
+            # --- 3. Dynamic Permutation Alignment via Cosine Similarity ---
+            cos_p1_z1 = F.cosine_similarity(p1_raw, true_z1_raw, dim=-1)
+            cos_p1_z2 = F.cosine_similarity(p1_raw, true_z2_raw, dim=-1)
             
-            is_p1_to_z1 = (l1_p1_z1 <= l1_p1_z2).unsqueeze(-1)
+            is_p1_to_z1 = (cos_p1_z1 >= cos_p1_z2).unsqueeze(-1)
             
             z1_pred_scaled = torch.where(is_p1_to_z1, pred_z1_scaled, pred_z2_scaled)
             z2_pred_scaled = torch.where(is_p1_to_z1, pred_z2_scaled, pred_z1_scaled)
@@ -426,23 +432,18 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
             z2_pred_raw = torch.where(is_p1_to_z1, p2_raw, p1_raw)
 
             # --- 4. Compute Metrics ---
-            # Separated Z1 Metrics
             m_l1_scaled_z1 = F.l1_loss(z1_pred_scaled, batch_z1, reduction='none').mean(dim=-1).mean()
             m_l1_raw_z1 = F.l1_loss(z1_pred_raw, true_z1_raw, reduction='none').mean(dim=-1).mean()
             m_cos_z1 = F.cosine_similarity(z1_pred_raw, true_z1_raw, dim=-1).mean()
             
-            # Separated Z2 Metrics
             m_l1_scaled_z2 = F.l1_loss(z2_pred_scaled, batch_z2, reduction='none').mean(dim=-1).mean()
             m_l1_raw_z2 = F.l1_loss(z2_pred_raw, true_z2_raw, reduction='none').mean(dim=-1).mean()
             m_cos_z2 = F.cosine_similarity(z2_pred_raw, true_z2_raw, dim=-1).mean()
             
-            # Baseline Cosine Similarity between Ground Truth targets
             m_cos_real = F.cosine_similarity(true_z1_raw, true_z2_raw, dim=-1).mean()
-            
-            # Inter-Prediction Cosine Similarity
             m_cos_inter = F.cosine_similarity(p1_raw, p2_raw, dim=-1).mean()
             
-            # Accumulate running sums
+            # Accumulate
             metrics["l1_scaled_z1"] += m_l1_scaled_z1.item()
             metrics["l1_scaled_z2"] += m_l1_scaled_z2.item()
             metrics["l1_raw_z1"] += m_l1_raw_z1.item()
@@ -454,7 +455,6 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
             
             num_batches += 1
 
-    # Compute batch averages
     for k in metrics:
         metrics[k] /= num_batches
 
@@ -482,7 +482,7 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
         f"  - Generated Cosine Sim (Pred_Z1 vs Pred_Z2): {metrics['cos_inter_pred']:.6f}\n\n"
         f"  Interpretation:\n"
         f"  The Baseline metric proves how uncorrelated the target parents naturally\n"
-        f"  are (expecting ~0.0673 based on global dataset tests). For a perfect \n"
+        f"  are (expecting ~0.0673 based on global dataset tests). For a perfect\n"
         f"  separation, the Generated Cosine Similarity should converge closely to\n"
         f"  or match that exact baseline window.\n"
         f"==================================================\n"
@@ -496,22 +496,23 @@ def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: i
 
 
 if __name__ == "__main__":
-    #train_cold_demorph(
-    #    arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-    #    run_name="avg_arcface_50_50_pit_real",
-    #    num_timesteps=5,
-    #)
+    # Feel free to update run_name to reflect your new loss configuration!
+    train_cold_demorph(
+        arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
+        run_name="angular_ortho_loss_run",
+        num_timesteps=5,
+    )
 
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_50_50_pit_real",
+        run_name="angular_ortho_loss_run",
         num_timesteps=5,
         mode='one_shot'
     )
     
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="avg_arcface_50_50_pit_real",
+        run_name="angular_ortho_loss_run",
         num_timesteps=5,
         mode='iterative'
     )
