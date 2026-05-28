@@ -1,0 +1,31 @@
+==================================================
+DIFFAE/ARCFACE DEMORPH EVALUATION REPORT (ITERATIVE)
+==================================================
+Run Name:         angular_ortho_loss_run
+Validation Pairs: 10,000
+Target Space:     ArcFace 512-D (L2-Normalized Base)
+--------------------------------------------------
+
+1. GROUND TRUTH Z1 RECONSTRUCTION
+--------------------------------------------------
+  - L1 Distance (Scaled space): 0.563742
+  - L1 Distance (Raw ArcFace):  0.021020
+  - Cosine Similarity vs Z1:    0.812961
+
+2. GROUND TRUTH Z2 RECONSTRUCTION
+--------------------------------------------------
+  - L1 Distance (Scaled space): 0.563672
+  - L1 Distance (Raw ArcFace):  0.021022
+  - Cosine Similarity vs Z2:    0.812961
+
+3. GEOMETRIC ALIGNMENT & ORTHOGONALITY COMPARISON
+--------------------------------------------------
+  - Baseline Cosine Sim (True Z1 vs True Z2):  0.069538
+  - Generated Cosine Sim (Pred_Z1 vs Pred_Z2): 0.182472
+
+  Interpretation:
+  The Baseline metric proves how uncorrelated the target parents naturally
+  are (expecting ~0.0673 based on global dataset tests). For a perfect
+  separation, the Generated Cosine Similarity should converge closely to
+  or match that exact baseline window.
+==================================================

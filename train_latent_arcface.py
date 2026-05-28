@@ -499,20 +499,20 @@ if __name__ == "__main__":
     # Feel free to update run_name to reflect your new loss configuration!
     train_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="angular_ortho_loss_run",
-        num_timesteps=5,
+        run_name="angular_ortho_loss_run_20ts",
+        num_timesteps=20,
     )
 
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="angular_ortho_loss_run",
-        num_timesteps=5,
+        run_name="angular_ortho_loss_run_20ts",
+        num_timesteps=20,
         mode='one_shot'
     )
     
     evaluate_cold_demorph(
         arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="angular_ortho_loss_run",
-        num_timesteps=5,
+        run_name="angular_ortho_loss_run_20ts",
+        num_timesteps=20,
         mode='iterative'
     )

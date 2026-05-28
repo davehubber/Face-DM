@@ -1,0 +1,157 @@
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 1 | Train Loss: 0.3243 | Val Cheap Loss: 0.2242
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 2 | Train Loss: 0.2148 | Val Cheap Loss: 0.2073
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 3 | Train Loss: 0.1982 | Val Cheap Loss: 0.1936
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 4 | Train Loss: 0.1835 | Val Cheap Loss: 0.1838
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 5 | Train Loss: 0.1716 | Val Cheap Loss: 0.1713 | Val TACOs Cos: 0.7339
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 6 | Train Loss: 0.1634 | Val Cheap Loss: 0.1664
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 7 | Train Loss: 0.1579 | Val Cheap Loss: 0.1656
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 8 | Train Loss: 0.1534 | Val Cheap Loss: 0.1585
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 9 | Train Loss: 0.1480 | Val Cheap Loss: 0.1567
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 10 | Train Loss: 0.1450 | Val Cheap Loss: 0.1542 | Val TACOs Cos: 0.7610
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 11 | Train Loss: 0.1424 | Val Cheap Loss: 0.1502
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 12 | Train Loss: 0.1395 | Val Cheap Loss: 0.1478
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 13 | Train Loss: 0.1368 | Val Cheap Loss: 0.1437
+Epoch 14 | Train Loss: 0.1348 | Val Cheap Loss: 0.1448
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 15 | Train Loss: 0.1337 | Val Cheap Loss: 0.1424 | Val TACOs Cos: 0.7803
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 16 | Train Loss: 0.1315 | Val Cheap Loss: 0.1417
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 17 | Train Loss: 0.1300 | Val Cheap Loss: 0.1398
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 18 | Train Loss: 0.1278 | Val Cheap Loss: 0.1364
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 19 | Train Loss: 0.1262 | Val Cheap Loss: 0.1356
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 20 | Train Loss: 0.1249 | Val Cheap Loss: 0.1354 | Val TACOs Cos: 0.7905
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 21 | Train Loss: 0.1236 | Val Cheap Loss: 0.1349
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 22 | Train Loss: 0.1225 | Val Cheap Loss: 0.1320
+Epoch 23 | Train Loss: 0.1211 | Val Cheap Loss: 0.1326
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 24 | Train Loss: 0.1200 | Val Cheap Loss: 0.1309
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 25 | Train Loss: 0.1193 | Val Cheap Loss: 0.1307 | Val TACOs Cos: 0.8027
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 26 | Train Loss: 0.1185 | Val Cheap Loss: 0.1303
+Epoch 27 | Train Loss: 0.1178 | Val Cheap Loss: 0.1328
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 28 | Train Loss: 0.1171 | Val Cheap Loss: 0.1290
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 29 | Train Loss: 0.1158 | Val Cheap Loss: 0.1289
+Epoch 30 | Train Loss: 0.1151 | Val Cheap Loss: 0.1301 | Val TACOs Cos: 0.8026
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 31 | Train Loss: 0.1166 | Val Cheap Loss: 0.1284
+Epoch 32 | Train Loss: 0.1141 | Val Cheap Loss: 0.1290
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 33 | Train Loss: 0.1126 | Val Cheap Loss: 0.1263
+Epoch 34 | Train Loss: 0.1115 | Val Cheap Loss: 0.1272
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 35 | Train Loss: 0.1109 | Val Cheap Loss: 0.1263 | Val TACOs Cos: 0.8087
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 36 | Train Loss: 0.1108 | Val Cheap Loss: 0.1262
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 37 | Train Loss: 0.1108 | Val Cheap Loss: 0.1255
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 38 | Train Loss: 0.1098 | Val Cheap Loss: 0.1240
+Epoch 39 | Train Loss: 0.1082 | Val Cheap Loss: 0.1261
+Epoch 40 | Train Loss: 0.1080 | Val Cheap Loss: 0.1272 | Val TACOs Cos: 0.8048
+Epoch 41 | Train Loss: 0.1087 | Val Cheap Loss: 0.1284
+Epoch 42 | Train Loss: 0.1090 | Val Cheap Loss: 0.1248
+Epoch 43 | Train Loss: 0.1078 | Val Cheap Loss: 0.1247
+Epoch 44 | Train Loss: 0.1060 | Val Cheap Loss: 0.1246
+Epoch 45 | Train Loss: 0.1054 | Val Cheap Loss: 0.1246 | Val TACOs Cos: 0.8140
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 46 | Train Loss: 0.1057 | Val Cheap Loss: 0.1236
+--> Saved new best checkpoint based on Cheap Val to experiments/angular_ortho_loss_run/checkpoints/best.pt
+Epoch 47 | Train Loss: 0.1050 | Val Cheap Loss: 0.1229
+Epoch 48 | Train Loss: 0.1038 | Val Cheap Loss: 0.1229
+Epoch 49 | Train Loss: 0.1028 | Val Cheap Loss: 0.1231
+Epoch 50 | Train Loss: 0.1040 | Val Cheap Loss: 0.1235 | Val TACOs Cos: 0.8095
+Loading ArcFace embeddings for one_shot evaluation...
+Loading weights from experiments/angular_ortho_loss_run/checkpoints/best.pt...
+
+==================================================
+DIFFAE/ARCFACE DEMORPH EVALUATION REPORT (ONE_SHOT)
+==================================================
+Run Name:         angular_ortho_loss_run
+Validation Pairs: 10,000
+Target Space:     ArcFace 512-D (L2-Normalized Base)
+--------------------------------------------------
+
+1. GROUND TRUTH Z1 RECONSTRUCTION
+--------------------------------------------------
+  - L1 Distance (Scaled space): 0.499431
+  - L1 Distance (Raw ArcFace):  0.020832
+  - Cosine Similarity vs Z1:    0.815830
+
+2. GROUND TRUTH Z2 RECONSTRUCTION
+--------------------------------------------------
+  - L1 Distance (Scaled space): 0.499276
+  - L1 Distance (Raw ArcFace):  0.020833
+  - Cosine Similarity vs Z2:    0.815830
+
+3. GEOMETRIC ALIGNMENT & ORTHOGONALITY COMPARISON
+--------------------------------------------------
+  - Baseline Cosine Sim (True Z1 vs True Z2):  0.069538
+  - Generated Cosine Sim (Pred_Z1 vs Pred_Z2): 0.145356
+
+  Interpretation:
+  The Baseline metric proves how uncorrelated the target parents naturally
+  are (expecting ~0.0673 based on global dataset tests). For a perfect
+  separation, the Generated Cosine Similarity should converge closely to
+  or match that exact baseline window.
+==================================================
+
+Saved evaluation results to experiments/angular_ortho_loss_run/eval_one_shot.txt
+Loading ArcFace embeddings for iterative evaluation...
+Loading weights from experiments/angular_ortho_loss_run/checkpoints/best.pt...
+
+==================================================
+DIFFAE/ARCFACE DEMORPH EVALUATION REPORT (ITERATIVE)
+==================================================
+Run Name:         angular_ortho_loss_run
+Validation Pairs: 10,000
+Target Space:     ArcFace 512-D (L2-Normalized Base)
+--------------------------------------------------
+
+1. GROUND TRUTH Z1 RECONSTRUCTION
+--------------------------------------------------
+  - L1 Distance (Scaled space): 0.563742
+  - L1 Distance (Raw ArcFace):  0.021020
+  - Cosine Similarity vs Z1:    0.812961
+
+2. GROUND TRUTH Z2 RECONSTRUCTION
+--------------------------------------------------
+  - L1 Distance (Scaled space): 0.563672
+  - L1 Distance (Raw ArcFace):  0.021022
+  - Cosine Similarity vs Z2:    0.812961
+
+3. GEOMETRIC ALIGNMENT & ORTHOGONALITY COMPARISON
+--------------------------------------------------
+  - Baseline Cosine Sim (True Z1 vs True Z2):  0.069538
+  - Generated Cosine Sim (Pred_Z1 vs Pred_Z2): 0.182472
+
+  Interpretation:
+  The Baseline metric proves how uncorrelated the target parents naturally
+  are (expecting ~0.0673 based on global dataset tests). For a perfect
+  separation, the Generated Cosine Similarity should converge closely to
+  or match that exact baseline window.
+==================================================
+
+Saved evaluation results to experiments/angular_ortho_loss_run/eval_iterative.txt
