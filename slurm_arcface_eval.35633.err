@@ -1,0 +1,21 @@
+Evaluating (one_shot):   0%|          | 0/5 [00:00<?, ?it/s]Evaluating (one_shot):  20%|██        | 1/5 [00:00<00:01,  2.58it/s]Evaluating (one_shot):  60%|██████    | 3/5 [00:00<00:00,  6.71it/s]Evaluating (one_shot): 100%|██████████| 5/5 [00:00<00:00,  9.59it/s]Evaluating (one_shot): 100%|██████████| 5/5 [00:00<00:00,  7.24it/s]
+Evaluating (iterative):   0%|          | 0/5 [00:00<?, ?it/s]
+TACOs Sampling:   0%|          | 0/5 [00:00<?, ?it/s][A
+TACOs Sampling:  40%|████      | 2/5 [00:00<00:00, 17.81it/s][A
+TACOs Sampling:  80%|████████  | 4/5 [00:00<00:00, 18.31it/s][A
+                                                             [AEvaluating (iterative):  20%|██        | 1/5 [00:00<00:01,  2.09it/s]
+TACOs Sampling:   0%|          | 0/5 [00:00<?, ?it/s][A
+TACOs Sampling:  40%|████      | 2/5 [00:00<00:00, 18.85it/s][A
+TACOs Sampling:  80%|████████  | 4/5 [00:00<00:00, 18.60it/s][A
+                                                             [AEvaluating (iterative):  40%|████      | 2/5 [00:00<00:01,  2.78it/s]
+TACOs Sampling:   0%|          | 0/5 [00:00<?, ?it/s][A
+TACOs Sampling:  40%|████      | 2/5 [00:00<00:00, 19.10it/s][A
+TACOs Sampling:  80%|████████  | 4/5 [00:00<00:00, 18.86it/s][A
+                                                             [AEvaluating (iterative):  60%|██████    | 3/5 [00:01<00:00,  3.12it/s]
+TACOs Sampling:   0%|          | 0/5 [00:00<?, ?it/s][A
+TACOs Sampling:  40%|████      | 2/5 [00:00<00:00, 19.02it/s][A
+TACOs Sampling:  80%|████████  | 4/5 [00:00<00:00, 18.95it/s][A
+                                                             [AEvaluating (iterative):  80%|████████  | 4/5 [00:01<00:00,  3.31it/s]
+TACOs Sampling:   0%|          | 0/5 [00:00<?, ?it/s][A
+TACOs Sampling:  60%|██████    | 3/5 [00:00<00:00, 20.44it/s][A
+                                                             [AEvaluating (iterative): 100%|██████████| 5/5 [00:01<00:00,  3.51it/s]Evaluating (iterative): 100%|██████████| 5/5 [00:01<00:00,  3.14it/s]

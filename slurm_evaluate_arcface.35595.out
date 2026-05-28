@@ -1,0 +1,52 @@
+Loading L2-normalized ArcFace embeddings from /nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy...
+Loaded 70000 embeddings with shape (70000, 512)
+Evaluating cosine similarity for 1000 random pairs...
+
+Evaluation complete. Report successfully saved to:
+/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/arcface_similarity_report.txt
+
+==================================================
+ARCFACE EMBEDDING COSINE SIMILARITY REPORT
+==================================================
+Source File:     ffhq256_deepface_arcface_retinaface_l2norm.npy
+Total Dataset:   70000 samples
+Pairs Tested:    1000 (Randomly Sampled)
+Metric Used:     Cosine Similarity (Dot Product on L2-Norm)
+
+1. COSINE SIMILARITY STATISTICS
+--------------------------------------------------
+  - Mean Similarity:     0.0673
+  - Standard Deviation:  0.0968
+  - Minimum Similarity:  -0.2582
+  - Maximum Similarity:  0.4311
+
+Distribution Percentiles:
+  - 25th Percentile:     0.0098
+  - 50th (Median):       0.0614
+  - 75th Percentile:     0.1332
+
+2. FALSE POSITIVE / SIMILARITY BOUNDS ANALYSIS
+--------------------------------------------------
+ArcFace groups identical individuals at high similarities and separates
+different identities near or below a baseline zero-bias. 
+
+Pairs exceeding target similarity thresholds:
+  - Pairs > 0.30:        15 / 1000 (1.50%)
+  - Pairs > 0.40:        1 / 1000 (0.10%)
+  - Pairs > 0.50:        0 / 1000 (0.00%)
+
+3. INTERPRETATION GUIDE
+--------------------------------------------------
+- Expected Baseline: Because FFHQ consists of different individuals, the
+  mean cosine similarity should hover relatively low (often between 0.00 
+  and 0.20 depending on global face alignments and background leakage).
+  
+- Lookalike Rate: Pairs crossing > 0.40 represent random combinations 
+  that the model considers strongly lookalike or potentially the same 
+  identity under poor environmental conditions. 
+
+- Comparison to DiffAE: Unlike your DiffAE semantic space (which measures 
+  overall scene and pixel-structural variance), ArcFace discards non-identity
+  factors (lighting, pose, background) to focus purely on facial geometry.
+==================================================
+
