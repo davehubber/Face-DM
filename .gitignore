@@ -9,3 +9,4 @@ temp/*
 *.pth
 *.npy
 *.npz
+*.png
