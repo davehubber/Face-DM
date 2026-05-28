@@ -1,0 +1,12 @@
+Loading ArcFace embeddings for iterative evaluation...
+Loading weights from experiments/avg_arcface_50_50_pit_real_separate_double_objective/checkpoints/best.pt...
+
+--- Evaluation Results (Permutation Invariant & Spherical TACOs): ITERATIVE ---
+Run Name: avg_arcface_50_50_pit_real_separate_double_objective
+Validation Pairs: 10,000
+----------------------------------------
+L1 Distance (Scaled space): 0.471991
+L1 Distance (Raw ArcFace):  0.021854
+Cosine Similarity:          0.800477
+
+Saved evaluation results to experiments/avg_arcface_50_50_pit_real_separate_double_objective/eval_iterative.txt

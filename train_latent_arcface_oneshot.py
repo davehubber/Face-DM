@@ -150,10 +150,10 @@ def train_oneshot_demorph(arcface_path_str: str, run_name: str):
     split_idx = int(len(arcface_embs) * 0.9)
     train_embs, val_embs = arcface_embs[:split_idx], arcface_embs[split_idx:]
     
-    train_dataset = OneShotArcFaceDemorphDataset(train_embs, epoch_size=1_000_000, deterministic=False)
+    train_dataset = OneShotArcFaceDemorphDataset(train_embs, epoch_size=100_000, deterministic=False)
     val_dataset = OneShotArcFaceDemorphDataset(val_embs, epoch_size=10_000, deterministic=True)
     
-    train_loader = DataLoader(train_dataset, batch_size=16384, shuffle=True, num_workers=8)
+    train_loader = DataLoader(train_dataset, batch_size=4096, shuffle=True, num_workers=8)
     val_loader = DataLoader(val_dataset, batch_size=2048, shuffle=False, num_workers=4)
 
     net = OneShotDemorphNet(in_dim=512, hidden_dim=2048, out_dim=1024, num_blocks=6).to(device)
@@ -163,7 +163,7 @@ def train_oneshot_demorph(arcface_path_str: str, run_name: str):
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
         "learning_rate": 3e-4,
-        "batch_size": 16384,
+        "batch_size": 4096,
         "num_blocks": 6,
         "hidden_dim": 2048,
         "latent_space": "ArcFace",
@@ -240,7 +240,7 @@ def evaluate_oneshot_demorph(arcface_path_str: str, run_name: str):
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found at {ckpt_path}")
         
-    out_file_path = exp_dir / "eval_oneshot.txt"
+    out_file_path = exp_dir / "eval_oneshot_separated.txt"
     
     print("Loading ArcFace embeddings for evaluation...")
     scale_factor = math.sqrt(512)
@@ -258,61 +258,82 @@ def evaluate_oneshot_demorph(arcface_path_str: str, run_name: str):
     net.load_state_dict(checkpoint['model_state_dict'])
     net.eval()
 
-    total_l1_scaled = 0.0
-    total_l1_raw = 0.0
-    total_cosine = 0.0
-    num_batches = 0
+    # Separate accumulators for Embedding 1 and Embedding 2
+    total_l1_scaled_e1, total_l1_scaled_e2 = 0.0, 0.0
+    total_l1_raw_e1, total_l1_raw_e2 = 0.0, 0.0
+    total_cosine_e1, total_cosine_e2 = 0.0, 0.0
+    num_samples_evaluated = 0
 
     with torch.no_grad():
-        for batch_z1, batch_z2 in tqdm(val_loader, desc="Evaluating One-Shot"):
+        for batch_z1, batch_z2 in tqdm(val_loader, desc="Evaluating One-Shot (Separated)"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-            batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1) * math.sqrt(512)
+            
+            # Spherical Midpoint Projection for the condition if using the updated training fix
+            batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1) * scale_factor
             
             # Extract predictions
             pred_z1, pred_z2 = wrapper.predict(batch_c)
             
-            # Since the model is permutation invariant, we need to find which prediction 
-            # maps closest to which target for every item in the batch to calculate accurate metrics.
+            # Resolve permutation matching per sample in the batch
             for i in range(batch_z1.shape[0]):
                 p1, p2 = pred_z1[i], pred_z2[i]
                 t1, t2 = batch_z1[i], batch_z2[i]
                 
-                # Check alignment configurations
                 dist_opt1 = F.l1_loss(p1, t1) + F.l1_loss(p2, t2)
                 dist_opt2 = F.l1_loss(p1, t2) + F.l1_loss(p2, t1)
                 
-                # Assign aligned pairs based on optimal distance
                 if dist_opt1 < dist_opt2:
                     a_p1, a_p2 = p1, p2
                 else:
                     a_p1, a_p2 = p2, p1
                 
-                # 1. Scaled Metrics
-                total_l1_scaled += (F.l1_loss(a_p1, t1).item() + F.l1_loss(a_p2, t2).item()) / 2.0
+                # --- 1. Scaled Metrics (Tracked Independently) ---
+                total_l1_scaled_e1 += F.l1_loss(a_p1, t1).item()
+                total_l1_scaled_e2 += F.l1_loss(a_p2, t2).item()
                 
-                # 2. Map back to strictly L2-normalized domain for Raw Hypersphere space assessment
+                # Map back to L2-normalized domain for Raw Hypersphere space assessment
                 p1_raw = F.normalize(a_p1 / scale_factor, p=2, dim=-1)
                 p2_raw = F.normalize(a_p2 / scale_factor, p=2, dim=-1)
                 t1_raw = F.normalize(t1 / scale_factor, p=2, dim=-1)
                 t2_raw = F.normalize(t2 / scale_factor, p=2, dim=-1)
                 
-                total_l1_raw += (F.l1_loss(p1_raw, t1_raw).item() + F.l1_loss(p2_raw, t2_raw).item()) / 2.0
-                total_cosine += (F.cosine_similarity(p1_raw, t1_raw, dim=0).item() + F.cosine_similarity(p2_raw, t2_raw, dim=0).item()) / 2.0
+                # --- 2. Raw Space Metrics (Tracked Independently) ---
+                total_l1_raw_e1 += F.l1_loss(p1_raw, t1_raw).item()
+                total_l1_raw_e2 += F.l1_loss(p2_raw, t2_raw).item()
                 
-                num_batches += 1
+                total_cosine_e1 += F.cosine_similarity(p1_raw, t1_raw, dim=0).item()
+                total_cosine_e2 += F.cosine_similarity(p2_raw, t2_raw, dim=0).item()
+                
+                num_samples_evaluated += 1
 
-    avg_l1_scaled = total_l1_scaled / num_batches
-    avg_l1_raw = total_l1_raw / num_batches
-    avg_cosine = total_cosine / num_batches
+    # Calculate final individual averages
+    avg_l1_scaled_e1 = total_l1_scaled_e1 / num_samples_evaluated
+    avg_l1_scaled_e2 = total_l1_scaled_e2 / num_samples_evaluated
+    
+    avg_l1_raw_e1 = total_l1_raw_e1 / num_samples_evaluated
+    avg_l1_raw_e2 = total_l1_raw_e2 / num_samples_evaluated
+    
+    avg_cosine_e1 = total_cosine_e1 / num_samples_evaluated
+    avg_cosine_e2 = total_cosine_e2 / num_samples_evaluated
 
     results_text = (
-        f"--- Evaluation Results: ONE-SHOT PERMUTATION INVARIANT ---\n"
+        f"--- Evaluation Results: ONE-SHOT PERMUTATION INVARIANT (SEPARATED) ---\n"
         f"Run Name: {run_name}\n"
-        f"Validation Pairs Evaluated: {num_batches}\n"
+        f"Validation Pairs Evaluated: {num_samples_evaluated}\n"
         f"---------------------------------------------------------\n"
-        f"Mean L1 Distance (Scaled space): {avg_l1_scaled:.6f}\n"
-        f"Mean L1 Distance (Raw ArcFace):  {avg_l1_raw:.6f}\n"
-        f"Mean Cosine Similarity:          {avg_cosine:.6f}\n"
+        f"EMBEDDING 1 (Aligned Head 1):\n"
+        f"  -> Mean L1 Distance (Scaled space): {avg_l1_scaled_e1:.6f}\n"
+        f"  -> Mean L1 Distance (Raw ArcFace):  {avg_l1_raw_e1:.6f}\n"
+        f"  -> Mean Cosine Similarity:          {avg_cosine_e1:.6f}\n"
+        f"---------------------------------------------------------\n"
+        f"EMBEDDING 2 (Aligned Head 2):\n"
+        f"  -> Mean L1 Distance (Scaled space): {avg_l1_scaled_e2:.6f}\n"
+        f"  -> Mean L1 Distance (Raw ArcFace):  {avg_l1_raw_e2:.6f}\n"
+        f"  -> Mean Cosine Similarity:          {avg_cosine_e2:.6f}\n"
+        f"---------------------------------------------------------\n"
+        f"OVERALL SYSTEM AVERAGE:\n"
+        f"  -> Mean L1 Distance (Raw ArcFace):  {(avg_l1_raw_e1 + avg_l1_raw_e2) / 2.0:.6f}\n"
+        f"  -> Mean Cosine Similarity:          {(avg_cosine_e1 + avg_cosine_e2) / 2.0:.6f}\n"
     )
     
     print("\n" + results_text)
@@ -323,5 +344,5 @@ if __name__ == "__main__":
     DATA_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
     RUN_ID = "oneshot_arcface_real"
 
-    train_oneshot_demorph(arcface_path_str=DATA_PATH, run_name=RUN_ID)
+    #train_oneshot_demorph(arcface_path_str=DATA_PATH, run_name=RUN_ID)
     evaluate_oneshot_demorph(arcface_path_str=DATA_PATH, run_name=RUN_ID)

@@ -1,0 +1,103 @@
+Loading ArcFace embeddings...
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 1 | Train L1: 0.4468 | Val Cheap L1: 0.3490
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 2 | Train L1: 0.3427 | Val Cheap L1: 0.3438
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 3 | Train L1: 0.3360 | Val Cheap L1: 0.3334
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 4 | Train L1: 0.3296 | Val Cheap L1: 0.3322
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 5 | Train L1: 0.3236 | Val Cheap L1: 0.3230 | Val TACOs L1: 0.5115
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 6 | Train L1: 0.3167 | Val Cheap L1: 0.3199
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 7 | Train L1: 0.3121 | Val Cheap L1: 0.3144
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 8 | Train L1: 0.3069 | Val Cheap L1: 0.3116
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 9 | Train L1: 0.3032 | Val Cheap L1: 0.3079
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 10 | Train L1: 0.2998 | Val Cheap L1: 0.3058 | Val TACOs L1: 0.4779
+Epoch 11 | Train L1: 0.2971 | Val Cheap L1: 0.3063
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 12 | Train L1: 0.2945 | Val Cheap L1: 0.3036
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 13 | Train L1: 0.2920 | Val Cheap L1: 0.3026
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 14 | Train L1: 0.2900 | Val Cheap L1: 0.3006
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 15 | Train L1: 0.2875 | Val Cheap L1: 0.2987 | Val TACOs L1: 0.4635
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 16 | Train L1: 0.2858 | Val Cheap L1: 0.2984
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 17 | Train L1: 0.2843 | Val Cheap L1: 0.2966
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 18 | Train L1: 0.2826 | Val Cheap L1: 0.2951
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 19 | Train L1: 0.2809 | Val Cheap L1: 0.2948
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 20 | Train L1: 0.2792 | Val Cheap L1: 0.2947 | Val TACOs L1: 0.4572
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 21 | Train L1: 0.2780 | Val Cheap L1: 0.2935
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 22 | Train L1: 0.2768 | Val Cheap L1: 0.2915
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 23 | Train L1: 0.2756 | Val Cheap L1: 0.2908
+Epoch 24 | Train L1: 0.2741 | Val Cheap L1: 0.2931
+Epoch 25 | Train L1: 0.2730 | Val Cheap L1: 0.2915 | Val TACOs L1: 0.4505
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 26 | Train L1: 0.2723 | Val Cheap L1: 0.2900
+Epoch 27 | Train L1: 0.2710 | Val Cheap L1: 0.2921
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 28 | Train L1: 0.2701 | Val Cheap L1: 0.2896
+Epoch 29 | Train L1: 0.2689 | Val Cheap L1: 0.2938
+Epoch 30 | Train L1: 0.2680 | Val Cheap L1: 0.2904 | Val TACOs L1: 0.4460
+Epoch 31 | Train L1: 0.2670 | Val Cheap L1: 0.2900
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 32 | Train L1: 0.2663 | Val Cheap L1: 0.2893
+Epoch 33 | Train L1: 0.2658 | Val Cheap L1: 0.2915
+Epoch 34 | Train L1: 0.2645 | Val Cheap L1: 0.2900
+Epoch 35 | Train L1: 0.2640 | Val Cheap L1: 0.2910 | Val TACOs L1: 0.4411
+Epoch 36 | Train L1: 0.2631 | Val Cheap L1: 0.2898
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 37 | Train L1: 0.2619 | Val Cheap L1: 0.2880
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 38 | Train L1: 0.2612 | Val Cheap L1: 0.2864
+Epoch 39 | Train L1: 0.2606 | Val Cheap L1: 0.2885
+Epoch 40 | Train L1: 0.2598 | Val Cheap L1: 0.2886 | Val TACOs L1: 0.4406
+Epoch 41 | Train L1: 0.2594 | Val Cheap L1: 0.2896
+Epoch 42 | Train L1: 0.2585 | Val Cheap L1: 0.2903
+Epoch 43 | Train L1: 0.2578 | Val Cheap L1: 0.2865
+Epoch 44 | Train L1: 0.2571 | Val Cheap L1: 0.2873
+Epoch 45 | Train L1: 0.2562 | Val Cheap L1: 0.2888 | Val TACOs L1: 0.4412
+Epoch 46 | Train L1: 0.2560 | Val Cheap L1: 0.2890
+--> Saved new best checkpoint based on Cheap Val to experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt
+Epoch 47 | Train L1: 0.2552 | Val Cheap L1: 0.2845
+Epoch 48 | Train L1: 0.2544 | Val Cheap L1: 0.2881
+Epoch 49 | Train L1: 0.2535 | Val Cheap L1: 0.2903
+Epoch 50 | Train L1: 0.2532 | Val Cheap L1: 0.2865 | Val TACOs L1: 0.4373
+Loading ArcFace embeddings for one_shot evaluation...
+Loading weights from experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt...
+
+--- Evaluation Results (Permutation Invariant & Spherical TACOs): ONE_SHOT ---
+Run Name: avg_arcface_50_50_pit_real_separate
+Validation Pairs: 10,000
+----------------------------------------
+L1 Distance (Scaled space): 0.419949
+L1 Distance (Raw ArcFace):  0.019324
+Cosine Similarity:          0.842624
+
+Saved evaluation results to experiments/avg_arcface_50_50_pit_real_separate/eval_one_shot.txt
+Loading ArcFace embeddings for iterative evaluation...
+Loading weights from experiments/avg_arcface_50_50_pit_real_separate/checkpoints/best.pt...
+
+--- Evaluation Results (Permutation Invariant & Spherical TACOs): ITERATIVE ---
+Run Name: avg_arcface_50_50_pit_real_separate
+Validation Pairs: 10,000
+----------------------------------------
+L1 Distance (Scaled space): 0.436466
+L1 Distance (Raw ArcFace):  0.019965
+Cosine Similarity:          0.831367
+
+Saved evaluation results to experiments/avg_arcface_50_50_pit_real_separate/eval_iterative.txt

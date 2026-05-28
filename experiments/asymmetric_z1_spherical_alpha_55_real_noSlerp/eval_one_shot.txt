@@ -1,0 +1,8 @@
+--- Evaluation Results (Dominant z1 Target Tracking): ONE_SHOT ---
+Run Name: asymmetric_z1_spherical_alpha_55_real_noSlerp
+Validation Pairs: 10,000
+Terminal Alpha Config: 0.55
+----------------------------------------
+L1 Distance (Scaled space): 0.435447
+L1 Distance (Raw ArcFace):  0.020113
+Cosine Similarity:          0.825852

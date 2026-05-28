@@ -1,0 +1,7 @@
+--- Evaluation Results (Permutation Invariant & Spherical TACOs): ONE_SHOT ---
+Run Name: avg_arcface_50_50_pit_real_separate_double_objective_100e
+Validation Pairs: 10,000
+----------------------------------------
+L1 Distance (Scaled space): 0.420964
+L1 Distance (Raw ArcFace):  0.019365
+Cosine Similarity:          0.842165
