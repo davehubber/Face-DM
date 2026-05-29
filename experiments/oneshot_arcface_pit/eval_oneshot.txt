@@ -1,7 +1,0 @@
---- Evaluation Results: ONE-SHOT PERMUTATION INVARIANT ---
-Run Name: oneshot_arcface_pit
-Validation Pairs Evaluated: 10000
----------------------------------------------------------
-Mean L1 Distance (Scaled space): 0.422766
-Mean L1 Distance (Raw ArcFace):  0.019472
-Mean Cosine Similarity:          0.840151

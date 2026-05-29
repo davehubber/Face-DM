@@ -1,8 +1,0 @@
---- Evaluation Results (Dominant z1 Target Tracking): ITERATIVE ---
-Run Name: asymmetric_arcface_z1_alpha_60
-Validation Pairs: 10,000
-Terminal Alpha Config: 0.60
-----------------------------------------
-L1 Distance (Scaled space): 0.263002
-L1 Distance (Raw ArcFace):  0.011793
-Cosine Similarity:          0.941527

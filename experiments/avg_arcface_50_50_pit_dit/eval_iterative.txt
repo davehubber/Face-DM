@@ -1,7 +1,0 @@
---- Evaluation Results (Permutation Invariant & Spherical TACOs): ITERATIVE ---
-Run Name: avg_arcface_50_50_pit_dit
-Validation Pairs: 10,000
-----------------------------------------
-L1 Distance (Scaled space): 0.442876
-L1 Distance (Raw ArcFace):  0.020346
-Cosine Similarity:          0.826401

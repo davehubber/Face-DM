@@ -1,7 +1,0 @@
---- Evaluation Results (Permutation Invariant): ONE_SHOT ---
-Run Name: avg_arcface_50_50_pit
-Validation Pairs: 10,000
-----------------------------------------
-L1 Distance (Scaled space): 0.421121
-L1 Distance (Raw ArcFace):  0.019397
-Cosine Similarity:          0.841608

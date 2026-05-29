@@ -1,6 +1,0 @@
---- Evaluation Results: ONE-SHOT DIFF-AE (PIT) ---
-Run Name: oneshot_diffae_pit
-Validation Pairs Evaluated: 10000
----------------------------------------------------
-Mean L1 Distance:  0.506833
-Mean Cosine Similarity: 0.766437
