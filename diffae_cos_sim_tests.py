@@ -14,7 +14,7 @@ PATH_TO_DIFF_MODEL = "../diffae"
 sys.path.append(PATH_TO_DIFF_MODEL)
 
 from templates import ffhq256_autoenc
-from lit_model import LitModel  # Adjust import based on your template layout
+from experiment import LitModel  # Adjust import based on your template layout
 
 def run_perceptual_correlation_analysis(base_path_str: str, out_dir_str: str = "experiments_analysis"):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
