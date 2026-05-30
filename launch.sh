@@ -8,4 +8,4 @@
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python diffae_cos_sim_tests.py
+python -u diffae_cos_sim_tests.py
