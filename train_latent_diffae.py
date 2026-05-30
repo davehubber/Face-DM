@@ -130,18 +130,24 @@ class DeterministicColdDemorph(nn.Module):
     def compute_loss(self, z1, z2):
         b = z1.shape[0]
         c = (z1 + z2) / 2.0
-        
-        # Enforce deterministic sorting rule based on highest cosine similarity to the average mixture
-        sim1 = F.cosine_similarity(c, z1, dim=-1, keepdim=True)
-        sim2 = F.cosine_similarity(c, z2, dim=-1, keepdim=True)
-        swap_mask = sim2 > sim1
-        z1_sorted = torch.where(swap_mask, z2, z1)
-        
         t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
-        x_t = self.degrade(z1_sorted, c, t)
+        
+        x_t = self.degrade(z1, c, t)
         pred_z = self.model(x_t, t)
         
-        return F.l1_loss(pred_z, z1_sorted)
+        # Match Target z1 (50% L1 + 50% Cosine Distance)
+        l1_z1 = F.l1_loss(pred_z, z1, reduction='none').mean(dim=-1)
+        cos_dist_z1 = 1.0 - F.cosine_similarity(pred_z, z1, dim=-1)
+        loss_z1 = 0.5 * l1_z1 + 0.5 * cos_dist_z1
+        
+        # Match Target z2 (50% L1 + 50% Cosine Distance)
+        l1_z2 = F.l1_loss(pred_z, z2, reduction='none').mean(dim=-1)
+        cos_dist_z2 = 1.0 - F.cosine_similarity(pred_z, z2, dim=-1)
+        loss_z2 = 0.5 * l1_z2 + 0.5 * cos_dist_z2
+        
+        # Permutation Invariant Selection
+        loss = torch.min(loss_z1, loss_z2)
+        return loss.mean()
 
     @torch.no_grad()
     def tacos_sample_loop(self, c):
@@ -150,9 +156,22 @@ class DeterministicColdDemorph(nn.Module):
         timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
         x_t = c.clone()
         
+        prev_pred = None
         for t in tqdm(timesteps, desc='TACOs Sampling', leave=False):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
-            pred_z1 = self.model(x_t, t_batch)
+            pred_raw = self.model(x_t, t_batch)
+            pred_comp = 2.0 * c - pred_raw
+            
+            if prev_pred is None:
+                pred_z1 = pred_raw
+            else:
+                dist_raw = F.l1_loss(pred_raw, prev_pred, reduction='none').mean(dim=-1)
+                dist_comp = F.l1_loss(pred_comp, prev_pred, reduction='none').mean(dim=-1)
+                
+                swap_mask = dist_comp < dist_raw
+                pred_z1 = torch.where(swap_mask.unsqueeze(-1), pred_comp, pred_raw)
+            
+            prev_pred = pred_z1
             
             t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
             deg_t = self.degrade(pred_z1, c, t_batch)
@@ -176,7 +195,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     
     if not metrics_path.exists():
         with open(metrics_path, "w", newline="") as f:
-            csv.writer(f).writerow(["Epoch", "Train_L1", "Val_Cheap_L1", "Val_TACOs_Reconstruct_L1"])
+            csv.writer(f).writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_TACOs_Reconstruct_L1"])
             
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     val_embs = load_split_and_normalize(diffae_path_str, "val")
@@ -230,7 +249,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
                     val_tacos_loss_total += torch.min(dist_a, dist_b).mean().item()
             val_tacos_loss = val_tacos_loss_total / len(val_loader)
             
-        log_dict = {"epoch": epoch + 1, "train_l1": avg_train_loss, "val_cheap_l1": avg_val_cheap_loss}
+        log_dict = {"epoch": epoch + 1, "train_hybrid_loss": avg_train_loss, "val_cheap_hybrid_loss": avg_val_cheap_loss}
         if val_tacos_loss is not None: log_dict["val_tacos_reconstruct_l1"] = val_tacos_loss
         wandb.log(log_dict)
         
@@ -244,7 +263,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
             best_val_loss = avg_val_cheap_loss
             torch.save(checkpoint_data, ckpt_dir / "best.pt")
             
-        print(f"Epoch {epoch+1} | Train L1: {avg_train_loss:.4f} | Val Cheap L1: {avg_val_cheap_loss:.4f}" + (f" | Val TACOs L1: {val_tacos_loss:.4f}" if val_tacos_loss is not None else ""))
+        print(f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} | Val Cheap Loss: {avg_val_cheap_loss:.4f}" + (f" | Val TACOs L1: {val_tacos_loss:.4f}" if val_tacos_loss is not None else ""))
     wandb.finish()
 
 # ==========================================
@@ -265,6 +284,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
     net.eval()
 
     total_l1_1, total_l1_2, total_cosine_1, total_cosine_2 = 0.0, 0.0, 0.0, 0.0
+    total_cos_z1_z2, total_cos_z1_c, total_cos_z2_c, total_cos_pred1_pred2 = 0.0, 0.0, 0.0, 0.0
     num_batches = 0
 
     with torch.no_grad():
@@ -289,12 +309,29 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
             total_l1_2 += F.l1_loss(aligned_pred_z2, batch_z2).item()
             total_cosine_1 += F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1).mean().item()
             total_cosine_2 += F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1).mean().item()
+            
+            # Tracking raw angular relationship metrics
+            total_cos_z1_z2 += F.cosine_similarity(batch_z1, batch_z2, dim=-1).mean().item()
+            total_cos_z1_c += F.cosine_similarity(batch_z1, batch_c, dim=-1).mean().item()
+            total_cos_z2_c += F.cosine_similarity(batch_z2, batch_c, dim=-1).mean().item()
+            total_cos_pred1_pred2 += F.cosine_similarity(aligned_pred_z1, aligned_pred_z2, dim=-1).mean().item()
+            
             num_batches += 1
 
     results_text = (
         f"--- Evaluation Results: {mode.upper()} ---\nRun Name: {run_name}\n----------------------------------------\n"
-        f"[Embedding 1]\nL1 Distance:       {total_l1_1 / num_batches:.6f}\nCosine Similarity: {total_cosine_1 / num_batches:.6f}\n\n"
-        f"[Embedding 2]\nL1 Distance:       {total_l1_2 / num_batches:.6f}\nCosine Similarity: {total_cosine_2 / num_batches:.6f}\n"
+        f"Base Reference Angular Properties:\n"
+        f"  - CosSim(True Baseline z1, True Baseline z2): {total_cos_z1_z2 / num_batches:.6f}\n"
+        f"  - CosSim(True Baseline z1, Average mixture c): {total_cos_z1_c / num_batches:.6f}\n"
+        f"  - CosSim(True Baseline z2, Average mixture c): {total_cos_z2_c / num_batches:.6f}\n\n"
+        f"[Embedding 1 Performance Alignment]\n"
+        f"  - L1 Distance:                       {total_l1_1 / num_batches:.6f}\n"
+        f"  - Cosine Similarity to Target:       {total_cosine_1 / num_batches:.6f}\n\n"
+        f"[Embedding 2 Performance Alignment]\n"
+        f"  - L1 Distance:                       {total_l1_2 / num_batches:.6f}\n"
+        f"  - Cosine Similarity to Target:       {total_cosine_2 / num_batches:.6f}\n\n"
+        f"Generated Outputs Inter-Relationship:\n"
+        f"  - CosSim(Aligned Pred z1, Aligned Pred z2):  {total_cos_pred1_pred2 / num_batches:.6f}\n"
     )
     print("\n" + results_text)
     with open(out_file_path, "w") as f: f.write(results_text)
@@ -302,6 +339,6 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
     
-    train_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_highCosSim", num_timesteps=50)
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_highCosSim", num_timesteps=50, mode='one_shot')
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_highCosSim", num_timesteps=50, mode='iterative')
+    train_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_hybrid_pit", num_timesteps=50)
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_hybrid_pit", num_timesteps=50, mode='one_shot')
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_hybrid_pit", num_timesteps=50, mode='iterative')

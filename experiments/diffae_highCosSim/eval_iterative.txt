@@ -1,0 +1,10 @@
+--- Evaluation Results: ITERATIVE ---
+Run Name: diffae_highCosSim
+----------------------------------------
+[Embedding 1]
+L1 Distance:       0.558944
+Cosine Similarity: 0.721715
+
+[Embedding 2]
+L1 Distance:       0.558944
+Cosine Similarity: 0.721209
