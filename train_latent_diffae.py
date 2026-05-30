@@ -130,22 +130,18 @@ class DeterministicColdDemorph(nn.Module):
     def compute_loss(self, z1, z2):
         b = z1.shape[0]
         c = (z1 + z2) / 2.0
-        t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
         
-        x_t = self.degrade(z1, c, t)
+        # Enforce deterministic sorting rule based on largest L2 magnitude
+        mag1 = torch.norm(z1, p=2, dim=-1, keepdim=True)
+        mag2 = torch.norm(z2, p=2, dim=-1, keepdim=True)
+        swap_mask = mag2 > mag1
+        z1_sorted = torch.where(swap_mask, z2, z1)
+        
+        t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
+        x_t = self.degrade(z1_sorted, c, t)
         pred_z = self.model(x_t, t)
         
-        loss_z1 = F.l1_loss(pred_z, z1, reduction='none').mean(dim=1)
-        
-        is_final_step = (t == self.num_timesteps)
-        if is_final_step.any():
-            loss_z2 = F.l1_loss(pred_z, z2, reduction='none').mean(dim=1)
-            loss_perm = torch.min(loss_z1, loss_z2)
-            loss = torch.where(is_final_step, loss_perm, loss_z1)
-        else:
-            loss = loss_z1
-            
-        return loss.mean()
+        return F.l1_loss(pred_z, z1_sorted)
 
     @torch.no_grad()
     def tacos_sample_loop(self, c):
@@ -185,15 +181,15 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     val_embs = load_split_and_normalize(diffae_path_str, "val")
     
-    train_loader = DataLoader(ColdDiffAEDemorphDataset(train_embs, epoch_size=1_000_000), batch_size=2_048, shuffle=True, num_workers=8)
+    train_loader = DataLoader(ColdDiffAEDemorphDataset(train_embs, epoch_size=1_000_000), batch_size=25_000, shuffle=True, num_workers=8)
     val_loader = DataLoader(ColdDiffAEDemorphDataset(val_embs, epoch_size=10_000, deterministic=True), batch_size=10_000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
-    optimizer = torch.optim.AdamW(net.parameters(), lr=3e-4, weight_decay=0.01)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 3e-4, "batch_size": 2_048, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps
+        "learning_rate": 1e-4, "batch_size": 25_000, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps
     })
 
     epochs = 100
@@ -306,6 +302,6 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
     
-    train_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_default", num_timesteps=200)
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_default", num_timesteps=200, mode='one_shot')
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_default", num_timesteps=200, mode='iterative')
+    train_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_bigMag", num_timesteps=200)
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_bigMag", num_timesteps=200, mode='one_shot')
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_bigMag", num_timesteps=200, mode='iterative')

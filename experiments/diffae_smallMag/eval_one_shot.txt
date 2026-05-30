@@ -1,0 +1,10 @@
+--- Evaluation Results: ONE_SHOT ---
+Run Name: diffae_smallMag
+----------------------------------------
+[Embedding 1]
+L1 Distance:       0.536327
+Cosine Similarity: 0.735363
+
+[Embedding 2]
+L1 Distance:       0.536327
+Cosine Similarity: 0.735023

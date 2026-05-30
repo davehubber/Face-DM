@@ -1,0 +1,10 @@
+--- Evaluation Results: ITERATIVE ---
+Run Name: diffae_smallMag
+----------------------------------------
+[Embedding 1]
+L1 Distance:       0.548284
+Cosine Similarity: 0.729679
+
+[Embedding 2]
+L1 Distance:       0.548284
+Cosine Similarity: 0.729360

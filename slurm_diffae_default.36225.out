@@ -1,0 +1,124 @@
+Epoch 1 | Train L1: 0.5866 | Val Cheap L1: 0.4275
+Epoch 2 | Train L1: 0.3576 | Val Cheap L1: 0.3194
+Epoch 3 | Train L1: 0.3025 | Val Cheap L1: 0.2909
+Epoch 4 | Train L1: 0.2874 | Val Cheap L1: 0.2852
+Epoch 5 | Train L1: 0.2817 | Val Cheap L1: 0.2819 | Val TACOs L1: 1.1570
+Epoch 6 | Train L1: 0.2780 | Val Cheap L1: 0.2771
+Epoch 7 | Train L1: 0.2760 | Val Cheap L1: 0.2744
+Epoch 8 | Train L1: 0.2739 | Val Cheap L1: 0.2760
+Epoch 9 | Train L1: 0.2733 | Val Cheap L1: 0.2761
+Epoch 10 | Train L1: 0.2723 | Val Cheap L1: 0.2726 | Val TACOs L1: 1.1446
+Epoch 11 | Train L1: 0.2720 | Val Cheap L1: 0.2723
+Epoch 12 | Train L1: 0.2711 | Val Cheap L1: 0.2713
+Epoch 13 | Train L1: 0.2708 | Val Cheap L1: 0.2715
+Epoch 14 | Train L1: 0.2704 | Val Cheap L1: 0.2706
+Epoch 15 | Train L1: 0.2697 | Val Cheap L1: 0.2717 | Val TACOs L1: 1.1431
+Epoch 16 | Train L1: 0.2696 | Val Cheap L1: 0.2704
+Epoch 17 | Train L1: 0.2693 | Val Cheap L1: 0.2686
+Epoch 18 | Train L1: 0.2686 | Val Cheap L1: 0.2663
+Epoch 19 | Train L1: 0.2683 | Val Cheap L1: 0.2687
+Epoch 20 | Train L1: 0.2676 | Val Cheap L1: 0.2700 | Val TACOs L1: 1.1403
+Epoch 21 | Train L1: 0.2668 | Val Cheap L1: 0.2697
+Epoch 22 | Train L1: 0.2659 | Val Cheap L1: 0.2691
+Epoch 23 | Train L1: 0.2650 | Val Cheap L1: 0.2643
+Epoch 24 | Train L1: 0.2641 | Val Cheap L1: 0.2669
+Epoch 25 | Train L1: 0.2628 | Val Cheap L1: 0.2648 | Val TACOs L1: 1.1277
+Epoch 26 | Train L1: 0.2624 | Val Cheap L1: 0.2637
+Epoch 27 | Train L1: 0.2613 | Val Cheap L1: 0.2647
+Epoch 28 | Train L1: 0.2610 | Val Cheap L1: 0.2639
+Epoch 29 | Train L1: 0.2597 | Val Cheap L1: 0.2644
+Epoch 30 | Train L1: 0.2589 | Val Cheap L1: 0.2646 | Val TACOs L1: 1.1174
+Epoch 31 | Train L1: 0.2581 | Val Cheap L1: 0.2637
+Epoch 32 | Train L1: 0.2576 | Val Cheap L1: 0.2642
+Epoch 33 | Train L1: 0.2568 | Val Cheap L1: 0.2638
+Epoch 34 | Train L1: 0.2561 | Val Cheap L1: 0.2629
+Epoch 35 | Train L1: 0.2553 | Val Cheap L1: 0.2634 | Val TACOs L1: 1.1066
+Epoch 36 | Train L1: 0.2544 | Val Cheap L1: 0.2620
+Epoch 37 | Train L1: 0.2540 | Val Cheap L1: 0.2646
+Epoch 38 | Train L1: 0.2531 | Val Cheap L1: 0.2645
+Epoch 39 | Train L1: 0.2525 | Val Cheap L1: 0.2651
+Epoch 40 | Train L1: 0.2518 | Val Cheap L1: 0.2622 | Val TACOs L1: 1.1023
+Epoch 41 | Train L1: 0.2514 | Val Cheap L1: 0.2623
+Epoch 42 | Train L1: 0.2507 | Val Cheap L1: 0.2603
+Epoch 43 | Train L1: 0.2499 | Val Cheap L1: 0.2629
+Epoch 44 | Train L1: 0.2493 | Val Cheap L1: 0.2624
+Epoch 45 | Train L1: 0.2491 | Val Cheap L1: 0.2635 | Val TACOs L1: 1.0981
+Epoch 46 | Train L1: 0.2483 | Val Cheap L1: 0.2622
+Epoch 47 | Train L1: 0.2477 | Val Cheap L1: 0.2625
+Epoch 48 | Train L1: 0.2472 | Val Cheap L1: 0.2636
+Epoch 49 | Train L1: 0.2467 | Val Cheap L1: 0.2649
+Epoch 50 | Train L1: 0.2460 | Val Cheap L1: 0.2632 | Val TACOs L1: 1.0907
+Epoch 51 | Train L1: 0.2458 | Val Cheap L1: 0.2610
+Epoch 52 | Train L1: 0.2451 | Val Cheap L1: 0.2641
+Epoch 53 | Train L1: 0.2448 | Val Cheap L1: 0.2635
+Epoch 54 | Train L1: 0.2440 | Val Cheap L1: 0.2640
+Epoch 55 | Train L1: 0.2439 | Val Cheap L1: 0.2623 | Val TACOs L1: 1.0904
+Epoch 56 | Train L1: 0.2434 | Val Cheap L1: 0.2658
+Epoch 57 | Train L1: 0.2428 | Val Cheap L1: 0.2628
+Epoch 58 | Train L1: 0.2421 | Val Cheap L1: 0.2650
+Epoch 59 | Train L1: 0.2419 | Val Cheap L1: 0.2661
+Epoch 60 | Train L1: 0.2416 | Val Cheap L1: 0.2658 | Val TACOs L1: 1.0870
+Epoch 61 | Train L1: 0.2411 | Val Cheap L1: 0.2643
+Epoch 62 | Train L1: 0.2406 | Val Cheap L1: 0.2643
+Epoch 63 | Train L1: 0.2405 | Val Cheap L1: 0.2641
+Epoch 64 | Train L1: 0.2399 | Val Cheap L1: 0.2656
+Epoch 65 | Train L1: 0.2395 | Val Cheap L1: 0.2672 | Val TACOs L1: 1.0845
+Epoch 66 | Train L1: 0.2386 | Val Cheap L1: 0.2686
+Epoch 67 | Train L1: 0.2388 | Val Cheap L1: 0.2637
+Epoch 68 | Train L1: 0.2382 | Val Cheap L1: 0.2674
+Epoch 69 | Train L1: 0.2377 | Val Cheap L1: 0.2685
+Epoch 70 | Train L1: 0.2379 | Val Cheap L1: 0.2696 | Val TACOs L1: 1.0825
+Epoch 71 | Train L1: 0.2371 | Val Cheap L1: 0.2668
+Epoch 72 | Train L1: 0.2370 | Val Cheap L1: 0.2673
+Epoch 73 | Train L1: 0.2363 | Val Cheap L1: 0.2655
+Epoch 74 | Train L1: 0.2357 | Val Cheap L1: 0.2655
+Epoch 75 | Train L1: 0.2356 | Val Cheap L1: 0.2685 | Val TACOs L1: 1.0826
+Epoch 76 | Train L1: 0.2357 | Val Cheap L1: 0.2694
+Epoch 77 | Train L1: 0.2351 | Val Cheap L1: 0.2687
+Epoch 78 | Train L1: 0.2346 | Val Cheap L1: 0.2696
+Epoch 79 | Train L1: 0.2344 | Val Cheap L1: 0.2644
+Epoch 80 | Train L1: 0.2343 | Val Cheap L1: 0.2662 | Val TACOs L1: 1.0797
+Epoch 81 | Train L1: 0.2339 | Val Cheap L1: 0.2665
+Epoch 82 | Train L1: 0.2333 | Val Cheap L1: 0.2707
+Epoch 83 | Train L1: 0.2331 | Val Cheap L1: 0.2670
+Epoch 84 | Train L1: 0.2328 | Val Cheap L1: 0.2664
+Epoch 85 | Train L1: 0.2325 | Val Cheap L1: 0.2718 | Val TACOs L1: 1.0802
+Epoch 86 | Train L1: 0.2322 | Val Cheap L1: 0.2667
+Epoch 87 | Train L1: 0.2316 | Val Cheap L1: 0.2689
+Epoch 88 | Train L1: 0.2318 | Val Cheap L1: 0.2693
+Epoch 89 | Train L1: 0.2312 | Val Cheap L1: 0.2711
+Epoch 90 | Train L1: 0.2309 | Val Cheap L1: 0.2706 | Val TACOs L1: 1.0787
+Epoch 91 | Train L1: 0.2308 | Val Cheap L1: 0.2696
+Epoch 92 | Train L1: 0.2305 | Val Cheap L1: 0.2725
+Epoch 93 | Train L1: 0.2296 | Val Cheap L1: 0.2684
+Epoch 94 | Train L1: 0.2297 | Val Cheap L1: 0.2707
+Epoch 95 | Train L1: 0.2294 | Val Cheap L1: 0.2695 | Val TACOs L1: 1.0804
+Epoch 96 | Train L1: 0.2291 | Val Cheap L1: 0.2758
+Epoch 97 | Train L1: 0.2290 | Val Cheap L1: 0.2751
+Epoch 98 | Train L1: 0.2285 | Val Cheap L1: 0.2742
+Epoch 99 | Train L1: 0.2282 | Val Cheap L1: 0.2709
+Epoch 100 | Train L1: 0.2278 | Val Cheap L1: 0.2723 | Val TACOs L1: 1.0786
+
+--- Evaluation Results: ONE_SHOT ---
+Run Name: diffae_default
+----------------------------------------
+[Embedding 1]
+L1 Distance:       0.539515
+Cosine Similarity: 0.732530
+
+[Embedding 2]
+L1 Distance:       0.539515
+Cosine Similarity: 0.732168
+
+
+--- Evaluation Results: ITERATIVE ---
+Run Name: diffae_default
+----------------------------------------
+[Embedding 1]
+L1 Distance:       0.547918
+Cosine Similarity: 0.732617
+
+[Embedding 2]
+L1 Distance:       0.547918
+Cosine Similarity: 0.732372
+
