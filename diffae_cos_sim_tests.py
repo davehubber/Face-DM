@@ -120,12 +120,17 @@ def run_perceptual_correlation_analysis(base_path_str: str, out_dir_str: str = "
                 cond = model.encode(batch)
                 xT = model.encode_stochastic(batch, cond, T=250)
                 pred = model.render(xT, cond, T=20)
-                
-                lpips_val = loss_fn_lpips(pred[0:1], pred[1:2]).item()
-                
+
+                pred_for_save = pred.clamp(0, 1)
+
+                pred_for_lpips = pred_for_save * 2 - 1
+
+                lpips_val = loss_fn_lpips(pred_for_lpips[0:1], pred_for_lpips[1:2]).item()
+
             p['lpips'] = lpips_val
             scores.append(lpips_val)
-            visual_tensors.extend([pred[0].cpu(), pred[1].cpu()])
+
+            visual_tensors.extend([pred_for_save[0].cpu(), pred_for_save[1].cpu()])
             
         return scores, visual_tensors
 
@@ -134,8 +139,9 @@ def run_perceptual_correlation_analysis(base_path_str: str, out_dir_str: str = "
     low_lpips, low_imgs = evaluate_perceptual_manifold(low_pairs, "Low CosSim")
     
     print("Saving side-by-side reconstruction layout grids...")
-    save_image(make_grid(high_imgs, nrow=2, normalize=True, value_range=(-1, 1)), out_dir / "high_cosine_pairs_grid.png")
-    save_image(make_grid(low_imgs, nrow=2, normalize=True, value_range=(-1, 1)), out_dir / "low_cosine_pairs_grid.png")
+    save_image(make_grid(high_imgs, nrow=2), out_dir / "high_cosine_pairs_grid.png")
+
+    save_image(make_grid(low_imgs, nrow=2), out_dir / "low_cosine_pairs_grid.png")
 
     # 6. Analyze internal magnitude dynamics within High-CosSim cluster
     closest_mag_pair = min(high_pairs, key=lambda x: x['mag_diff'])
