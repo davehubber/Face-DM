@@ -118,7 +118,7 @@ class ColdDemorphNet(nn.Module):
 # 3. Cold Diffusion Process
 # ==========================================
 class DeterministicColdDemorph(nn.Module):
-    def __init__(self, model, num_timesteps=200):
+    def __init__(self, model, num_timesteps=50):
         super().__init__()
         self.model = model
         self.num_timesteps = num_timesteps
@@ -131,10 +131,10 @@ class DeterministicColdDemorph(nn.Module):
         b = z1.shape[0]
         c = (z1 + z2) / 2.0
         
-        # Enforce deterministic sorting rule based on largest L2 magnitude
-        mag1 = torch.norm(z1, p=2, dim=-1, keepdim=True)
-        mag2 = torch.norm(z2, p=2, dim=-1, keepdim=True)
-        swap_mask = mag2 > mag1
+        # Enforce deterministic sorting rule based on highest cosine similarity to the average mixture
+        sim1 = F.cosine_similarity(c, z1, dim=-1, keepdim=True)
+        sim2 = F.cosine_similarity(c, z2, dim=-1, keepdim=True)
+        swap_mask = sim2 > sim1
         z1_sorted = torch.where(swap_mask, z2, z1)
         
         t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
@@ -167,7 +167,7 @@ class DeterministicColdDemorph(nn.Module):
 # ==========================================
 # 4. Training & Validation Mechanics
 # ==========================================
-def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 200):
+def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 50):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
     ckpt_dir = exp_dir / "checkpoints"
@@ -192,7 +192,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
         "learning_rate": 1e-4, "batch_size": 25_000, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps
     })
 
-    epochs = 100
+    epochs = 50
     best_val_loss = float("inf")
     
     for epoch in range(epochs):
@@ -250,7 +250,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
 # ==========================================
 # 5. Partition Testing Evaluation Script
 # ==========================================
-def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 200, mode: str = 'iterative'):
+def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 50, mode: str = 'iterative'):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
     ckpt_path = exp_dir / "checkpoints" / "best.pt"
@@ -302,6 +302,6 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
     
-    train_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_bigMag", num_timesteps=200)
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_bigMag", num_timesteps=200, mode='one_shot')
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_bigMag", num_timesteps=200, mode='iterative')
+    train_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_highCosSim", num_timesteps=50)
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_highCosSim", num_timesteps=50, mode='one_shot')
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_highCosSim", num_timesteps=50, mode='iterative')
