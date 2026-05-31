@@ -39,22 +39,17 @@ class ColdDiffAEDemorphDataset(Dataset):
             
         return torch.tensor(self.embeddings[idx1], dtype=torch.float32), torch.tensor(self.embeddings[idx2], dtype=torch.float32)
 
-def load_split_and_normalize(base_path_str: str, split: str) -> np.ndarray:
+def load_split_raw(base_path_str: str, split: str) -> np.ndarray:
     base_path = Path(base_path_str).resolve()
     parent = base_path.parent
     stem = base_path.stem.replace("_train", "").replace("_val", "").replace("_test", "")
     
     split_path = parent / f"{stem}_{split}.npy"
-    mean_path = parent / f"{stem}_train_mean.npy"
-    std_path = parent / f"{stem}_train_std.npy"
     
-    data = np.load(split_path).astype(np.float32)
-    if mean_path.exists() and std_path.exists():
-        mean = np.load(mean_path).astype(np.float32)
-        std = np.load(std_path).astype(np.float32)
-        data = (data - mean) / std
+    if split_path.exists():
+        data = np.load(split_path).astype(np.float32)
     else:
-        raise FileNotFoundError(f"Normalization statistics missing at {mean_path} or {std_path}")
+        raise FileNotFoundError(f"Data split file missing at {split_path}")
     return data
 
 # ==========================================
@@ -135,15 +130,11 @@ class DeterministicColdDemorph(nn.Module):
         x_t = self.degrade(z1, c, t)
         pred_z = self.model(x_t, t)
         
-        # Match Target z1 (50% L1 + 50% Cosine Distance)
-        l1_z1 = F.l1_loss(pred_z, z1, reduction='none').mean(dim=-1)
-        cos_dist_z1 = 1.0 - F.cosine_similarity(pred_z, z1, dim=-1)
-        loss_z1 = 0.5 * l1_z1 + 0.5 * cos_dist_z1
+        # Match Target z1 (Pure L1 Loss Only)
+        loss_z1 = F.l1_loss(pred_z, z1, reduction='none').mean(dim=-1)
         
-        # Match Target z2 (50% L1 + 50% Cosine Distance)
-        l1_z2 = F.l1_loss(pred_z, z2, reduction='none').mean(dim=-1)
-        cos_dist_z2 = 1.0 - F.cosine_similarity(pred_z, z2, dim=-1)
-        loss_z2 = 0.5 * l1_z2 + 0.5 * cos_dist_z2
+        # Match Target z2 (Pure L1 Loss Only)
+        loss_z2 = F.l1_loss(pred_z, z2, reduction='none').mean(dim=-1)
         
         # Permutation Invariant Selection
         loss = torch.min(loss_z1, loss_z2)
@@ -197,8 +188,8 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
         with open(metrics_path, "w", newline="") as f:
             csv.writer(f).writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_TACOs_Reconstruct_L1"])
             
-    train_embs = load_split_and_normalize(diffae_path_str, "train")
-    val_embs = load_split_and_normalize(diffae_path_str, "val")
+    train_embs = load_split_raw(diffae_path_str, "train")
+    val_embs = load_split_raw(diffae_path_str, "val")
     
     train_loader = DataLoader(ColdDiffAEDemorphDataset(train_embs, epoch_size=1_000_000), batch_size=25_000, shuffle=True, num_workers=8)
     val_loader = DataLoader(ColdDiffAEDemorphDataset(val_embs, epoch_size=10_000, deterministic=True), batch_size=10_000, shuffle=False, num_workers=4)
@@ -249,7 +240,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
                     val_tacos_loss_total += torch.min(dist_a, dist_b).mean().item()
             val_tacos_loss = val_tacos_loss_total / len(val_loader)
             
-        log_dict = {"epoch": epoch + 1, "train_hybrid_loss": avg_train_loss, "val_cheap_hybrid_loss": avg_val_cheap_loss}
+        log_dict = {"epoch": epoch + 1, "train_loss": avg_train_loss, "val_cheap_loss": avg_val_cheap_loss}
         if val_tacos_loss is not None: log_dict["val_tacos_reconstruct_l1"] = val_tacos_loss
         wandb.log(log_dict)
         
@@ -275,7 +266,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
     ckpt_path = exp_dir / "checkpoints" / "best.pt"
     out_file_path = exp_dir / f"eval_{mode}.txt"
     
-    test_embs = load_split_and_normalize(diffae_path_str, "test")
+    test_embs = load_split_raw(diffae_path_str, "test")
     test_loader = DataLoader(ColdDiffAEDemorphDataset(test_embs, epoch_size=10_000, deterministic=True), batch_size=10_000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
@@ -310,7 +301,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
             total_cosine_1 += F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1).mean().item()
             total_cosine_2 += F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1).mean().item()
             
-            # Tracking raw angular relationship metrics
+            # Tracking raw angular relationship metrics (remains fully active)
             total_cos_z1_z2 += F.cosine_similarity(batch_z1, batch_z2, dim=-1).mean().item()
             total_cos_z1_c += F.cosine_similarity(batch_z1, batch_c, dim=-1).mean().item()
             total_cos_z2_c += F.cosine_similarity(batch_z2, batch_c, dim=-1).mean().item()
@@ -339,6 +330,9 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
     
-    train_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_hybrid_pit", num_timesteps=50)
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_hybrid_pit", num_timesteps=50, mode='one_shot')
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name="diffae_hybrid_pit", num_timesteps=50, mode='iterative')
+    # Updated run name string to reflect purely L1 training on raw embeddings
+    RUN_NAME = "diffae_pit_raw"
+    
+    train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=50)
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=50, mode='one_shot')
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=50, mode='iterative')
