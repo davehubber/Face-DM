@@ -36,8 +36,8 @@ def run_zscored_pca_attribute_analysis(base_path_str: str, out_dir_str: str = "p
     # 1. Load Raw Embeddings and Z-Score Statistics
     print("Loading raw master embeddings and normalization statistics...")
     raw_master_embeddings = np.load(master_npy_path).astype(np.float32)
-    train_mean = np.load(mean_path_in).astype(np.float32)
-    train_std = np.load(std_path_in).astype(np.float32)
+    train_mean = np.load(mean_path_in).astype(np.float32).reshape(-1)
+    train_std = np.load(std_path_in).astype(np.float32).reshape(-1)
     
     total_samples = len(raw_master_embeddings)
     
@@ -121,8 +121,8 @@ def run_zscored_pca_attribute_analysis(base_path_str: str, out_dir_str: str = "p
         scores_k = train_scores[:, k]
         sigma_k = np.std(scores_k)
         
-        local_min_idx = np.argmin(scores_k)
-        local_max_idx = np.argmax(scores_k)
+        local_min_idx = np.argsort(scores_k)[int(0.10 * len(scores_k))]
+        local_max_idx = np.argsort(scores_k)[int(0.90 * len(scores_k))]
         
         master_min_idx = train_indices[local_min_idx]
         master_max_idx = train_indices[local_max_idx]
