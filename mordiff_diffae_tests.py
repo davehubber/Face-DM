@@ -89,7 +89,7 @@ def main():
 
     # Find all morph images matching pattern: morphed_XXX_and_YYY.png or morph_XXX_and_YYY.png
     morph_paths = list(MORDIFF_DIR.rglob("*.png"))
-    filename_pattern = re.compile(r"(?:morphed?_)?(.*)_and_(.*)\.png")
+    filename_pattern = re.compile(r"^morph_(.+?)_and_(.+?)\.png$")
 
     results = {
         "raw_mse": [], "raw_cos": [],
