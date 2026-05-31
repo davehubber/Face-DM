@@ -8,5 +8,5 @@ Dimensionality Profile:        512D -> 3D
 --- EXPLAINED VARIANCE METRICS ---
   - Principal Component 1: 4.2708% of global variance
   - Principal Component 2: 3.7532% of global variance
-  - Principal Component 3: 2.9871% of global variance
+  - Principal Component 3: 2.9872% of global variance
 Total Cumulative Variance Captured: 11.0111%
