@@ -38,7 +38,7 @@ class ColdDiffAEDemorphDataset(Dataset):
             offset = np.random.randint(1, self.num_samples)
             idx2 = (idx1 + offset) % self.num_samples
             
-        # Deterministic Sorting: z1 always has the higher PC1 score
+        # Deterministic Sorting: z1 always has the higher Z-Scored PC1 score
         if self.scores[idx1] < self.scores[idx2]:
             idx1, idx2 = idx2, idx1
             
@@ -54,10 +54,10 @@ def load_data_and_scores(base_path_str: str, split: str, pca_dir_str: str = "pca
     mean_path = parent / f"{stem}_train_mean.npy"
     std_path = parent / f"{stem}_train_std.npy"
     
-    # 1. Load raw data for scoring
+    # 1. Load raw data
     data_raw = np.load(split_path).astype(np.float32)
     
-    # 2. Extract normalized data for training
+    # 2. Extract normalized data for training and scoring
     if mean_path.exists() and std_path.exists():
         train_mean = np.load(mean_path).astype(np.float32)
         train_std = np.load(std_path).astype(np.float32)
@@ -65,20 +65,20 @@ def load_data_and_scores(base_path_str: str, split: str, pca_dir_str: str = "pca
     else:
         raise FileNotFoundError(f"Normalization statistics missing at {mean_path} or {std_path}")
 
-    # 3. Load PCA references and compute PC1 scores on RAW embeddings
+    # 3. Load Z-scored PCA references and compute PC1 scores on NORMALIZED embeddings
     pca_dir = Path(pca_dir_str).resolve()
-    pca_comp_path = pca_dir / "pca_top3_components.npy"
-    pca_mean_path = pca_dir / "pca_mean.npy"
+    pca_comp_path = pca_dir / "pca_zscored_top3_components.npy"
+    pca_mean_path = pca_dir / "pca_zscored_mean.npy"
 
     if pca_comp_path.exists() and pca_mean_path.exists():
         pca_components = np.load(pca_comp_path).astype(np.float32)
         pca_mean = np.load(pca_mean_path).astype(np.float32)
         pc1 = pca_components[0]
         
-        # Project centered raw data onto the first principal component
-        scores = np.dot(data_raw - pca_mean, pc1)
+        # Project normalized data with exact PCA mean centering
+        scores = np.dot(data_norm - pca_mean, pc1)
     else:
-        raise FileNotFoundError(f"PCA references missing in {pca_dir}")
+        raise FileNotFoundError(f"Z-scored PCA references missing at {pca_dir}")
 
     return data_norm, scores
 
@@ -174,7 +174,7 @@ class DeterministicColdDemorph(nn.Module):
         for t in tqdm(timesteps, desc='TACOs Sampling', leave=False):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
             
-            # Since the path is explicitly defined, we bypass the previous permutation invariant swapping
+            # Bypassing previous permutation invariant swapping
             pred_z1 = self.model(x_t, t_batch)
             
             t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
@@ -212,7 +212,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, pca_dir_str: str = "
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 25_000, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "deterministic_sorting": True
+        "learning_rate": 1e-4, "batch_size": 25_000, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "deterministic_sorting": "z_scored"
     })
 
     epochs = 50
@@ -301,7 +301,6 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, pca_dir_str: str 
                 pred_z1 = net(batch_c, torch.full((batch_z1.shape[0],), num_timesteps, device=device).long())
                 pred_z2 = 2.0 * batch_c - pred_z1
 
-            # Remove masking algorithms - pure deterministic mapping
             total_l1_1 += F.l1_loss(pred_z1, batch_z1).item()
             total_l1_2 += F.l1_loss(pred_z2, batch_z2).item()
             total_cosine_1 += F.cosine_similarity(pred_z1, batch_z1, dim=-1).mean().item()
@@ -320,10 +319,10 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, pca_dir_str: str 
         f"  - CosSim(True Baseline z1, True Baseline z2): {total_cos_z1_z2 / num_batches:.6f}\n"
         f"  - CosSim(True Baseline z1, Average mixture c): {total_cos_z1_c / num_batches:.6f}\n"
         f"  - CosSim(True Baseline z2, Average mixture c): {total_cos_z2_c / num_batches:.6f}\n\n"
-        f"[Embedding 1 (Highest PC Score) Performance Alignment]\n"
+        f"[Embedding 1 (Highest Z-Scored PC1) Performance Alignment]\n"
         f"  - L1 Distance:                       {total_l1_1 / num_batches:.6f}\n"
         f"  - Cosine Similarity to Target:       {total_cosine_1 / num_batches:.6f}\n\n"
-        f"[Embedding 2 (Lowest PC Score) Performance Alignment]\n"
+        f"[Embedding 2 (Lowest Z-Scored PC1) Performance Alignment]\n"
         f"  - L1 Distance:                       {total_l1_2 / num_batches:.6f}\n"
         f"  - Cosine Similarity to Target:       {total_cosine_2 / num_batches:.6f}\n\n"
         f"Generated Outputs Inter-Relationship:\n"
@@ -335,7 +334,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, pca_dir_str: str 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
     PCA_DIR = "pca_analysis_results"
-    RUN_NAME = "diffae_pc1_raw"
+    
+    RUN_NAME = "diffae_pc1_zscore" 
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, pca_dir_str=PCA_DIR, num_timesteps=50)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, pca_dir_str=PCA_DIR, num_timesteps=50, mode='one_shot')

@@ -1,0 +1,18 @@
+--- Evaluation Results: ONE_SHOT ---
+Run Name: diffae_pc1_raw
+----------------------------------------
+Base Reference Angular Properties:
+  - CosSim(True Baseline z1, True Baseline z2): 0.000302
+  - CosSim(True Baseline z1, Average mixture c): 0.720064
+  - CosSim(True Baseline z2, Average mixture c): 0.691049
+
+[Embedding 1 (Highest PC Score) Performance Alignment]
+  - L1 Distance:                       0.554037
+  - Cosine Similarity to Target:       0.727733
+
+[Embedding 2 (Lowest PC Score) Performance Alignment]
+  - L1 Distance:                       0.554037
+  - Cosine Similarity to Target:       0.701290
+
+Generated Outputs Inter-Relationship:
+  - CosSim(Aligned Pred z1, Aligned Pred z2):  0.853427
