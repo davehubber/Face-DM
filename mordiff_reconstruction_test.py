@@ -71,8 +71,8 @@ def main():
     print("--- Generating Visual Comparison ---")
     # De-normalize images from [-1, 1] to [0, 1] for matplotlib
     input_img_vis = (batch[0].cpu().permute(1, 2, 0) + 1) / 2
-    recon_img_vis = (pred[0].cpu().permute(1, 2, 0) + 1) / 2
-
+    recon_img_vis = pred[0].detach().cpu().permute(1, 2, 0).clamp(0, 1)
+    
     # Plotting
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))
     
