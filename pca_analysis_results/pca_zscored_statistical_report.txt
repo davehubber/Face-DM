@@ -1,0 +1,12 @@
+=========================================================================
+       Z-SCORED EMBEDDING MANIFOLD PRINCIPAL COMPONENT REPORT
+=========================================================================
+
+Total Source Vectors Analyzed: 56,000
+Dimensionality Profile:        512D -> 3D
+
+--- EXPLAINED VARIANCE METRICS ---
+  - Principal Component 1: 2.4802% of global variance
+  - Principal Component 2: 2.1140% of global variance
+  - Principal Component 3: 1.9751% of global variance
+Total Cumulative Variance Captured: 6.5693%
