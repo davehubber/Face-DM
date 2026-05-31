@@ -15,22 +15,14 @@ from tqdm import tqdm
 # ==========================================
 class EmbeddingDataset(Dataset):
     def __init__(self, diffae_path: Path, arcface_path: Path, mean_path: Path, std_path: Path):
-        """
-        Loads the paired embeddings and strictly applies Z-score normalization 
-        using the pre-computed training statistics.
-        """
-        # Load raw numpy arrays
         x_raw = np.load(diffae_path).astype(np.float32)
         y_raw = np.load(arcface_path).astype(np.float32)
         
-        # Load normalization stats
         train_mean = np.load(mean_path).astype(np.float32)
         train_std = np.load(std_path).astype(np.float32)
         
-        # Apply Z-score normalization to inputs
         x_norm = (x_raw - train_mean) / train_std
         
-        # Convert to PyTorch tensors
         self.x = torch.from_numpy(x_norm)
         self.y = torch.from_numpy(y_raw)
         
@@ -47,19 +39,26 @@ class EmbeddingDataset(Dataset):
 class LatentMapperMLP(nn.Module):
     def __init__(self):
         super().__init__()
-        # Expansion block
+        # Expansion block (Dropout lowered to 0.15)
         self.block1 = nn.Sequential(
             nn.Linear(512, 1024),
             nn.LayerNorm(1024),
             nn.GELU(),
-            nn.Dropout(0.1)
+            nn.Dropout(0.15)
         )
-        # Processing block
+        # Processing block 1
         self.block2 = nn.Sequential(
             nn.Linear(1024, 1024),
             nn.LayerNorm(1024),
             nn.GELU(),
-            nn.Dropout(0.1)
+            nn.Dropout(0.15)
+        )
+        # Processing block 2 (NEW: Added capacity)
+        self.block3 = nn.Sequential(
+            nn.Linear(1024, 1024),
+            nn.LayerNorm(1024),
+            nn.GELU(),
+            nn.Dropout(0.15)
         )
         # Projection block
         self.out = nn.Linear(1024, 512)
@@ -67,6 +66,7 @@ class LatentMapperMLP(nn.Module):
     def forward(self, x):
         x = self.block1(x)
         x = self.block2(x)
+        x = self.block3(x)
         x = self.out(x)
         
         # THE ANCHOR: Force output onto the L2 unit hypersphere
@@ -79,14 +79,14 @@ class LatentMapperMLP(nn.Module):
 def main():
     # --- Configurations ---
     BATCH_SIZE = 256
-    EPOCHS = 50
+    EPOCHS = 100  # Extended runway for the deeper network
     LEARNING_RATE = 1e-4
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # --- Paths (Adjust as needed) ---
+    # --- Paths ---
     BASE_DIR = Path("/nas-ctm01/homes/dacordeiro")
     DIFF_DIR = BASE_DIR / "Face-DM/diffae_embeddings"
-    ARC_DIR = BASE_DIR / "arcface_embeddings/Face-DM"
+    ARC_DIR = BASE_DIR / "Face-DM/arcface_embeddings/Face-DM"
     
     # DiffAE inputs
     d_train = DIFF_DIR / "ffhq256_diffae_zsem_train.npy"
@@ -109,16 +109,19 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
 
-    # --- Setup Model, Loss, and Optimizer ---
+    # --- Setup Model, Loss, Optimizer, and Scheduler ---
     model = LatentMapperMLP().to(DEVICE)
-    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
     
-    # CosineEmbeddingLoss expects (input1, input2, target_tensor). 
-    # Target tensor contains 1s because we want the vectors to be identical (angle = 0).
-    criterion = nn.CosineEmbeddingLoss()
+    # Maintained strong weight decay
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-3)
+    
+    # Cosine Annealing Scheduler (now stretches over 100 epochs)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+    
+    criterion = nn.MSELoss()
 
     best_val_loss = float('inf')
-    best_model_path = "best_mapper_model.pth"
+    best_model_path = "best_mapper_model_high_capacity.pth"
 
     # ==========================================
     # 4. Training Loop
@@ -129,8 +132,7 @@ def main():
         model.train()
         train_loss = 0.0
         
-        # TQDM progress bar for training
-        train_bar = tqdm(train_loader, desc=f"Epoch {epoch}/{EPOCHS} [Train]", leave=False)
+        train_bar = tqdm(train_loader, desc=f"Epoch {epoch:03d}/{EPOCHS} [Train]", leave=False)
         
         for x_batch, y_batch in train_bar:
             x_batch, y_batch = x_batch.to(DEVICE, non_blocking=True), y_batch.to(DEVICE, non_blocking=True)
@@ -138,15 +140,13 @@ def main():
             optimizer.zero_grad(set_to_none=True)
             preds = model(x_batch)
             
-            # Create a target tensor of 1s mapping to each item in the batch
-            target_ones = torch.ones(x_batch.size(0)).to(DEVICE)
-            loss = criterion(preds, y_batch, target_ones)
+            loss = criterion(preds, y_batch)
             
             loss.backward()
             optimizer.step()
             
             train_loss += loss.item() * x_batch.size(0)
-            train_bar.set_postfix({'loss': f"{loss.item():.4f}"})
+            train_bar.set_postfix({'loss': f"{loss.item():.6f}"})
             
         train_loss /= len(train_dataset)
 
@@ -159,16 +159,16 @@ def main():
                 x_batch, y_batch = x_batch.to(DEVICE, non_blocking=True), y_batch.to(DEVICE, non_blocking=True)
                 preds = model(x_batch)
                 
-                target_ones = torch.ones(x_batch.size(0)).to(DEVICE)
-                loss = criterion(preds, y_batch, target_ones)
+                loss = criterion(preds, y_batch)
                 val_loss += loss.item() * x_batch.size(0)
                 
         val_loss /= len(val_dataset)
         
-        # Print Epoch Summary
-        print(f"Epoch {epoch:02d}/{EPOCHS} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+        current_lr = scheduler.get_last_lr()[0]
+        scheduler.step()
         
-        # Save best model
+        print(f"Epoch {epoch:03d}/{EPOCHS} | LR: {current_lr:.2e} | Train MSE: {train_loss:.6f} | Val MSE: {val_loss:.6f}")
+        
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), best_model_path)
@@ -192,7 +192,6 @@ def main():
             x_batch, y_batch = x_batch.to(DEVICE, non_blocking=True), y_batch.to(DEVICE, non_blocking=True)
             preds = model(x_batch)
             
-            # Calculate metrics
             cos_sim = F.cosine_similarity(preds, y_batch, dim=1)
             mse = F.mse_loss(preds, y_batch, reduction='none').mean(dim=1)
             
@@ -203,14 +202,14 @@ def main():
     avg_mse = np.mean(test_mses)
     min_cosine = np.min(test_cosine_sims)
     
-    # Generate the text report
     report_content = (
         "====================================================\n"
         "           LATENT MAPPER EVALUATION REPORT          \n"
         "====================================================\n\n"
-        f"Model Architecture: MLP (512 -> 1024 -> 1024 -> 512)\n"
+        f"Model Architecture: MLP (512 -> 1024 -> 1024 -> 1024 -> 512)\n"
         f"Normalization:      Input Z-Score | Output L2 Normalization\n"
-        f"Loss Function:      Cosine Embedding Loss\n"
+        f"Regularization:     Dropout 0.15 | Weight Decay 1e-3 | Cosine Annealing (100 Epochs)\n"
+        f"Loss Function:      Mean Squared Error (MSE)\n"
         f"Test Set Size:      {len(test_dataset)} samples\n\n"
         "--- METRICS ---\n"
         f"Average Cosine Similarity:  {avg_cosine:.4f} (Closer to 1.0 is better)\n"
@@ -219,7 +218,7 @@ def main():
         "====================================================\n"
     )
     
-    report_path = "evaluation_report.txt"
+    report_path = "evaluation_report_mse_high_capacity.txt"
     with open(report_path, "w") as f:
         f.write(report_content)
         

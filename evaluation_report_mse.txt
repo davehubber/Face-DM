@@ -1,0 +1,15 @@
+====================================================
+           LATENT MAPPER EVALUATION REPORT          
+====================================================
+
+Model Architecture: MLP (512 -> 1024 -> 1024 -> 512)
+Normalization:      Input Z-Score | Output L2 Normalization
+Loss Function:      Mean Squared Error (MSE)
+Test Set Size:      7000 samples
+
+--- METRICS ---
+Average Cosine Similarity:  0.6056 (Closer to 1.0 is better)
+Minimum Cosine Similarity:  -0.0184 (Worst-case translation)
+Average Mean Squared Error: 0.001541 (Closer to 0.0 is better)
+
+====================================================
