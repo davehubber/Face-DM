@@ -152,7 +152,8 @@ def run_pca_attribute_analysis(base_path_str: str, out_dir_str: str = "pca_analy
                 
         # Export compiled visual grid file layouts (2 rows by 3 columns)
         grid_path = out_dir / f"principal_component_{k+1}_attribute_grid.png"
-        grid_mesh = make_grid(grid_tensors, nrow=3, normalize=True, value_range=(-1, 1))
+        grid_tensors = [torch.clamp(img, 0.0, 1.0) for img in grid_tensors]
+        grid_mesh = make_grid(grid_tensors, nrow=3, normalize=False)
         save_image(grid_mesh, grid_path)
         print(f" -> Exported Visual Grid for PC {k+1} to: {grid_path}")
 
