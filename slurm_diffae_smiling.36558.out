@@ -1,0 +1,96 @@
+[train] embeddings: (56000, 512) | sorting score: smiling_logit | score file: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_train_smiling_logit.npy
+[val] embeddings: (7000, 512) | sorting score: smiling_logit | score file: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_val_smiling_logit.npy
+Epoch 1 | Train Loss: 0.5813 | Val Cheap Loss: 0.4219
+Epoch 2 | Train Loss: 0.3600 | Val Cheap Loss: 0.3269
+Epoch 3 | Train Loss: 0.3059 | Val Cheap Loss: 0.3004
+Epoch 4 | Train Loss: 0.2912 | Val Cheap Loss: 0.2892
+Epoch 5 | Train Loss: 0.2853 | Val Cheap Loss: 0.2852 | Val TACOs L1: 1.1704
+Epoch 6 | Train Loss: 0.2818 | Val Cheap Loss: 0.2805
+Epoch 7 | Train Loss: 0.2800 | Val Cheap Loss: 0.2809
+Epoch 8 | Train Loss: 0.2784 | Val Cheap Loss: 0.2789
+Epoch 9 | Train Loss: 0.2770 | Val Cheap Loss: 0.2765
+Epoch 10 | Train Loss: 0.2763 | Val Cheap Loss: 0.2762 | Val TACOs L1: 1.1614
+Epoch 11 | Train Loss: 0.2759 | Val Cheap Loss: 0.2816
+Epoch 12 | Train Loss: 0.2748 | Val Cheap Loss: 0.2761
+Epoch 13 | Train Loss: 0.2739 | Val Cheap Loss: 0.2748
+Epoch 14 | Train Loss: 0.2725 | Val Cheap Loss: 0.2766
+Epoch 15 | Train Loss: 0.2719 | Val Cheap Loss: 0.2732 | Val TACOs L1: 1.1634
+Epoch 16 | Train Loss: 0.2701 | Val Cheap Loss: 0.2711
+Epoch 17 | Train Loss: 0.2686 | Val Cheap Loss: 0.2708
+Epoch 18 | Train Loss: 0.2676 | Val Cheap Loss: 0.2696
+Epoch 19 | Train Loss: 0.2662 | Val Cheap Loss: 0.2723
+Epoch 20 | Train Loss: 0.2648 | Val Cheap Loss: 0.2728 | Val TACOs L1: 1.1541
+Epoch 21 | Train Loss: 0.2634 | Val Cheap Loss: 0.2690
+Epoch 22 | Train Loss: 0.2624 | Val Cheap Loss: 0.2722
+Epoch 23 | Train Loss: 0.2611 | Val Cheap Loss: 0.2689
+Epoch 24 | Train Loss: 0.2600 | Val Cheap Loss: 0.2662
+Epoch 25 | Train Loss: 0.2585 | Val Cheap Loss: 0.2695 | Val TACOs L1: 1.1575
+Epoch 26 | Train Loss: 0.2573 | Val Cheap Loss: 0.2703
+Epoch 27 | Train Loss: 0.2563 | Val Cheap Loss: 0.2695
+Epoch 28 | Train Loss: 0.2553 | Val Cheap Loss: 0.2707
+Epoch 29 | Train Loss: 0.2544 | Val Cheap Loss: 0.2731
+Epoch 30 | Train Loss: 0.2533 | Val Cheap Loss: 0.2707 | Val TACOs L1: 1.1635
+Epoch 31 | Train Loss: 0.2522 | Val Cheap Loss: 0.2724
+Epoch 32 | Train Loss: 0.2509 | Val Cheap Loss: 0.2711
+Epoch 33 | Train Loss: 0.2505 | Val Cheap Loss: 0.2716
+Epoch 34 | Train Loss: 0.2493 | Val Cheap Loss: 0.2735
+Epoch 35 | Train Loss: 0.2486 | Val Cheap Loss: 0.2742 | Val TACOs L1: 1.1627
+Epoch 36 | Train Loss: 0.2479 | Val Cheap Loss: 0.2731
+Epoch 37 | Train Loss: 0.2469 | Val Cheap Loss: 0.2736
+Epoch 38 | Train Loss: 0.2461 | Val Cheap Loss: 0.2767
+Epoch 39 | Train Loss: 0.2450 | Val Cheap Loss: 0.2790
+Epoch 40 | Train Loss: 0.2444 | Val Cheap Loss: 0.2765 | Val TACOs L1: 1.1661
+Epoch 41 | Train Loss: 0.2435 | Val Cheap Loss: 0.2773
+Epoch 42 | Train Loss: 0.2431 | Val Cheap Loss: 0.2770
+Epoch 43 | Train Loss: 0.2422 | Val Cheap Loss: 0.2758
+Epoch 44 | Train Loss: 0.2414 | Val Cheap Loss: 0.2784
+Epoch 45 | Train Loss: 0.2409 | Val Cheap Loss: 0.2761 | Val TACOs L1: 1.1699
+Epoch 46 | Train Loss: 0.2402 | Val Cheap Loss: 0.2783
+Epoch 47 | Train Loss: 0.2395 | Val Cheap Loss: 0.2802
+Epoch 48 | Train Loss: 0.2389 | Val Cheap Loss: 0.2808
+Epoch 49 | Train Loss: 0.2383 | Val Cheap Loss: 0.2783
+Epoch 50 | Train Loss: 0.2378 | Val Cheap Loss: 0.2778 | Val TACOs L1: 1.1722
+[test] embeddings: (7000, 512) | sorting score: smiling_logit | score file: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_test_smiling_logit.npy
+
+--- Evaluation Results: ONE_SHOT ---
+Run Name: diffae_smiling
+Sorting Criterion: Highest Smiling classifier logit
+----------------------------------------
+Base Reference Angular Properties:
+  - CosSim(True Baseline z1, True Baseline z2): 0.000302
+  - CosSim(True Baseline z1, Average mixture c): 0.699418
+  - CosSim(True Baseline z2, Average mixture c): 0.711695
+
+[Embedding 1 (Highest Smiling classifier logit) Performance Alignment]
+  - L1 Distance:                       0.558072
+  - Cosine Similarity to Target:       0.704715
+
+[Embedding 2 (Lowest Smiling classifier logit) Performance Alignment]
+  - L1 Distance:                       0.558072
+  - Cosine Similarity to Target:       0.715977
+
+Generated Outputs Inter-Relationship:
+  - CosSim(Aligned Pred z1, Aligned Pred z2):  0.881238
+
+[test] embeddings: (7000, 512) | sorting score: smiling_logit | score file: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_test_smiling_logit.npy
+
+--- Evaluation Results: ITERATIVE ---
+Run Name: diffae_smiling
+Sorting Criterion: Highest Smiling classifier logit
+----------------------------------------
+Base Reference Angular Properties:
+  - CosSim(True Baseline z1, True Baseline z2): 0.000302
+  - CosSim(True Baseline z1, Average mixture c): 0.699418
+  - CosSim(True Baseline z2, Average mixture c): 0.711695
+
+[Embedding 1 (Highest Smiling classifier logit) Performance Alignment]
+  - L1 Distance:                       0.576268
+  - Cosine Similarity to Target:       0.700767
+
+[Embedding 2 (Lowest Smiling classifier logit) Performance Alignment]
+  - L1 Distance:                       0.576268
+  - Cosine Similarity to Target:       0.696303
+
+Generated Outputs Inter-Relationship:
+  - CosSim(Aligned Pred z1, Aligned Pred z2):  0.795838
+

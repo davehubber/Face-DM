@@ -1,0 +1,19 @@
+--- Evaluation Results: ITERATIVE ---
+Run Name: diffae_smiling
+Sorting Criterion: Highest Smiling classifier logit
+----------------------------------------
+Base Reference Angular Properties:
+  - CosSim(True Baseline z1, True Baseline z2): 0.000302
+  - CosSim(True Baseline z1, Average mixture c): 0.699418
+  - CosSim(True Baseline z2, Average mixture c): 0.711695
+
+[Embedding 1 (Highest Smiling classifier logit) Performance Alignment]
+  - L1 Distance:                       0.576268
+  - Cosine Similarity to Target:       0.700767
+
+[Embedding 2 (Lowest Smiling classifier logit) Performance Alignment]
+  - L1 Distance:                       0.576268
+  - Cosine Similarity to Target:       0.696303
+
+Generated Outputs Inter-Relationship:
+  - CosSim(Aligned Pred z1, Aligned Pred z2):  0.795838

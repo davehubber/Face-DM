@@ -278,8 +278,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, score_attr: str =
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    SCORE_ATTR = "smiling"
-    RUN_NAME = "diffae_smiling"
+    SCORE_ATTR = "young"
+    RUN_NAME = "diffae_young"
 
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, score_attr=SCORE_ATTR, num_timesteps=50)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, score_attr=SCORE_ATTR, num_timesteps=50, mode="one_shot")
