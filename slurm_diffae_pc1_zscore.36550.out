@@ -42,3 +42,49 @@ Epoch 41 | Train Loss: 0.2403 | Val Cheap Loss: 0.2698
 Epoch 42 | Train Loss: 0.2395 | Val Cheap Loss: 0.2686
 Epoch 43 | Train Loss: 0.2392 | Val Cheap Loss: 0.2716
 Epoch 44 | Train Loss: 0.2382 | Val Cheap Loss: 0.2689
+Epoch 45 | Train Loss: 0.2378 | Val Cheap Loss: 0.2701 | Val TACOs L1: 1.1209
+Epoch 46 | Train Loss: 0.2370 | Val Cheap Loss: 0.2701
+Epoch 47 | Train Loss: 0.2369 | Val Cheap Loss: 0.2701
+Epoch 48 | Train Loss: 0.2357 | Val Cheap Loss: 0.2708
+Epoch 49 | Train Loss: 0.2352 | Val Cheap Loss: 0.2724
+Epoch 50 | Train Loss: 0.2348 | Val Cheap Loss: 0.2740 | Val TACOs L1: 1.1226
+
+--- Evaluation Results: ONE_SHOT ---
+Run Name: diffae_pc1_zscore
+----------------------------------------
+Base Reference Angular Properties:
+  - CosSim(True Baseline z1, True Baseline z2): 0.000302
+  - CosSim(True Baseline z1, Average mixture c): 0.700589
+  - CosSim(True Baseline z2, Average mixture c): 0.710525
+
+[Embedding 1 (Highest Z-Scored PC1) Performance Alignment]
+  - L1 Distance:                       0.541550
+  - Cosine Similarity to Target:       0.724099
+
+[Embedding 2 (Lowest Z-Scored PC1) Performance Alignment]
+  - L1 Distance:                       0.541550
+  - Cosine Similarity to Target:       0.733517
+
+Generated Outputs Inter-Relationship:
+  - CosSim(Aligned Pred z1, Aligned Pred z2):  0.762303
+
+
+--- Evaluation Results: ITERATIVE ---
+Run Name: diffae_pc1_zscore
+----------------------------------------
+Base Reference Angular Properties:
+  - CosSim(True Baseline z1, True Baseline z2): 0.000302
+  - CosSim(True Baseline z1, Average mixture c): 0.700589
+  - CosSim(True Baseline z2, Average mixture c): 0.710525
+
+[Embedding 1 (Highest Z-Scored PC1) Performance Alignment]
+  - L1 Distance:                       0.556551
+  - Cosine Similarity to Target:       0.721384
+
+[Embedding 2 (Lowest Z-Scored PC1) Performance Alignment]
+  - L1 Distance:                       0.556551
+  - Cosine Similarity to Target:       0.716608
+
+Generated Outputs Inter-Relationship:
+  - CosSim(Aligned Pred z1, Aligned Pred z2):  0.693916
+
