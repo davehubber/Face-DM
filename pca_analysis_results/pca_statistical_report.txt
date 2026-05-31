@@ -3,10 +3,56 @@
 =========================================================================
 
 Total Source Vectors Analyzed: 56,000
-Dimensionality Profile:        512D -> 3D
+Dimensionality Profile:        512D -> 10D
+PCA Input Space:               Raw DiffAE z_sem embeddings, no z-score normalization
 
 --- EXPLAINED VARIANCE METRICS ---
-  - Principal Component 1: 4.2708% of global variance
-  - Principal Component 2: 3.7532% of global variance
-  - Principal Component 3: 2.9871% of global variance
-Total Cumulative Variance Captured: 11.0111%
+  - Principal Component 01: 4.2708% of global variance
+  - Principal Component 02: 3.7532% of global variance
+  - Principal Component 03: 2.9871% of global variance
+  - Principal Component 04: 2.5479% of global variance
+  - Principal Component 05: 2.2460% of global variance
+  - Principal Component 06: 2.1045% of global variance
+  - Principal Component 07: 1.8000% of global variance
+  - Principal Component 08: 1.6401% of global variance
+  - Principal Component 09: 1.5472% of global variance
+  - Principal Component 10: 1.4755% of global variance
+Total Cumulative Variance Captured by top 10: 24.3723%
+
+--- RANDOM TRAINING PAIR PC-SEPARATION METRICS ---
+Random Pair Samples: 1,000,000
+Random Pair Seed:    42
+Pair Sampling Rule:  idx1 ~ Uniform[0, N-1]; offset ~ Uniform[1, N-1]; idx2 = (idx1 + offset) % N
+Pair Embeddings:     Raw training embeddings, no z-score normalization
+
+Sanity check: average-score asymmetry
+  For c=(z1+z2)/2, PCA_score(c) is exactly the midpoint of PCA_score(z1) and PCA_score(z2).
+  Therefore |score(c)-score(z1)| and |score(c)-score(z2)| should be equal for every PC.
+  - PC01: mean asymmetry = 8.87819063e-09; max asymmetry = 2.38418579e-07
+  - PC02: mean asymmetry = 8.24281177e-09; max asymmetry = 1.19209290e-07
+  - PC03: mean asymmetry = 7.36559258e-09; max asymmetry = 1.19209290e-07
+  - PC04: mean asymmetry = 6.83528034e-09; max asymmetry = 1.19209290e-07
+  - PC05: mean asymmetry = 6.36117559e-09; max asymmetry = 1.19209290e-07
+  - PC06: mean asymmetry = 6.17097262e-09; max asymmetry = 1.19209290e-07
+  - PC07: mean asymmetry = 5.73308734e-09; max asymmetry = 1.19209290e-07
+  - PC08: mean asymmetry = 5.53062574e-09; max asymmetry = 5.96046448e-08
+  - PC09: mean asymmetry = 5.36326361e-09; max asymmetry = 5.96046448e-08
+  - PC10: mean asymmetry = 5.19138110e-09; max asymmetry = 5.96046448e-08
+
+Useful separation metric: best PC per pair by max |score_k(z1) - score_k(z2)|
+  This is the PC among the first 10 where the pair differs most strongly in PCA score.
+  - PC01: wins 198,695 pairs (19.87%); mean |gap| = 0.469017; median |gap| = 0.385188; p95 |gap| = 1.188502
+  - PC02: wins 188,379 pairs (18.84%); mean |gap| = 0.450157; median |gap| = 0.384231; p95 |gap| = 1.093338
+  - PC03: wins 128,653 pairs (12.87%); mean |gap| = 0.396781; median |gap| = 0.332189; p95 |gap| = 0.985870
+  - PC04: wins 101,147 pairs (10.11%); mean |gap| = 0.363985; median |gap| = 0.301956; p95 |gap| = 0.912737
+  - PC05: wins 93,191 pairs (9.32%); mean |gap| = 0.348706; median |gap| = 0.297402; p95 |gap| = 0.847503
+  - PC06: wins 81,227 pairs (8.12%); mean |gap| = 0.336400; median |gap| = 0.285585; p95 |gap| = 0.821018
+  - PC07: wins 61,400 pairs (6.14%); mean |gap| = 0.309158; median |gap| = 0.260069; p95 |gap| = 0.764506
+  - PC08: wins 56,419 pairs (5.64%); mean |gap| = 0.296579; median |gap| = 0.251476; p95 |gap| = 0.726704
+  - PC09: wins 49,543 pairs (4.95%); mean |gap| = 0.288553; median |gap| = 0.245761; p95 |gap| = 0.702617
+  - PC10: wins 41,346 pairs (4.13%); mean |gap| = 0.280880; median |gap| = 0.237756; p95 |gap| = 0.688544
+
+Winning-PC gap distribution across all pairs:
+  - mean winning |gap|:   0.871474
+  - median winning |gap|: 0.830451
+  - p95 winning |gap|:    1.384715
