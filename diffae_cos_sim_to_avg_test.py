@@ -55,23 +55,23 @@ def load_split_and_normalize(base_path_str: str, split: str) -> np.ndarray:
 # ==========================================
 # Imbalance Analysis Core Pipeline
 # ==========================================
-def analyze_validation_asymmetry(diffae_path_str: str, output_report_name: str = "validation_cosine_imbalance.txt"):
+def analyze_training_asymmetry(diffae_path_str: str, output_report_name: str = "training_cosine_imbalance.txt"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Load the z-score normalized validation split
-    val_embs = load_split_and_normalize(diffae_path_str, "val")
+    train_embs = load_split_and_normalize(diffae_path_str, "train")
     
     # Recreate the exact 10k deterministic pairs used in your validation loops
-    val_loader = DataLoader(
-        ColdDiffAEDemorphDataset(val_embs, epoch_size=10_000, deterministic=True), 
-        batch_size=10_000, 
+    train_loader = DataLoader(
+        ColdDiffAEDemorphDataset(train_embs, epoch_size=1_000_000, deterministic=False), 
+        batch_size=1_000_000, 
         shuffle=False
     )
     
-    print(f"Analyzing angular asymmetry across 10,000 validation pairs on {device}...")
+    print(f"Analyzing angular asymmetry across 1,000,000 validation pairs on {device}...")
     
     with torch.no_grad():
-        for batch_z1, batch_z2 in val_loader:
+        for batch_z1, batch_z2 in train_loader:
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
             
             # Compute true average mixture
@@ -142,4 +142,4 @@ if __name__ == "__main__":
     # Point this to your master file path 
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
     
-    analyze_validation_asymmetry(diffae_path_str=BASE_PATH)
+    analyze_training_asymmetry(diffae_path_str=BASE_PATH)

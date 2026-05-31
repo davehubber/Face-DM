@@ -6,13 +6,14 @@ import torch
 from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
+from tqdm import tqdm
 
 # Setup paths to your repositories
 PATH_TO_DIFF_MODEL = "../diffae"
 sys.path.append(PATH_TO_DIFF_MODEL)
 
 from templates import ffhq256_autoenc
-from lit_model import LitModel
+from experiment import LitModel
 
 # ==========================================
 # 1. Benchmark Dataset Loader
@@ -88,7 +89,7 @@ def run_profile_benchmarks(base_path_str: str, num_samples: int = 1000, batch_si
     # 2. Initialize Model
     conf = ffhq256_autoenc()
     model = LitModel(conf)
-    state = torch.load(f'{PATH_TO_DIFF_MODEL}/checkpoints/{conf.name}/last.ckpt', map_location='cpu')
+    state = torch.load(f'{conf.name}/last.ckpt', map_location='cpu')
     model.load_state_dict(state['state_dict'], strict=False)
     model.ema_model.eval()
     model.ema_model.to(device)

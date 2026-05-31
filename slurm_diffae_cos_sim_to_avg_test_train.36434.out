@@ -1,0 +1,37 @@
+Analyzing angular asymmetry across 1,000,000 validation pairs on cuda...
+
+=========================================================================
+      DIFF-AE VALIDATION MANIFOLD: ANGULAR IMBALANCE EVALUATION REPORT
+=========================================================================
+
+Total Deterministic Pairs Evaluated: 1,000,000
+Vector Space Dimensionality:          512 (z_sem)
+
+-------------------------------------------------------------------------
+1. COSINE SIMILARITY STATISTICS
+-------------------------------------------------------------------------
+  - Overall Mean CosSim(c, z1):       0.705435
+  - Overall Mean CosSim(c, z2):       0.705472
+  - Absolute Maximum CosSim Observed:  0.968442
+  - Absolute Minimum CosSim Observed:  0.301349
+
+-------------------------------------------------------------------------
+2. ANGULAR SKEW / IMBALANCE DISTRIBUTION (|CosSim1 - CosSim2|)
+-------------------------------------------------------------------------
+  - Mean Angular Imbalance:           0.060878
+  - Standard Deviation of Imbalance:   0.049577
+  - Maximum Pairwise Imbalance:       0.572259
+  - Minimum Pairwise Imbalance:       0.000000
+
+-------------------------------------------------------------------------
+3. GEOMETRIC HYPOTHESIS VERIFICATION
+-------------------------------------------------------------------------
+  - Rate at which the average vector 'c' is angularly closer
+    to the embedding with the larger L2 norm magnitude: 100.00%
+
+Conclusion: If the rate above is 100.00%, it mathematically confirms that
+relative embedding length completely rules the angular skew towards the midpoint.
+=========================================================================
+
+[SUCCESS] Informative validation symmetry report exported safely to:
+  -> /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/training_cosine_imbalance.txt
