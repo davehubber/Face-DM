@@ -123,24 +123,22 @@ class DeterministicColdDemorph(nn.Module):
         self.model = model
         self.num_timesteps = num_timesteps
 
-    def degrade(self, z1, z2, t):
+    def degrade(self, z, c, t):
         gamma = (t / self.num_timesteps).view(-1, 1).float()
-        # Variance preserving path setup: coefficients square sum up to 1.0
-        coeff1 = torch.sqrt(1.0 - 0.5 * gamma)
-        coeff2 = torch.sqrt(0.5 * gamma)
-        return coeff1 * z1 + coeff2 * z2
+        return (1.0 - gamma) * z + gamma * c
 
     def compute_loss(self, z1, z2):
         b = z1.shape[0]
+        c = (z1 + z2) / 2.0
         t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
         
-        x_t = self.degrade(z1, z2, t)
+        x_t = self.degrade(z1, c, t)
         pred_z = self.model(x_t, t)
         
-        # Match Target z1 (Pure L1 Loss)
+        # Match Target z1 (Pure L1 Loss Only)
         loss_z1 = F.l1_loss(pred_z, z1, reduction='none').mean(dim=-1)
         
-        # Match Target z2 (Pure L1 Loss)
+        # Match Target z2 (Pure L1 Loss Only)
         loss_z2 = F.l1_loss(pred_z, z2, reduction='none').mean(dim=-1)
         
         # Permutation Invariant Selection
@@ -158,9 +156,7 @@ class DeterministicColdDemorph(nn.Module):
         for t in tqdm(timesteps, desc='TACOs Sampling', leave=False):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
             pred_raw = self.model(x_t, t_batch)
-            
-            # c is the variance-preserving midpoint: c = sqrt(0.5)*z1 + sqrt(0.5)*z2
-            pred_comp = math.sqrt(2.0) * c - pred_raw
+            pred_comp = 2.0 * c - pred_raw
             
             if prev_pred is None:
                 pred_z1 = pred_raw
@@ -171,17 +167,16 @@ class DeterministicColdDemorph(nn.Module):
                 swap_mask = dist_comp < dist_raw
                 pred_z1 = torch.where(swap_mask.unsqueeze(-1), pred_comp, pred_raw)
             
-            pred_z2 = math.sqrt(2.0) * c - pred_z1
             prev_pred = pred_z1
             
             t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
-            deg_t = self.degrade(pred_z1, pred_z2, t_batch)
-            deg_t_prev = self.degrade(pred_z1, pred_z2, t_prev_batch)
+            deg_t = self.degrade(pred_z1, c, t_batch)
+            deg_t_prev = self.degrade(pred_z1, c, t_prev_batch)
             
             x_t = x_t - deg_t + deg_t_prev
             
         final_z1 = x_t
-        final_z2 = math.sqrt(2.0) * c - final_z1
+        final_z2 = 2.0 * c - final_z1
         return final_z1, final_z2
 
 # ==========================================
@@ -242,7 +237,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
             with torch.no_grad():
                 for batch_z1, batch_z2 in val_loader:
                     batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-                    batch_c = math.sqrt(0.5) * batch_z1 + math.sqrt(0.5) * batch_z2
+                    batch_c = (batch_z1 + batch_z2) / 2.0
                     pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c)
                     
                     dist_a = F.l1_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
@@ -291,13 +286,13 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
     with torch.no_grad():
         for batch_z1, batch_z2 in test_loader:
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-            batch_c = math.sqrt(0.5) * batch_z1 + math.sqrt(0.5) * batch_z2
+            batch_c = (batch_z1 + batch_z2) / 2.0
             
             if mode == 'iterative':
                 pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c)
             else:
                 pred_z1 = net(batch_c, torch.full((batch_z1.shape[0],), num_timesteps, device=device).long())
-                pred_z2 = math.sqrt(2.0) * batch_c - pred_z1
+                pred_z2 = 2.0 * batch_c - pred_z1
 
             dist_a = F.l1_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
             dist_b = F.l1_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
@@ -311,7 +306,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
             total_cosine_1 += F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1).mean().item()
             total_cosine_2 += F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1).mean().item()
             
-            # Tracking raw angular relationship metrics (remains active for verification)
+            # Tracking raw angular relationship metrics (keeps evaluation rich)
             total_cos_z1_z2 += F.cosine_similarity(batch_z1, batch_z2, dim=-1).mean().item()
             total_cos_z1_c += F.cosine_similarity(batch_z1, batch_c, dim=-1).mean().item()
             total_cos_z2_c += F.cosine_similarity(batch_z2, batch_c, dim=-1).mean().item()
@@ -339,7 +334,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    RUN_NAME = "diffae_vp_l1_pit"
+    RUN_NAME = "diffae_pit"
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=50)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=50, mode='one_shot')
