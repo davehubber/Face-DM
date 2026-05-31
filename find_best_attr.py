@@ -1,8 +1,6 @@
 import argparse
-import math
-import os
 from pathlib import Path
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -21,6 +19,14 @@ ATTRIBUTES = [
     "Wearing_Earrings", "Wearing_Hat", "Wearing_Lipstick",
     "Wearing_Necklace", "Wearing_Necktie", "Young",
 ]
+
+
+def sigmoid_np(x: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def fmt_pct(x: float) -> str:
+    return f"{100.0 * x:6.2f}%"
 
 
 def load_state_dict(ckpt_path: Path) -> Dict[str, torch.Tensor]:
@@ -52,11 +58,10 @@ def load_classifier_tensors(
       - conds_mean:        [1, 512]
       - conds_std:         [1, 512]
 
-    The released DiffAE classifier was trained on normalized z_sem:
+    The classifier expects raw DiffAE z_sem normalized as:
         z_norm = (z_raw - conds_mean) / conds_std
 
-    Therefore, your raw z_sem must be normalized with THESE stats,
-    not with your own train split mean/std.
+    Do not use your own train split mean/std here.
     """
     sd = load_state_dict(ckpt_path)
 
@@ -66,7 +71,7 @@ def load_classifier_tensors(
     bias_key = f"{prefix}.bias"
 
     if weight_key not in sd or bias_key not in sd:
-        available = "\n".join(sorted(sd.keys())[:80])
+        available = "\n".join(sorted(sd.keys())[:100])
         raise KeyError(
             f"Could not find {weight_key} and {bias_key} in checkpoint.\n"
             f"First available keys:\n{available}"
@@ -114,7 +119,7 @@ def load_classifier_tensors(
     return weight, bias, mean, std
 
 
-def compute_logits_for_all_embeddings(
+def classify_embeddings_mmap(
     z_path: Path,
     weight: torch.Tensor,
     bias: torch.Tensor,
@@ -124,45 +129,36 @@ def compute_logits_for_all_embeddings(
     batch_size: int,
 ) -> np.ndarray:
     """
-    Loads raw DiffAE z_sem embeddings from .npy and computes classifier logits.
+    Computes classifier logits for every clean raw z_sem embedding.
 
-    Output:
-        logits: np.ndarray [N, 40], float32
-
-    Important:
-        Input must be raw DiffAE z_sem, not your own z-scored embeddings.
+    Returns:
+        clean_logits: [N, 40], float32
     """
     z_path = Path(z_path).resolve()
     if not z_path.exists():
         raise FileNotFoundError(f"Embedding file not found: {z_path}")
 
-    print(f"Loading embeddings with mmap: {z_path}")
     z = np.load(str(z_path), mmap_mode="r")
 
-    if z.ndim != 2:
-        raise ValueError(f"Expected embeddings with shape [N, 512], got {z.shape}")
-    if z.shape[1] != 512:
-        raise ValueError(f"Expected 512-D DiffAE z_sem embeddings, got shape {z.shape}")
+    if z.ndim != 2 or z.shape[1] != 512:
+        raise ValueError(f"Expected raw DiffAE z_sem shape [N, 512], got {z.shape}")
 
     n = z.shape[0]
-    print(f"Number of embeddings: {n:,}")
-    print("Assumption: these are RAW DiffAE z_sem embeddings.")
+    logits_out = np.empty((n, 40), dtype=np.float32)
 
     weight = weight.to(device)
     bias = bias.to(device)
     mean = mean.to(device)
     std = std.to(device)
 
-    logits_out = np.empty((n, 40), dtype=np.float32)
-
     with torch.no_grad():
-        for start in tqdm(range(0, n, batch_size), desc="Classifying embeddings"):
+        for start in tqdm(range(0, n, batch_size), desc="Classifying clean embeddings"):
             end = min(start + batch_size, n)
 
             z_batch = torch.from_numpy(np.asarray(z[start:end])).float().to(device)
             z_norm = (z_batch - mean) / std
-
             logits = F.linear(z_norm, weight, bias)
+
             logits_out[start:end] = logits.detach().cpu().numpy().astype(np.float32)
 
     return logits_out
@@ -180,10 +176,10 @@ def sample_unique_unordered_pairs(
       - (i, j) and (j, i) treated as the same pair
 
     Returns:
-      i_idx, j_idx arrays, each [num_pairs], with i_idx < j_idx.
+      i_idx, j_idx, both [num_pairs], with i_idx < j_idx.
     """
     if n < 2:
-        raise ValueError("Need at least 2 embeddings to create pairs.")
+        raise ValueError("Need at least 2 embeddings.")
 
     max_pairs = n * (n - 1) // 2
     if num_pairs > max_pairs:
@@ -193,7 +189,6 @@ def sample_unique_unordered_pairs(
 
     rng = np.random.default_rng(seed)
     collected = []
-
     total_unique = 0
     oversample = max(10_000, int(num_pairs * 1.05))
 
@@ -213,7 +208,6 @@ def sample_unique_unordered_pairs(
         lo = np.minimum(a, b)
         hi = np.maximum(a, b)
 
-        # Encode unordered pair uniquely. Since lo < hi, this is collision-free.
         codes = lo * np.int64(n) + hi
         codes = np.unique(codes)
 
@@ -240,249 +234,416 @@ def sample_unique_unordered_pairs(
     return i_idx.astype(np.int64), j_idx.astype(np.int64)
 
 
-def analyze_pairs(
-    logits: np.ndarray,
+def analyze_average_midpoint_behavior(
+    z_path: Path,
+    clean_logits: np.ndarray,
     i_idx: np.ndarray,
     j_idx: np.ndarray,
+    weight: torch.Tensor,
+    bias: torch.Tensor,
+    mean: torch.Tensor,
+    std: torch.Tensor,
+    device: torch.device,
     pair_batch_size: int,
+    min_clean_logit_gap: float,
+    min_clean_prob_gap: float,
 ) -> Dict[str, np.ndarray]:
     """
-    Computes attribute-wise separation metrics over sampled pairs.
+    For each pair:
+        z_avg = 0.5 * (z_i + z_j)
 
-    Main metrics:
-      - mean_abs_logit_diff:
-          Average absolute difference in raw classifier logits.
+    Then compares classifier score of z_avg against the midpoint of the
+    clean scores.
 
-      - mean_abs_prob_diff:
-          Average absolute difference in sigmoid(logit).
-          This is bounded [0, 1] and easier to interpret.
+    For logits, midpoint behavior should be exact up to numerical error.
 
-      - binary_disagreement_rate:
-          Fraction of pairs where one embedding is predicted positive
-          and the other negative for the attribute.
+    For sigmoid probabilities, midpoint behavior is not guaranteed because
+    sigmoid is nonlinear.
 
-      - prevalence:
-          Fraction of individual embeddings predicted positive for the attribute.
+    Main per-attribute metrics:
+      - clean prevalence
+      - clean separation
+      - mean absolute midpoint error for logits
+      - mean absolute midpoint error for probabilities
+      - normalized position of average score between the two clean scores
 
-      - prevalence_balance:
-          1.0 means prevalence is 50%.
-          0.0 means prevalence is 0% or 100%.
-          This helps penalize extremely rare or extremely common attributes.
+    Normalized position:
+        low = min(score_i, score_j)
+        high = max(score_i, score_j)
+        position = (score_avg - low) / (high - low)
 
-      - practical_score:
-          mean_abs_prob_diff * prevalence_balance.
-          This favors attributes that both separate pairs and are not too rare/common.
+    Interpretation:
+        position = 0.5  -> exactly equidistant
+        position > 0.5  -> closer to the high-score embedding
+        position < 0.5  -> closer to the low-score embedding
     """
-    n, num_attrs = logits.shape
-    assert num_attrs == 40
+    z = np.load(str(z_path), mmap_mode="r")
 
-    probs = 1.0 / (1.0 + np.exp(-logits))
-    positives = logits > 0
+    weight = weight.to(device)
+    bias = bias.to(device)
+    mean = mean.to(device)
+    std = std.to(device)
 
-    prevalence = positives.mean(axis=0).astype(np.float64)
-    mean_probability = probs.mean(axis=0).astype(np.float64)
-    prevalence_balance = (1.0 - np.abs(2.0 * prevalence - 1.0)).astype(np.float64)
+    n_attrs = 40
+    n_pairs = len(i_idx)
 
-    sum_abs_logit_diff = np.zeros(num_attrs, dtype=np.float64)
-    sum_abs_prob_diff = np.zeros(num_attrs, dtype=np.float64)
-    sum_binary_disagree = np.zeros(num_attrs, dtype=np.float64)
+    clean_probs = sigmoid_np(clean_logits)
+    clean_positive = clean_logits > 0
 
-    # For additional interpretability, store approximate percentiles.
-    # Exact percentiles over 1M x 40 is still fine in memory, but this avoids
-    # holding all pair differences at once.
-    all_prob_diffs = np.empty((len(i_idx), num_attrs), dtype=np.float32)
+    prevalence = clean_positive.mean(axis=0).astype(np.float64)
+    mean_clean_prob = clean_probs.mean(axis=0).astype(np.float64)
 
-    for start in tqdm(range(0, len(i_idx), pair_batch_size), desc="Analyzing pair differences"):
-        end = min(start + pair_batch_size, len(i_idx))
-        ii = i_idx[start:end]
-        jj = j_idx[start:end]
+    sum_clean_abs_logit_gap = np.zeros(n_attrs, dtype=np.float64)
+    sum_clean_abs_prob_gap = np.zeros(n_attrs, dtype=np.float64)
 
-        logit_diff = np.abs(logits[ii] - logits[jj]).astype(np.float32)
-        prob_diff = np.abs(probs[ii] - probs[jj]).astype(np.float32)
-        disagree = positives[ii] != positives[jj]
+    sum_abs_logit_mid_error = np.zeros(n_attrs, dtype=np.float64)
+    max_abs_logit_mid_error = np.zeros(n_attrs, dtype=np.float64)
 
-        sum_abs_logit_diff += logit_diff.sum(axis=0)
-        sum_abs_prob_diff += prob_diff.sum(axis=0)
-        sum_binary_disagree += disagree.sum(axis=0)
+    sum_abs_prob_mid_error = np.zeros(n_attrs, dtype=np.float64)
+    sum_signed_prob_mid_error = np.zeros(n_attrs, dtype=np.float64)
+    max_abs_prob_mid_error = np.zeros(n_attrs, dtype=np.float64)
 
-        all_prob_diffs[start:end] = prob_diff
+    sum_logit_pos_minus_half = np.zeros(n_attrs, dtype=np.float64)
+    sum_abs_logit_pos_minus_half = np.zeros(n_attrs, dtype=np.float64)
+    count_valid_logit_pos = np.zeros(n_attrs, dtype=np.float64)
 
-    m = float(len(i_idx))
+    sum_prob_pos_minus_half = np.zeros(n_attrs, dtype=np.float64)
+    sum_abs_prob_pos_minus_half = np.zeros(n_attrs, dtype=np.float64)
+    count_valid_prob_pos = np.zeros(n_attrs, dtype=np.float64)
 
-    mean_abs_logit_diff = sum_abs_logit_diff / m
-    mean_abs_prob_diff = sum_abs_prob_diff / m
-    binary_disagreement_rate = sum_binary_disagree / m
+    count_prob_closer_to_high = np.zeros(n_attrs, dtype=np.float64)
+    count_prob_closer_to_low = np.zeros(n_attrs, dtype=np.float64)
+    count_prob_exact_mid = np.zeros(n_attrs, dtype=np.float64)
 
-    median_abs_prob_diff = np.percentile(all_prob_diffs, 50, axis=0)
-    p90_abs_prob_diff = np.percentile(all_prob_diffs, 90, axis=0)
+    # Store only probability normalized deviations for percentiles.
+    # Shape [1_000_000, 40] float32 is about 160 MB.
+    prob_pos_minus_half_all = np.empty((n_pairs, n_attrs), dtype=np.float32)
 
-    practical_score = mean_abs_prob_diff * prevalence_balance
+    with torch.no_grad():
+        for start in tqdm(range(0, n_pairs, pair_batch_size), desc="Classifying averaged embeddings"):
+            end = min(start + pair_batch_size, n_pairs)
+
+            ii = i_idx[start:end]
+            jj = j_idx[start:end]
+
+            z_i = torch.from_numpy(np.asarray(z[ii])).float().to(device)
+            z_j = torch.from_numpy(np.asarray(z[jj])).float().to(device)
+            z_avg = 0.5 * (z_i + z_j)
+
+            z_avg_norm = (z_avg - mean) / std
+            avg_logits_t = F.linear(z_avg_norm, weight, bias)
+            avg_logits = avg_logits_t.detach().cpu().numpy().astype(np.float32)
+            avg_probs = sigmoid_np(avg_logits).astype(np.float32)
+
+            l_i = clean_logits[ii]
+            l_j = clean_logits[jj]
+            p_i = clean_probs[ii]
+            p_j = clean_probs[jj]
+
+            expected_logit_mid = 0.5 * (l_i + l_j)
+            expected_prob_mid = 0.5 * (p_i + p_j)
+
+            clean_abs_logit_gap = np.abs(l_i - l_j)
+            clean_abs_prob_gap = np.abs(p_i - p_j)
+
+            logit_mid_error = avg_logits - expected_logit_mid
+            prob_mid_error = avg_probs - expected_prob_mid
+
+            sum_clean_abs_logit_gap += clean_abs_logit_gap.sum(axis=0)
+            sum_clean_abs_prob_gap += clean_abs_prob_gap.sum(axis=0)
+
+            abs_logit_mid_error = np.abs(logit_mid_error)
+            sum_abs_logit_mid_error += abs_logit_mid_error.sum(axis=0)
+            max_abs_logit_mid_error = np.maximum(
+                max_abs_logit_mid_error,
+                abs_logit_mid_error.max(axis=0),
+            )
+
+            abs_prob_mid_error = np.abs(prob_mid_error)
+            sum_abs_prob_mid_error += abs_prob_mid_error.sum(axis=0)
+            sum_signed_prob_mid_error += prob_mid_error.sum(axis=0)
+            max_abs_prob_mid_error = np.maximum(
+                max_abs_prob_mid_error,
+                abs_prob_mid_error.max(axis=0),
+            )
+
+            # Normalized position in logit space.
+            low_l = np.minimum(l_i, l_j)
+            high_l = np.maximum(l_i, l_j)
+            gap_l = high_l - low_l
+            valid_l = gap_l > min_clean_logit_gap
+
+            pos_l = np.zeros_like(avg_logits, dtype=np.float32)
+            pos_l[valid_l] = (avg_logits[valid_l] - low_l[valid_l]) / gap_l[valid_l]
+            dev_l = pos_l - 0.5
+
+            sum_logit_pos_minus_half += np.where(valid_l, dev_l, 0.0).sum(axis=0)
+            sum_abs_logit_pos_minus_half += np.where(valid_l, np.abs(dev_l), 0.0).sum(axis=0)
+            count_valid_logit_pos += valid_l.sum(axis=0)
+
+            # Normalized position in probability space.
+            low_p = np.minimum(p_i, p_j)
+            high_p = np.maximum(p_i, p_j)
+            gap_p = high_p - low_p
+            valid_p = gap_p > min_clean_prob_gap
+
+            pos_p = np.full_like(avg_probs, 0.5, dtype=np.float32)
+            pos_p[valid_p] = (avg_probs[valid_p] - low_p[valid_p]) / gap_p[valid_p]
+            dev_p = pos_p - 0.5
+
+            prob_pos_minus_half_all[start:end] = np.where(valid_p, dev_p, np.nan)
+
+            sum_prob_pos_minus_half += np.where(valid_p, dev_p, 0.0).sum(axis=0)
+            sum_abs_prob_pos_minus_half += np.where(valid_p, np.abs(dev_p), 0.0).sum(axis=0)
+            count_valid_prob_pos += valid_p.sum(axis=0)
+
+            eps = 1e-7
+            count_prob_closer_to_high += ((dev_p > eps) & valid_p).sum(axis=0)
+            count_prob_closer_to_low += ((dev_p < -eps) & valid_p).sum(axis=0)
+            count_prob_exact_mid += ((np.abs(dev_p) <= eps) & valid_p).sum(axis=0)
+
+    m = float(n_pairs)
+
+    mean_abs_logit_mid_error = sum_abs_logit_mid_error / m
+    mean_abs_prob_mid_error = sum_abs_prob_mid_error / m
+    mean_signed_prob_mid_error = sum_signed_prob_mid_error / m
+
+    mean_clean_abs_logit_gap = sum_clean_abs_logit_gap / m
+    mean_clean_abs_prob_gap = sum_clean_abs_prob_gap / m
+
+    safe_logit_counts = np.maximum(count_valid_logit_pos, 1.0)
+    safe_prob_counts = np.maximum(count_valid_prob_pos, 1.0)
+
+    mean_logit_pos_minus_half = sum_logit_pos_minus_half / safe_logit_counts
+    mean_abs_logit_pos_minus_half = sum_abs_logit_pos_minus_half / safe_logit_counts
+
+    mean_prob_pos_minus_half = sum_prob_pos_minus_half / safe_prob_counts
+    mean_abs_prob_pos_minus_half = sum_abs_prob_pos_minus_half / safe_prob_counts
+
+    prob_closer_to_high_rate = count_prob_closer_to_high / safe_prob_counts
+    prob_closer_to_low_rate = count_prob_closer_to_low / safe_prob_counts
+    prob_exact_mid_rate = count_prob_exact_mid / safe_prob_counts
+
+    # Percentiles of probability-space normalized imbalance.
+    p50_abs_prob_pos_dev = np.zeros(n_attrs, dtype=np.float64)
+    p90_abs_prob_pos_dev = np.zeros(n_attrs, dtype=np.float64)
+    p99_abs_prob_pos_dev = np.zeros(n_attrs, dtype=np.float64)
+
+    for a in range(n_attrs):
+        vals = np.abs(prob_pos_minus_half_all[:, a])
+        vals = vals[~np.isnan(vals)]
+        if len(vals) == 0:
+            p50_abs_prob_pos_dev[a] = np.nan
+            p90_abs_prob_pos_dev[a] = np.nan
+            p99_abs_prob_pos_dev[a] = np.nan
+        else:
+            p50_abs_prob_pos_dev[a] = np.percentile(vals, 50)
+            p90_abs_prob_pos_dev[a] = np.percentile(vals, 90)
+            p99_abs_prob_pos_dev[a] = np.percentile(vals, 99)
 
     return {
         "prevalence": prevalence,
-        "mean_probability": mean_probability,
-        "prevalence_balance": prevalence_balance,
-        "mean_abs_logit_diff": mean_abs_logit_diff,
-        "mean_abs_prob_diff": mean_abs_prob_diff,
-        "median_abs_prob_diff": median_abs_prob_diff,
-        "p90_abs_prob_diff": p90_abs_prob_diff,
-        "binary_disagreement_rate": binary_disagreement_rate,
-        "practical_score": practical_score,
+        "mean_clean_prob": mean_clean_prob,
+        "mean_clean_abs_logit_gap": mean_clean_abs_logit_gap,
+        "mean_clean_abs_prob_gap": mean_clean_abs_prob_gap,
+        "mean_abs_logit_mid_error": mean_abs_logit_mid_error,
+        "max_abs_logit_mid_error": max_abs_logit_mid_error,
+        "mean_abs_prob_mid_error": mean_abs_prob_mid_error,
+        "mean_signed_prob_mid_error": mean_signed_prob_mid_error,
+        "max_abs_prob_mid_error": max_abs_prob_mid_error,
+        "valid_logit_position_rate": count_valid_logit_pos / m,
+        "mean_logit_pos_minus_half": mean_logit_pos_minus_half,
+        "mean_abs_logit_pos_minus_half": mean_abs_logit_pos_minus_half,
+        "valid_prob_position_rate": count_valid_prob_pos / m,
+        "mean_prob_pos_minus_half": mean_prob_pos_minus_half,
+        "mean_abs_prob_pos_minus_half": mean_abs_prob_pos_minus_half,
+        "p50_abs_prob_pos_dev": p50_abs_prob_pos_dev,
+        "p90_abs_prob_pos_dev": p90_abs_prob_pos_dev,
+        "p99_abs_prob_pos_dev": p99_abs_prob_pos_dev,
+        "prob_closer_to_high_rate": prob_closer_to_high_rate,
+        "prob_closer_to_low_rate": prob_closer_to_low_rate,
+        "prob_exact_mid_rate": prob_exact_mid_rate,
     }
-
-
-def fmt_pct(x: float) -> str:
-    return f"{100.0 * x:6.2f}%"
 
 
 def write_report(
     out_path: Path,
-    embedding_path: Path,
-    ckpt_path: Path,
+    train_zsem_path: Path,
+    classifier_ckpt_path: Path,
     num_embeddings: int,
     num_pairs: int,
     seed: int,
     use_ema_classifier: bool,
+    min_clean_logit_gap: float,
+    min_clean_prob_gap: float,
     metrics: Dict[str, np.ndarray],
 ) -> None:
     out_path = Path(out_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    order_practical = np.argsort(-metrics["practical_score"])
-    order_prob_sep = np.argsort(-metrics["mean_abs_prob_diff"])
-    order_disagree = np.argsort(-metrics["binary_disagreement_rate"])
+    order_prob_imbalance = np.argsort(-metrics["mean_abs_prob_pos_minus_half"])
+    order_prob_mid_error = np.argsort(-metrics["mean_abs_prob_mid_error"])
+    order_clean_prob_gap = np.argsort(-metrics["mean_clean_abs_prob_gap"])
 
-    best_practical = order_practical[0]
-    best_prob_sep = order_prob_sep[0]
-    best_disagree = order_disagree[0]
-
-    rare_mask = metrics["prevalence"] < 0.05
-    common_mask = metrics["prevalence"] > 0.95
+    best_imbalance = order_prob_imbalance[0]
+    best_prob_mid_error = order_prob_mid_error[0]
 
     with open(out_path, "w", encoding="utf-8") as f:
-        f.write("=" * 100 + "\n")
-        f.write("DIFFAE FFHQ256 ATTRIBUTE PAIR-SEPARATION REPORT\n")
-        f.write("=" * 100 + "\n\n")
+        f.write("=" * 110 + "\n")
+        f.write("DIFFAE FFHQ256 ATTRIBUTE AVERAGE-MIDPOINT REPORT\n")
+        f.write("=" * 110 + "\n\n")
 
         f.write("Goal\n")
         f.write("----\n")
         f.write(
-            "Estimate which of the 40 CelebA/CelebA-HQ attributes most distinguishes random pairs "
-            "of DiffAE FFHQ256 semantic embeddings.\n\n"
+            "For random pairs of raw DiffAE FFHQ256 semantic embeddings z1 and z2, test whether the "
+            "attribute score of z_avg = 0.5*z1 + 0.5*z2 is equidistant from the attribute scores "
+            "of z1 and z2.\n\n"
+        )
+
+        f.write("Important mathematical expectation\n")
+        f.write("----------------------------------\n")
+        f.write(
+            "For raw classifier logits, the average embedding should be exactly at the midpoint. "
+            "This is because DiffAE classifier scoring is affine normalization followed by a linear "
+            "classifier. Therefore, logit(z_avg) should equal 0.5*logit(z1) + 0.5*logit(z2), up to "
+            "small floating-point error.\n\n"
+        )
+        f.write(
+            "For sigmoid probabilities, midpoint behavior is not guaranteed. sigmoid(logit(z_avg)) "
+            "does not generally equal 0.5*sigmoid(logit(z1)) + 0.5*sigmoid(logit(z2)). Probability-space "
+            "imbalance can therefore appear even when logit-space behavior is perfectly balanced.\n\n"
         )
 
         f.write("Input configuration\n")
         f.write("-------------------\n")
-        f.write(f"Embedding file:              {embedding_path}\n")
-        f.write(f"Classifier checkpoint:       {ckpt_path}\n")
-        f.write(f"Classifier version:          {'EMA classifier' if use_ema_classifier else 'raw classifier'}\n")
-        f.write(f"Number of embeddings:        {num_embeddings:,}\n")
-        f.write(f"Number of sampled pairs:     {num_pairs:,}\n")
-        f.write(f"Random seed:                 {seed}\n")
-        f.write("Pair constraints:            no self-pairs; no repeated unordered pairs; (z1,z2)==(z2,z1)\n")
-        f.write("Embedding assumption:        raw DiffAE z_sem, not your own z-scored embeddings\n")
-        f.write("Classifier normalization:    DiffAE/classifier conds_mean and conds_std\n\n")
+        f.write(f"Embedding file:                  {train_zsem_path}\n")
+        f.write(f"Classifier checkpoint:           {classifier_ckpt_path}\n")
+        f.write(f"Classifier version:              {'EMA classifier' if use_ema_classifier else 'raw classifier'}\n")
+        f.write(f"Number of embeddings:            {num_embeddings:,}\n")
+        f.write(f"Number of sampled pairs:         {num_pairs:,}\n")
+        f.write(f"Random seed:                     {seed}\n")
+        f.write("Pair constraints:                no self-pairs; no repeated unordered pairs; (z1,z2)==(z2,z1)\n")
+        f.write("Embedding assumption:            raw DiffAE z_sem, not your own z-scored embeddings\n")
+        f.write("Classifier normalization:        DiffAE/classifier conds_mean and conds_std\n")
+        f.write(f"Minimum clean logit gap:         {min_clean_logit_gap}\n")
+        f.write(f"Minimum clean probability gap:   {min_clean_prob_gap}\n\n")
 
         f.write("Metric definitions\n")
         f.write("------------------\n")
-        f.write("prevalence:                  fraction of embeddings with logit > 0 for this attribute\n")
-        f.write("mean_probability:            mean sigmoid(logit) over embeddings\n")
-        f.write("mean_abs_prob_diff:          mean |sigmoid(logit_i) - sigmoid(logit_j)| over sampled pairs\n")
-        f.write("median_abs_prob_diff:        median probability-score difference over sampled pairs\n")
-        f.write("p90_abs_prob_diff:           90th percentile probability-score difference over sampled pairs\n")
-        f.write("binary_disagreement_rate:    fraction of pairs where one is positive and the other negative\n")
-        f.write("mean_abs_logit_diff:         mean absolute raw logit difference\n")
-        f.write("prevalence_balance:          1 - abs(2*prevalence - 1); best when prevalence is near 50%\n")
-        f.write("practical_score:             mean_abs_prob_diff * prevalence_balance\n\n")
+        f.write("prevalence:                      fraction of clean embeddings with logit > 0\n")
+        f.write("mean_clean_abs_prob_gap:         mean |prob(z1)-prob(z2)| across sampled pairs\n")
+        f.write("mean_abs_logit_mid_error:        mean |logit(z_avg) - midpoint(logit(z1),logit(z2))|\n")
+        f.write("max_abs_logit_mid_error:         maximum absolute logit midpoint error\n")
+        f.write("mean_abs_prob_mid_error:         mean |prob(z_avg) - midpoint(prob(z1),prob(z2))|\n")
+        f.write("mean_prob_pos_minus_half:        mean normalized probability position minus 0.5\n")
+        f.write("mean_abs_prob_pos_minus_half:    mean absolute normalized probability imbalance\n")
+        f.write("prob_closer_to_high_rate:        fraction where prob(z_avg) is closer to the higher-prob clean embedding\n")
+        f.write("prob_closer_to_low_rate:         fraction where prob(z_avg) is closer to the lower-prob clean embedding\n\n")
 
-        f.write("Main ranking: best practical attribute separators\n")
-        f.write("-------------------------------------------------\n")
+        f.write("Full per-attribute table\n")
+        f.write("------------------------\n")
         f.write(
-            f"{'Rank':>4}  {'Attribute':<24}  "
-            f"{'Practical':>10}  {'MeanProbDiff':>12}  {'BinDisagree':>12}  "
-            f"{'Prevalence':>11}  {'Balance':>8}  {'MeanProb':>9}  "
-            f"{'MedianDiff':>10}  {'P90Diff':>8}  {'MeanLogitDiff':>13}\n"
+            f"{'Attr':<24}  {'Prev':>8}  {'MeanProb':>9}  "
+            f"{'CleanProbGap':>12}  {'LogitMidErrMean':>16}  {'LogitMidErrMax':>15}  "
+            f"{'ProbMidErrMean':>15}  {'ProbMidErrSigned':>17}  "
+            f"{'ProbPos-0.5':>12}  {'AbsProbPosDev':>13}  "
+            f"{'P50AbsDev':>10}  {'P90AbsDev':>10}  {'P99AbsDev':>10}  "
+            f"{'CloserHigh':>11}  {'CloserLow':>10}\n"
         )
-        f.write("-" * 140 + "\n")
+        f.write("-" * 190 + "\n")
 
-        for rank, idx in enumerate(order_practical, start=1):
+        for idx, attr in enumerate(ATTRIBUTES):
             f.write(
-                f"{rank:4d}  {ATTRIBUTES[idx]:<24}  "
-                f"{metrics['practical_score'][idx]:10.4f}  "
-                f"{metrics['mean_abs_prob_diff'][idx]:12.4f}  "
-                f"{metrics['binary_disagreement_rate'][idx]:12.4f}  "
-                f"{fmt_pct(metrics['prevalence'][idx]):>11}  "
-                f"{metrics['prevalence_balance'][idx]:8.4f}  "
-                f"{metrics['mean_probability'][idx]:9.4f}  "
-                f"{metrics['median_abs_prob_diff'][idx]:10.4f}  "
-                f"{metrics['p90_abs_prob_diff'][idx]:8.4f}  "
-                f"{metrics['mean_abs_logit_diff'][idx]:13.4f}\n"
+                f"{attr:<24}  "
+                f"{fmt_pct(metrics['prevalence'][idx]):>8}  "
+                f"{metrics['mean_clean_prob'][idx]:9.4f}  "
+                f"{metrics['mean_clean_abs_prob_gap'][idx]:12.4f}  "
+                f"{metrics['mean_abs_logit_mid_error'][idx]:16.8e}  "
+                f"{metrics['max_abs_logit_mid_error'][idx]:15.8e}  "
+                f"{metrics['mean_abs_prob_mid_error'][idx]:15.6f}  "
+                f"{metrics['mean_signed_prob_mid_error'][idx]:17.6f}  "
+                f"{metrics['mean_prob_pos_minus_half'][idx]:12.6f}  "
+                f"{metrics['mean_abs_prob_pos_minus_half'][idx]:13.6f}  "
+                f"{metrics['p50_abs_prob_pos_dev'][idx]:10.6f}  "
+                f"{metrics['p90_abs_prob_pos_dev'][idx]:10.6f}  "
+                f"{metrics['p99_abs_prob_pos_dev'][idx]:10.6f}  "
+                f"{fmt_pct(metrics['prob_closer_to_high_rate'][idx]):>11}  "
+                f"{fmt_pct(metrics['prob_closer_to_low_rate'][idx]):>10}\n"
             )
 
         f.write("\n")
-        f.write("Alternative rankings\n")
-        f.write("--------------------\n")
-
-        f.write("\nTop 10 by raw continuous separation, using mean_abs_prob_diff:\n")
-        for rank, idx in enumerate(order_prob_sep[:10], start=1):
+        f.write("Top attributes by probability-space imbalance\n")
+        f.write("---------------------------------------------\n")
+        for rank, idx in enumerate(order_prob_imbalance[:10], start=1):
             f.write(
                 f"{rank:2d}. {ATTRIBUTES[idx]:<24} "
-                f"mean_abs_prob_diff={metrics['mean_abs_prob_diff'][idx]:.4f}, "
-                f"prevalence={fmt_pct(metrics['prevalence'][idx])}, "
-                f"binary_disagreement={fmt_pct(metrics['binary_disagreement_rate'][idx])}\n"
+                f"mean_abs_prob_pos_dev={metrics['mean_abs_prob_pos_minus_half'][idx]:.6f}, "
+                f"mean_prob_pos_minus_half={metrics['mean_prob_pos_minus_half'][idx]:+.6f}, "
+                f"closer_high={fmt_pct(metrics['prob_closer_to_high_rate'][idx])}, "
+                f"closer_low={fmt_pct(metrics['prob_closer_to_low_rate'][idx])}, "
+                f"prevalence={fmt_pct(metrics['prevalence'][idx])}\n"
             )
 
-        f.write("\nTop 10 by binary disagreement rate:\n")
-        for rank, idx in enumerate(order_disagree[:10], start=1):
+        f.write("\n")
+        f.write("Top attributes by probability midpoint error\n")
+        f.write("--------------------------------------------\n")
+        for rank, idx in enumerate(order_prob_mid_error[:10], start=1):
             f.write(
                 f"{rank:2d}. {ATTRIBUTES[idx]:<24} "
-                f"binary_disagreement={fmt_pct(metrics['binary_disagreement_rate'][idx])}, "
-                f"prevalence={fmt_pct(metrics['prevalence'][idx])}, "
-                f"mean_abs_prob_diff={metrics['mean_abs_prob_diff'][idx]:.4f}\n"
+                f"mean_abs_prob_mid_error={metrics['mean_abs_prob_mid_error'][idx]:.6f}, "
+                f"signed_prob_mid_error={metrics['mean_signed_prob_mid_error'][idx]:+.6f}, "
+                f"mean_clean_prob_gap={metrics['mean_clean_abs_prob_gap'][idx]:.4f}, "
+                f"prevalence={fmt_pct(metrics['prevalence'][idx])}\n"
             )
 
-        f.write("\nPresence / rarity notes\n")
-        f.write("-----------------------\n")
-        if rare_mask.any():
-            f.write("Attributes predicted present in <5% of embeddings:\n")
-            for idx in np.where(rare_mask)[0]:
-                f.write(f"  - {ATTRIBUTES[idx]:<24} prevalence={fmt_pct(metrics['prevalence'][idx])}\n")
-        else:
-            f.write("No attributes were predicted present in <5% of embeddings.\n")
-
-        if common_mask.any():
-            f.write("\nAttributes predicted present in >95% of embeddings:\n")
-            for idx in np.where(common_mask)[0]:
-                f.write(f"  - {ATTRIBUTES[idx]:<24} prevalence={fmt_pct(metrics['prevalence'][idx])}\n")
-        else:
-            f.write("\nNo attributes were predicted present in >95% of embeddings.\n")
+        f.write("\n")
+        f.write("Top attributes by clean probability separation\n")
+        f.write("----------------------------------------------\n")
+        for rank, idx in enumerate(order_clean_prob_gap[:10], start=1):
+            f.write(
+                f"{rank:2d}. {ATTRIBUTES[idx]:<24} "
+                f"mean_clean_abs_prob_gap={metrics['mean_clean_abs_prob_gap'][idx]:.4f}, "
+                f"mean_abs_prob_pos_dev={metrics['mean_abs_prob_pos_minus_half'][idx]:.6f}, "
+                f"prevalence={fmt_pct(metrics['prevalence'][idx])}\n"
+            )
 
         f.write("\n")
         f.write("Simple informative summary\n")
         f.write("--------------------------\n")
+
+        max_logit_err = metrics["max_abs_logit_mid_error"].max()
+        mean_logit_err = metrics["mean_abs_logit_mid_error"].mean()
+
         f.write(
-            f"Best practical separator: {ATTRIBUTES[best_practical]} "
-            f"(practical_score={metrics['practical_score'][best_practical]:.4f}, "
-            f"mean_abs_prob_diff={metrics['mean_abs_prob_diff'][best_practical]:.4f}, "
-            f"binary_disagreement={fmt_pct(metrics['binary_disagreement_rate'][best_practical])}, "
-            f"prevalence={fmt_pct(metrics['prevalence'][best_practical])}).\n"
+            f"Across all attributes, the average maximum absolute logit midpoint error was approximately "
+            f"{mean_logit_err:.8e}, and the worst observed maximum logit midpoint error was "
+            f"{max_logit_err:.8e}.\n"
         )
+
         f.write(
-            f"Strongest continuous separator without prevalence penalty: {ATTRIBUTES[best_prob_sep]} "
-            f"(mean_abs_prob_diff={metrics['mean_abs_prob_diff'][best_prob_sep]:.4f}, "
-            f"prevalence={fmt_pct(metrics['prevalence'][best_prob_sep])}).\n"
+            "This should be extremely small. If it is, then there is no useful imbalance in raw classifier-logit "
+            "space: the averaged embedding is exactly halfway between both clean embeddings for every attribute.\n"
         )
+
         f.write(
-            f"Strongest threshold-based separator: {ATTRIBUTES[best_disagree]} "
-            f"(binary_disagreement={fmt_pct(metrics['binary_disagreement_rate'][best_disagree])}, "
-            f"prevalence={fmt_pct(metrics['prevalence'][best_disagree])}).\n"
+            f"\nThe strongest probability-space imbalance was observed for {ATTRIBUTES[best_imbalance]} "
+            f"(mean_abs_prob_pos_dev={metrics['mean_abs_prob_pos_minus_half'][best_imbalance]:.6f}, "
+            f"mean_prob_pos_minus_half={metrics['mean_prob_pos_minus_half'][best_imbalance]:+.6f}, "
+            f"closer_high={fmt_pct(metrics['prob_closer_to_high_rate'][best_imbalance])}, "
+            f"closer_low={fmt_pct(metrics['prob_closer_to_low_rate'][best_imbalance])}).\n"
         )
+
         f.write(
-            "\nRecommended interpretation: for deterministic pair ordering, prefer attributes with high "
-            "mean_abs_prob_diff or binary_disagreement_rate, but avoid attributes with extremely low or "
-            "extremely high prevalence unless you specifically want a rare/common feature rule. The "
-            "practical_score is the most useful single summary because it rewards separation while "
-            "penalizing attributes that are too rare or too universal.\n"
+            f"The largest direct probability midpoint error was observed for {ATTRIBUTES[best_prob_mid_error]} "
+            f"(mean_abs_prob_mid_error={metrics['mean_abs_prob_mid_error'][best_prob_mid_error]:.6f}).\n"
+        )
+
+        f.write(
+            "\nInterpretation: if your downstream rule uses raw logits, averaging gives no asymmetry to exploit. "
+            "If your downstream rule uses sigmoid probabilities, apparent imbalance may appear, but this comes from "
+            "the nonlinear sigmoid transform rather than from information preserved asymmetrically in the averaged "
+            "embedding. Therefore, probability-space imbalance should be interpreted cautiously.\n"
         )
 
     print(f"\nSaved report to: {out_path}")
@@ -491,8 +652,8 @@ def write_report(
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Analyze which DiffAE/CelebA attribute classifier outputs most distinguish "
-            "random unordered pairs of FFHQ256 DiffAE semantic embeddings."
+            "Test whether DiffAE attribute classifier scores of averaged embeddings are equidistant "
+            "from the scores of the two clean embeddings."
         )
     )
 
@@ -520,7 +681,7 @@ def main():
     parser.add_argument(
         "--out-report",
         type=str,
-        default="/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_train_attribute_pair_report.txt",
+        default="/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_train_attribute_average_midpoint_report.txt",
         help="Output .txt report path.",
     )
     parser.add_argument(
@@ -539,13 +700,25 @@ def main():
         "--classify-batch-size",
         type=int,
         default=8192,
-        help="Batch size for computing classifier logits.",
+        help="Batch size for computing clean classifier logits.",
     )
     parser.add_argument(
         "--pair-batch-size",
         type=int,
-        default=65536,
-        help="Batch size for pair-difference analysis.",
+        default=16384,
+        help="Batch size for classifying averaged embeddings.",
+    )
+    parser.add_argument(
+        "--min-clean-logit-gap",
+        type=float,
+        default=1e-6,
+        help="Minimum clean logit gap needed to compute normalized logit position.",
+    )
+    parser.add_argument(
+        "--min-clean-prob-gap",
+        type=float,
+        default=1e-5,
+        help="Minimum clean probability gap needed to compute normalized probability position.",
     )
     parser.add_argument(
         "--device",
@@ -570,18 +743,20 @@ def main():
     out_report_path = Path(args.out_report).resolve()
     device = torch.device(args.device)
 
-    print("=" * 100)
-    print("DiffAE FFHQ256 attribute pair-separation analysis")
-    print("=" * 100)
-    print(f"Train z_sem:        {train_zsem_path}")
-    print(f"Classifier ckpt:    {classifier_ckpt_path}")
-    print(f"Latent stats:       {latent_stats_path}")
-    print(f"Output report:      {out_report_path}")
-    print(f"Num pairs:          {args.num_pairs:,}")
-    print(f"Seed:               {args.seed}")
-    print(f"Device:             {device}")
-    print(f"Use EMA classifier: {args.use_ema_classifier}")
-    print("=" * 100)
+    print("=" * 110)
+    print("DiffAE FFHQ256 attribute average-midpoint analysis")
+    print("=" * 110)
+    print(f"Train z_sem:              {train_zsem_path}")
+    print(f"Classifier ckpt:          {classifier_ckpt_path}")
+    print(f"Latent stats:             {latent_stats_path}")
+    print(f"Output report:            {out_report_path}")
+    print(f"Num pairs:                {args.num_pairs:,}")
+    print(f"Seed:                     {args.seed}")
+    print(f"Device:                   {device}")
+    print(f"Use EMA classifier:       {args.use_ema_classifier}")
+    print(f"Min clean logit gap:      {args.min_clean_logit_gap}")
+    print(f"Min clean probability gap:{args.min_clean_prob_gap}")
+    print("=" * 110)
 
     weight, bias, mean, std = load_classifier_tensors(
         ckpt_path=classifier_ckpt_path,
@@ -589,7 +764,7 @@ def main():
         latent_stats_path=latent_stats_path,
     )
 
-    logits = compute_logits_for_all_embeddings(
+    clean_logits = classify_embeddings_mmap(
         z_path=train_zsem_path,
         weight=weight,
         bias=bias,
@@ -599,7 +774,7 @@ def main():
         batch_size=args.classify_batch_size,
     )
 
-    num_embeddings = logits.shape[0]
+    num_embeddings = clean_logits.shape[0]
 
     i_idx, j_idx = sample_unique_unordered_pairs(
         n=num_embeddings,
@@ -607,21 +782,31 @@ def main():
         seed=args.seed,
     )
 
-    metrics = analyze_pairs(
-        logits=logits,
+    metrics = analyze_average_midpoint_behavior(
+        z_path=train_zsem_path,
+        clean_logits=clean_logits,
         i_idx=i_idx,
         j_idx=j_idx,
+        weight=weight,
+        bias=bias,
+        mean=mean,
+        std=std,
+        device=device,
         pair_batch_size=args.pair_batch_size,
+        min_clean_logit_gap=args.min_clean_logit_gap,
+        min_clean_prob_gap=args.min_clean_prob_gap,
     )
 
     write_report(
         out_path=out_report_path,
-        embedding_path=train_zsem_path,
-        ckpt_path=classifier_ckpt_path,
+        train_zsem_path=train_zsem_path,
+        classifier_ckpt_path=classifier_ckpt_path,
         num_embeddings=num_embeddings,
         num_pairs=args.num_pairs,
         seed=args.seed,
         use_ema_classifier=args.use_ema_classifier,
+        min_clean_logit_gap=args.min_clean_logit_gap,
+        min_clean_prob_gap=args.min_clean_prob_gap,
         metrics=metrics,
     )
 
