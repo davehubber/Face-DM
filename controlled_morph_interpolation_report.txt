@@ -1,6 +1,3 @@
---- Loading Model & Data ---
-Model params: 160.69 M
-Generating 100 controlled morphs and evaluating...
 =========================================================
        CONTROLLED FFHQ-256 MORDIFF LATENT REPORT         
 =========================================================
@@ -23,7 +20,3 @@ Expected: sqrt(0.5) * z'_1 + sqrt(0.5) * z'_2
 Average MSE:               0.351275
 Average Cosine Similarity: 0.8101
 =========================================================
-
-
-[SUCCESS] Report exported to: controlled_morph_interpolation_report.txt
-[SUCCESS] 100 Morphs saved to: /nas-ctm01/homes/dacordeiro/controlled_ffhq_morphs
