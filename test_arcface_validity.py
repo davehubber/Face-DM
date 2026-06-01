@@ -1,4 +1,5 @@
 import re
+import itertools
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
@@ -49,25 +50,29 @@ def get_l2_normalized_embedding(img_path: Path) -> np.ndarray:
 
     return emb / norm
 
+def get_subject_id(image_id: str) -> str:
+    """
+    Extracts the base subject ID from the FRLL filename format.
+    Assuming '036_08' -> subject is '036'. 
+    This prevents comparing '036_08' to '036_03' as a bona fide inter-identity pair.
+    """
+    return image_id.split('_')[0]
+
 # --- Main Pipeline ---
 def main():
     print("Indexing FRLL base images...")
-    # Create a fast lookup dictionary for base images: { "036_08": Path(...) }
     base_images = {img.stem: img for img in FRLL_DIR.rglob("*.jpg")}
     print(f"Found {len(base_images)} base images.")
 
     print("Locating morph images...")
-    # Find all pngs in the morphed subdirectories
     morph_paths = list(MORDIFF_DIR.rglob("morphed/*.png"))
     print(f"Found {len(morph_paths)} morphs to process.")
 
-    # Cache for base embeddings to avoid redundant RetinaFace/ArcFace passes
     base_emb_cache = {}
     
     results = []
     errors = []
 
-    # Regex to extract IDs (e.g., morph_036_08_and_130_08 -> 036_08, 130_08)
     filename_pattern = re.compile(r"morph_(.+)_and_(.+)")
 
     for morph_path in tqdm(morph_paths, desc="Evaluating Morphs"):
@@ -78,7 +83,6 @@ def main():
         
         id1, id2 = match.groups()
 
-        # Locate base images
         base_path1 = base_images.get(id1)
         base_path2 = base_images.get(id2)
 
@@ -87,12 +91,11 @@ def main():
             continue
 
         try:
-            # 1. Get/Compute Base 1 Embedding
+            # 1 & 2. Get/Compute Base Embeddings
             if id1 not in base_emb_cache:
                 base_emb_cache[id1] = get_l2_normalized_embedding(base_path1)
             emb1 = base_emb_cache[id1]
 
-            # 2. Get/Compute Base 2 Embedding
             if id2 not in base_emb_cache:
                 base_emb_cache[id2] = get_l2_normalized_embedding(base_path2)
             emb2 = base_emb_cache[id2]
@@ -107,7 +110,7 @@ def main():
                 raise ValueError("Base embeddings cancel each other out (perfect opposites).")
             nlerp_midpoint = midpoint / midpoint_norm
 
-            # 5. Calculate Cosine Similarity (Dot product of L2 normalized vectors)
+            # 5. Calculate Cosine Similarity
             cos_sim = float(np.dot(emb_morph, nlerp_midpoint))
 
             results.append({
@@ -120,19 +123,42 @@ def main():
         except Exception as e:
             errors.append(f"{morph_path.name}: Failed extraction - {repr(e)}")
 
+    # --- Bona Fide Baseline Evaluation ---
+    print("\nCalculating Bona Fide Inter-Identity Baseline...")
+    bona_fide_similarities = []
+    base_ids = list(base_emb_cache.keys())
+    
+    # Generate all unique pairs of extracted base images
+    unique_pairs = list(itertools.combinations(base_ids, 2))
+    
+    for id1, id2 in tqdm(unique_pairs, desc="Evaluating Baseline Pairs"):
+        # Ensure we are comparing entirely different subjects, not just different poses/expressions of the same subject
+        if get_subject_id(id1) != get_subject_id(id2):
+            emb1 = base_emb_cache[id1]
+            emb2 = base_emb_cache[id2]
+            sim = float(np.dot(emb1, emb2))
+            bona_fide_similarities.append(sim)
+
     # --- Generate Report ---
     print("\nGenerating report...")
     if not results:
         print("No successful calculations to report.")
         return
 
-    similarities = [r["similarity"] for r in results]
-    mean_sim = np.mean(similarities)
-    std_sim = np.std(similarities)
-    min_sim = np.min(similarities)
-    max_sim = np.max(similarities)
+    # Morph Stats
+    morph_sims = [r["similarity"] for r in results]
+    mean_sim = np.mean(morph_sims)
+    std_sim = np.std(morph_sims)
+    
+    # Baseline Stats
+    if bona_fide_similarities:
+        bf_mean = np.mean(bona_fide_similarities)
+        bf_std = np.std(bona_fide_similarities)
+        bf_min = np.min(bona_fide_similarities)
+        bf_max = np.max(bona_fide_similarities)
+    else:
+        bf_mean = bf_std = bf_min = bf_max = 0.0
 
-    # Sort results for top/bottom viewing
     sorted_results = sorted(results, key=lambda x: x["similarity"])
 
     with open(REPORT_PATH, "w", encoding="utf-8") as f:
@@ -140,12 +166,20 @@ def main():
         f.write("      Latent Space Morph Similarity Report          \n")
         f.write("====================================================\n\n")
         
-        f.write("### OVERALL STATISTICS ###\n")
+        f.write("### BONA FIDE BASELINE (INTER-IDENTITY) ###\n")
+        f.write("Expected similarity between two completely different real people.\n")
+        f.write(f"Total Unique Pairs Evaluated : {len(bona_fide_similarities)}\n")
+        f.write(f"Mean Cosine Similarity       : {bf_mean:.4f}\n")
+        f.write(f"Std Deviation                : {bf_std:.4f}\n")
+        f.write(f"Min Similarity               : {bf_min:.4f}\n")
+        f.write(f"Max Similarity               : {bf_max:.4f}\n\n")
+
+        f.write("### MORPH TO MIDPOINT OVERALL STATISTICS ###\n")
         f.write(f"Total Morphs Evaluated : {len(results)}\n")
         f.write(f"Mean Cosine Similarity : {mean_sim:.4f}\n")
         f.write(f"Std Deviation          : {std_sim:.4f}\n")
-        f.write(f"Min Similarity         : {min_sim:.4f}\n")
-        f.write(f"Max Similarity         : {max_sim:.4f}\n\n")
+        f.write(f"Min Similarity         : {np.min(morph_sims):.4f}\n")
+        f.write(f"Max Similarity         : {np.max(morph_sims):.4f}\n\n")
 
         f.write("### TOP 10 LOWEST SIMILARITIES (Worst Alignment) ###\n")
         for res in sorted_results[:10]:

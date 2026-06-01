@@ -1,0 +1,90 @@
+Epoch 1 | Train Tot: 0.6828 (L1: 0.6667, Cos: 0.0161) | Val Cheap: 0.5711
+Epoch 2 | Train Tot: 0.4495 (L1: 0.4450, Cos: 0.0045) | Val Cheap: 0.3786
+Epoch 3 | Train Tot: 0.3445 (L1: 0.3423, Cos: 0.0023) | Val Cheap: 0.3296
+Epoch 4 | Train Tot: 0.3169 (L1: 0.3147, Cos: 0.0023) | Val Cheap: 0.3119
+Epoch 5 | Train Tot: 0.3082 (L1: 0.3061, Cos: 0.0021) | Val Cheap: 0.3050 | Val TACOs L1: 1.2730
+Epoch 6 | Train Tot: 0.3041 (L1: 0.3020, Cos: 0.0021) | Val Cheap: 0.3015
+Epoch 7 | Train Tot: 0.3017 (L1: 0.2995, Cos: 0.0022) | Val Cheap: 0.3018
+Epoch 8 | Train Tot: 0.2995 (L1: 0.2973, Cos: 0.0022) | Val Cheap: 0.3000
+Epoch 9 | Train Tot: 0.2982 (L1: 0.2962, Cos: 0.0021) | Val Cheap: 0.2991
+Epoch 10 | Train Tot: 0.2974 (L1: 0.2954, Cos: 0.0020) | Val Cheap: 0.2997 | Val TACOs L1: 1.2723
+Epoch 11 | Train Tot: 0.2968 (L1: 0.2949, Cos: 0.0020) | Val Cheap: 0.2983
+Epoch 12 | Train Tot: 0.2955 (L1: 0.2935, Cos: 0.0020) | Val Cheap: 0.2949
+Epoch 13 | Train Tot: 0.2952 (L1: 0.2930, Cos: 0.0021) | Val Cheap: 0.2947
+Epoch 14 | Train Tot: 0.2943 (L1: 0.2925, Cos: 0.0018) | Val Cheap: 0.2938
+Epoch 15 | Train Tot: 0.2936 (L1: 0.2915, Cos: 0.0021) | Val Cheap: 0.2928 | Val TACOs L1: 1.2553
+Epoch 16 | Train Tot: 0.2922 (L1: 0.2903, Cos: 0.0019) | Val Cheap: 0.2953
+Epoch 17 | Train Tot: 0.2909 (L1: 0.2890, Cos: 0.0019) | Val Cheap: 0.2932
+Epoch 18 | Train Tot: 0.2905 (L1: 0.2886, Cos: 0.0019) | Val Cheap: 0.2955
+Epoch 19 | Train Tot: 0.2888 (L1: 0.2869, Cos: 0.0019) | Val Cheap: 0.2925
+Epoch 20 | Train Tot: 0.2881 (L1: 0.2862, Cos: 0.0019) | Val Cheap: 0.2910 | Val TACOs L1: 1.2487
+Epoch 21 | Train Tot: 0.2871 (L1: 0.2853, Cos: 0.0018) | Val Cheap: 0.2915
+Epoch 22 | Train Tot: 0.2863 (L1: 0.2843, Cos: 0.0019) | Val Cheap: 0.2900
+Epoch 23 | Train Tot: 0.2851 (L1: 0.2833, Cos: 0.0018) | Val Cheap: 0.2883
+Epoch 24 | Train Tot: 0.2839 (L1: 0.2820, Cos: 0.0019) | Val Cheap: 0.2893
+Epoch 25 | Train Tot: 0.2833 (L1: 0.2814, Cos: 0.0019) | Val Cheap: 0.2866 | Val TACOs L1: 1.2363
+Epoch 26 | Train Tot: 0.2822 (L1: 0.2804, Cos: 0.0018) | Val Cheap: 0.2903
+Epoch 27 | Train Tot: 0.2811 (L1: 0.2792, Cos: 0.0018) | Val Cheap: 0.2853
+Epoch 28 | Train Tot: 0.2805 (L1: 0.2786, Cos: 0.0019) | Val Cheap: 0.2870
+Epoch 29 | Train Tot: 0.2796 (L1: 0.2777, Cos: 0.0018) | Val Cheap: 0.2849
+Epoch 30 | Train Tot: 0.2788 (L1: 0.2770, Cos: 0.0018) | Val Cheap: 0.2885 | Val TACOs L1: 1.2177
+Epoch 31 | Train Tot: 0.2776 (L1: 0.2758, Cos: 0.0018) | Val Cheap: 0.2873
+Epoch 32 | Train Tot: 0.2770 (L1: 0.2753, Cos: 0.0018) | Val Cheap: 0.2864
+Epoch 33 | Train Tot: 0.2760 (L1: 0.2742, Cos: 0.0018) | Val Cheap: 0.2864
+Epoch 34 | Train Tot: 0.2756 (L1: 0.2738, Cos: 0.0018) | Val Cheap: 0.2863
+Epoch 35 | Train Tot: 0.2747 (L1: 0.2728, Cos: 0.0018) | Val Cheap: 0.2873 | Val TACOs L1: 1.2123
+Epoch 36 | Train Tot: 0.2740 (L1: 0.2722, Cos: 0.0018) | Val Cheap: 0.2820
+Epoch 37 | Train Tot: 0.2732 (L1: 0.2715, Cos: 0.0018) | Val Cheap: 0.2867
+Epoch 38 | Train Tot: 0.2724 (L1: 0.2706, Cos: 0.0018) | Val Cheap: 0.2847
+Epoch 39 | Train Tot: 0.2715 (L1: 0.2697, Cos: 0.0018) | Val Cheap: 0.2846
+Epoch 40 | Train Tot: 0.2713 (L1: 0.2695, Cos: 0.0018) | Val Cheap: 0.2833 | Val TACOs L1: 1.1981
+Epoch 41 | Train Tot: 0.2705 (L1: 0.2688, Cos: 0.0018) | Val Cheap: 0.2890
+Epoch 42 | Train Tot: 0.2697 (L1: 0.2678, Cos: 0.0018) | Val Cheap: 0.2859
+Epoch 43 | Train Tot: 0.2694 (L1: 0.2677, Cos: 0.0018) | Val Cheap: 0.2856
+Epoch 44 | Train Tot: 0.2684 (L1: 0.2667, Cos: 0.0018) | Val Cheap: 0.2858
+Epoch 45 | Train Tot: 0.2681 (L1: 0.2664, Cos: 0.0017) | Val Cheap: 0.2867 | Val TACOs L1: 1.1893
+Epoch 46 | Train Tot: 0.2673 (L1: 0.2655, Cos: 0.0018) | Val Cheap: 0.2855
+Epoch 47 | Train Tot: 0.2666 (L1: 0.2648, Cos: 0.0018) | Val Cheap: 0.2848
+Epoch 48 | Train Tot: 0.2663 (L1: 0.2646, Cos: 0.0018) | Val Cheap: 0.2848
+Epoch 49 | Train Tot: 0.2657 (L1: 0.2639, Cos: 0.0018) | Val Cheap: 0.2849
+Epoch 50 | Train Tot: 0.2650 (L1: 0.2632, Cos: 0.0018) | Val Cheap: 0.2861 | Val TACOs L1: 1.1873
+
+--- Evaluation Results: ONE_SHOT ---
+Run Name: diffae_pit_cos_reg
+----------------------------------------
+Base Reference Angular Properties:
+  - CosSim(True Baseline z1, True Baseline z2): 0.000302
+  - CosSim(True Baseline z1, Average mixture c): 0.705793
+  - CosSim(True Baseline z2, Average mixture c): 0.705320
+
+[Embedding 1 Performance Alignment]
+  - L1 Distance:                       0.554952
+  - Cosine Similarity to Target:       0.573761
+
+[Embedding 2 Performance Alignment]
+  - L1 Distance:                       0.554952
+  - Cosine Similarity to Target:       0.573238
+
+Generated Outputs Inter-Relationship:
+  - CosSim(Aligned Pred z1, Aligned Pred z2):  0.006149
+
+
+--- Evaluation Results: ITERATIVE ---
+Run Name: diffae_pit_cos_reg
+----------------------------------------
+Base Reference Angular Properties:
+  - CosSim(True Baseline z1, True Baseline z2): 0.000302
+  - CosSim(True Baseline z1, Average mixture c): 0.705793
+  - CosSim(True Baseline z2, Average mixture c): 0.705320
+
+[Embedding 1 Performance Alignment]
+  - L1 Distance:                       0.603247
+  - Cosine Similarity to Target:       0.555552
+
+[Embedding 2 Performance Alignment]
+  - L1 Distance:                       0.603247
+  - Cosine Similarity to Target:       0.555466
+
+Generated Outputs Inter-Relationship:
+  - CosSim(Aligned Pred z1, Aligned Pred z2):  0.002749
+

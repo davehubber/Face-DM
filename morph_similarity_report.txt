@@ -1,0 +1,43 @@
+====================================================
+      Latent Space Morph Similarity Report          
+====================================================
+
+### BONA FIDE BASELINE (INTER-IDENTITY) ###
+Expected similarity between two completely different real people.
+Total Unique Pairs Evaluated : 20604
+Mean Cosine Similarity       : 0.1320
+Std Deviation                : 0.1001
+Min Similarity               : -0.2324
+Max Similarity               : 0.6026
+
+### MORPH TO MIDPOINT OVERALL STATISTICS ###
+Total Morphs Evaluated : 1000
+Mean Cosine Similarity : 0.7213
+Std Deviation          : 0.0938
+Min Similarity         : 0.2756
+Max Similarity         : 0.8965
+
+### TOP 10 LOWEST SIMILARITIES (Worst Alignment) ###
+morph_004_08_and_114_08.png         -> 0.2756
+morph_042_08_and_141_08.png         -> 0.3661
+morph_061_08_and_141_08.png         -> 0.3761
+morph_031_08_and_042_08.png         -> 0.3917
+morph_012_08_and_042_08.png         -> 0.4047
+morph_031_03_and_137_03.png         -> 0.4226
+morph_042_08_and_115_08.png         -> 0.4270
+morph_087_08_and_102_08.png         -> 0.4422
+morph_062_08_and_066_08.png         -> 0.4430
+morph_029_08_and_082_08.png         -> 0.4462
+
+### TOP 10 HIGHEST SIMILARITIES (Best Alignment) ###
+morph_005_03_and_067_03.png         -> 0.8965
+morph_062_08_and_099_08.png         -> 0.8901
+morph_002_03_and_011_03.png         -> 0.8880
+morph_014_03_and_134_03.png         -> 0.8839
+morph_104_03_and_130_03.png         -> 0.8837
+morph_069_03_and_115_03.png         -> 0.8824
+morph_091_08_and_097_08.png         -> 0.8786
+morph_033_03_and_108_03.png         -> 0.8762
+morph_063_08_and_130_08.png         -> 0.8762
+morph_002_03_and_097_03.png         -> 0.8733
+

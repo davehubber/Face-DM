@@ -1,0 +1,38 @@
+Using device: cuda
+Loading weights from experiments/angular_ortho_loss_run/checkpoints/best.pt...
+Indexing FRLL base images...
+Locating morph images...
+
+==================================================
+REAL-WORLD MORDIFF DE-MORPHING EVALUATION REPORT
+==================================================
+Run Name:         angular_ortho_loss_run
+Total Evaluated:  1000
+Target Space:     ArcFace 512-D
+Model Timesteps:  5
+--------------------------------------------------
+
+0. BASELINE ALIGNMENT
+--------------------------------------------------
+  - Original Morph Linearity (Cos to NLERP): 0.721260
+    (The model had to correct for this structural offset before separating)
+
+1. GROUND TRUTH Z1 RECONSTRUCTION
+--------------------------------------------------
+  - L1 Distance (Scaled space): 0.683754
+  - L1 Distance (Raw ArcFace):  0.034293
+  - Cosine Similarity vs Z1:    0.513174
+
+2. GROUND TRUTH Z2 RECONSTRUCTION
+--------------------------------------------------
+  - L1 Distance (Scaled space): 0.683910
+  - L1 Distance (Raw ArcFace):  0.034361
+  - Cosine Similarity vs Z2:    0.509478
+
+3. GEOMETRIC ALIGNMENT & ORTHOGONALITY COMPARISON
+--------------------------------------------------
+  - Baseline Cosine Sim (True Z1 vs True Z2):  0.227598
+  - Generated Cosine Sim (Pred_Z1 vs Pred_Z2): 0.472731
+
+
+Saved evaluation results to experiments/angular_ortho_loss_run/mordiff_realworld_eval.txt
