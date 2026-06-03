@@ -8,4 +8,4 @@ temp/*
 *.pth
 *.npy
 *.npz
-
+*.joblib
