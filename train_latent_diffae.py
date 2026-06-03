@@ -118,11 +118,10 @@ class ColdDemorphNet(nn.Module):
 # 3. Cold Diffusion Process
 # ==========================================
 class DeterministicColdDemorph(nn.Module):
-    def __init__(self, model, num_timesteps=50, lambda_cos=0.25):
+    def __init__(self, model, num_timesteps=50):
         super().__init__()
         self.model = model
         self.num_timesteps = num_timesteps
-        self.lambda_cos = lambda_cos
 
     def degrade(self, z, c, t):
         gamma = (t / self.num_timesteps).view(-1, 1).float()
@@ -136,32 +135,15 @@ class DeterministicColdDemorph(nn.Module):
         x_t = self.degrade(z1, c, t)
         pred_z = self.model(x_t, t)
         
-        # 1. Match Targets (Permutation Invariant L1)
+        # Match Target z1 (Pure L1 Loss Only)
         loss_z1 = F.l1_loss(pred_z, z1, reduction='none').mean(dim=-1)
+        
+        # Match Target z2 (Pure L1 Loss Only)
         loss_z2 = F.l1_loss(pred_z, z2, reduction='none').mean(dim=-1)
-        recon_loss = torch.min(loss_z1, loss_z2).mean()
         
-        # 2. Ground Truth Cosine Matching (Approach B)
-        # Extract the companion prediction mathematically
-        pred_z_other = 2.0 * c - pred_z
-        
-        # Predicted angle between the two extracted faces
-        pred_cos_sim = F.cosine_similarity(pred_z, pred_z_other, dim=-1)
-        
-        # True angle between the ground truth faces
-        target_cos_sim = F.cosine_similarity(z1, z2, dim=-1)
-        
-        # Penalize the network if its separation angle deviates from reality
-        cos_loss = F.mse_loss(pred_cos_sim, target_cos_sim)
-        
-        total_loss = recon_loss + (self.lambda_cos * cos_loss)
-        
-        # Returning dictionary to easily log components
-        return {
-            "total_loss": total_loss,
-            "recon_l1": recon_loss,
-            "cos_mse": cos_loss
-        }
+        # Permutation Invariant Selection
+        loss = torch.min(loss_z1, loss_z2)
+        return loss.mean()
 
     @torch.no_grad()
     def tacos_sample_loop(self, c):
@@ -200,7 +182,7 @@ class DeterministicColdDemorph(nn.Module):
 # ==========================================
 # 4. Training & Validation Mechanics
 # ==========================================
-def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 50, lambda_cos: float = 0.25):
+def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 50):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
     ckpt_dir = exp_dir / "checkpoints"
@@ -209,7 +191,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     
     if not metrics_path.exists():
         with open(metrics_path, "w", newline="") as f:
-            csv.writer(f).writerow(["Epoch", "Train_Total_Loss", "Train_Recon_L1", "Train_Cos_MSE", "Val_Cheap_Loss", "Val_TACOs_Reconstruct_L1"])
+            csv.writer(f).writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_TACOs_Reconstruct_L1"])
             
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     val_embs = load_split_and_normalize(diffae_path_str, "val")
@@ -218,12 +200,11 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     val_loader = DataLoader(ColdDiffAEDemorphDataset(val_embs, epoch_size=10_000, deterministic=True), batch_size=10_000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
-    diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps, lambda_cos=lambda_cos).to(device)
+    diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 25_000, "num_layers": 10, "hidden_dim": 2048, 
-        "num_timesteps": num_timesteps, "lambda_cos": lambda_cos
+        "learning_rate": 1e-4, "batch_size": 25_000, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps
     })
 
     epochs = 50
@@ -231,24 +212,16 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     
     for epoch in range(epochs):
         net.train()
-        train_total, train_l1, train_cos = 0.0, 0.0, 0.0
-        
+        train_loss = 0.0
         for batch_z1, batch_z2 in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
             optimizer.zero_grad()
-            
-            losses = diffusion.compute_loss(batch_z1, batch_z2)
-            loss = losses["total_loss"]
+            loss = diffusion.compute_loss(batch_z1, batch_z2)
             loss.backward()
             optimizer.step()
+            train_loss += loss.item()
             
-            train_total += loss.item()
-            train_l1 += losses["recon_l1"].item()
-            train_cos += losses["cos_mse"].item()
-            
-        avg_train_total = train_total / len(train_loader)
-        avg_train_l1 = train_l1 / len(train_loader)
-        avg_train_cos = train_cos / len(train_loader)
+        avg_train_loss = train_loss / len(train_loader)
         
         net.eval()
         val_cheap_loss = 0.0
@@ -256,8 +229,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
         
         with torch.no_grad():
             for batch_z1, batch_z2 in val_loader:
-                v_losses = diffusion.compute_loss(batch_z1.to(device), batch_z2.to(device))
-                val_cheap_loss += v_losses["total_loss"].item()
+                val_cheap_loss += diffusion.compute_loss(batch_z1.to(device), batch_z2.to(device)).item()
         avg_val_cheap_loss = val_cheap_loss / len(val_loader)
 
         if (epoch + 1) % 5 == 0 or (epoch + 1) == epochs:
@@ -273,23 +245,12 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
                     val_tacos_loss_total += torch.min(dist_a, dist_b).mean().item()
             val_tacos_loss = val_tacos_loss_total / len(val_loader)
             
-        log_dict = {
-            "epoch": epoch + 1, 
-            "train_total_loss": avg_train_total, 
-            "train_recon_l1": avg_train_l1,
-            "train_cos_mse": avg_train_cos,
-            "val_cheap_total_loss": avg_val_cheap_loss
-        }
-        if val_tacos_loss is not None: 
-            log_dict["val_tacos_reconstruct_l1"] = val_tacos_loss
-            
+        log_dict = {"epoch": epoch + 1, "train_loss": avg_train_loss, "val_cheap_loss": avg_val_cheap_loss}
+        if val_tacos_loss is not None: log_dict["val_tacos_reconstruct_l1"] = val_tacos_loss
         wandb.log(log_dict)
         
         with open(metrics_path, "a", newline="") as f:
-            csv.writer(f).writerow([
-                epoch + 1, f"{avg_train_total:.6f}", f"{avg_train_l1:.6f}", f"{avg_train_cos:.6f}", 
-                f"{avg_val_cheap_loss:.6f}", f"{val_tacos_loss:.6f}" if val_tacos_loss is not None else "N/A"
-            ])
+            csv.writer(f).writerow([epoch + 1, f"{avg_train_loss:.6f}", f"{avg_val_cheap_loss:.6f}", f"{val_tacos_loss:.6f}" if val_tacos_loss is not None else "N/A"])
             
         checkpoint_data = {'epoch': epoch + 1, 'model_state_dict': net.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}
         torch.save(checkpoint_data, ckpt_dir / "last.pt")
@@ -298,7 +259,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
             best_val_loss = avg_val_cheap_loss
             torch.save(checkpoint_data, ckpt_dir / "best.pt")
             
-        print(f"Epoch {epoch+1} | Train Tot: {avg_train_total:.4f} (L1: {avg_train_l1:.4f}, Cos: {avg_train_cos:.4f}) | Val Cheap: {avg_val_cheap_loss:.4f}" + (f" | Val TACOs L1: {val_tacos_loss:.4f}" if val_tacos_loss is not None else ""))
+        print(f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} | Val Cheap Loss: {avg_val_cheap_loss:.4f}" + (f" | Val TACOs L1: {val_tacos_loss:.4f}" if val_tacos_loss is not None else ""))
     wandb.finish()
 
 # ==========================================
@@ -314,8 +275,6 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
     test_loader = DataLoader(ColdDiffAEDemorphDataset(test_embs, epoch_size=10_000, deterministic=True), batch_size=10_000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
-    # Instantiate with the same lambda_cos even during eval to ensure architecture matching if needed, 
-    # though it doesn't affect inference.
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
     net.load_state_dict(torch.load(ckpt_path, map_location=device)['model_state_dict'])
     net.eval()
@@ -375,8 +334,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    RUN_NAME = "diffae_pit_cos_reg"
+    RUN_NAME = "diffae_pit"
     
-    train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=50, lambda_cos=1.0)
+    train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=50)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=50, mode='one_shot')
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=50, mode='iterative')
