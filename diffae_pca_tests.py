@@ -1,164 +1,112 @@
-import sys
-import csv
-from pathlib import Path
+import argparse
 import numpy as np
-import torch
-from torchvision import transforms
-from torchvision.utils import save_image, make_grid
-from PIL import Image
+from pathlib import Path
 from sklearn.decomposition import PCA
+import joblib
+from datetime import datetime
 
-# Setup paths to your repositories
-PATH_TO_DIFF_MODEL = "../diffae"
-sys.path.append(PATH_TO_DIFF_MODEL)
-
-from templates import ffhq256_autoenc
-from experiment import LitModel
-
-def run_pca_attribute_analysis(base_path_str: str, out_dir_str: str = "pca_analysis_results"):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f"Executing PCA analysis pipeline on: {device}")
+def main():
+    parser = argparse.ArgumentParser(description="Perform PCA on DiffAE embeddings and generate a report.")
+    parser.add_argument("--data-dir", type=str, default="/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings", help="Directory containing the split embeddings and stats.")
+    parser.add_argument("--prefix", type=str, default="ffhq256_diffae_zsem", help="Base prefix of the saved .npy files.")
+    parser.add_argument("--variance-target", type=float, default=0.80, help="Target cumulative variance to explain (e.g., 0.80 for 80%).")
     
-    base_path = Path(base_path_str).resolve()
-    parent = base_path.parent
-    stem = base_path.stem.replace("_train", "").replace("_val", "").replace("_test", "")
+    args = parser.parse_args()
     
-    master_npy_path = parent / f"{stem}.npy"
-    metadata_csv_path = parent / f"{stem}_metadata.csv"
+    data_dir = Path(args.data_dir).resolve()
+    prefix = args.prefix
+    target_var = args.variance_target
     
-    out_dir = Path(out_dir_str).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # 1. Isolate the Raw Training Split (No Z-score normalization)
-    print("Loading raw master embeddings...")
-    raw_master_embeddings = np.load(master_npy_path).astype(np.float32)
-    total_samples = len(raw_master_embeddings)
+    # 1. Define file paths
+    train_path = data_dir / f"{prefix}_train.npy"
+    mean_path = data_dir / f"{prefix}_train_mean.npy"
+    std_path = data_dir / f"{prefix}_train_std.npy"
     
-    np.random.seed(42)
-    split_indices = np.arange(total_samples)
-    np.random.shuffle(split_indices)
-    train_end = int(total_samples * 0.8)
-    train_indices = split_indices[:train_end]
+    # 2. Load the data
+    print(f"Loading training data from: {train_path}")
+    X_train = np.load(train_path).astype(np.float32)
+    train_mean = np.load(mean_path).astype(np.float32)
+    train_std = np.load(std_path).astype(np.float32)
     
-    train_embeddings = raw_master_embeddings[train_indices]
-    print(f"Isolated training split size: {len(train_embeddings)} embeddings")
-
-    # 2. Perform PCA using Scikit-Learn
-    print("Fitting PCA model to raw training manifold...")
-    pca = PCA(n_components=3)
-    pca.fit(train_embeddings)
+    # 3. Apply Z-Score Normalization
+    print("Applying Z-score normalization...")
+    # Using the precomputed stats. The compute_splits.py already safeguards against std=0
+    X_train_norm = (X_train - train_mean) / train_std
     
-    # Transform to get the projection scores
-    train_scores = pca.transform(train_embeddings)
+    # 4. Perform PCA
+    print("Fitting PCA model...")
+    # We fit a full PCA first to analyze the full variance spectrum
+    pca_full = PCA()
+    pca_full.fit(X_train_norm)
     
-    # 3. Adequately store top components and mean for downstream scoring
-    components_path = out_dir / "pca_top3_components.npy"
-    mean_path = out_dir / "pca_mean.npy"
-    np.save(components_path, pca.components_)
-    np.save(mean_path, pca.mean_)
-    print(f"[SUCCESS] Saved projection references to:\n  -> {components_path}\n  -> {mean_path}")
-
-    # 4. Generate Text Summary Report
-    report_path = out_dir / "pca_statistical_report.txt"
-    var_ratios = pca.explained_variance_ratio_
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write("=========================================================================\n")
-        f.write("             EMBEDDING MANIFOLD PRINCIPAL COMPONENT REPORT\n")
-        f.write("=========================================================================\n\n")
-        f.write(f"Total Source Vectors Analyzed: {len(train_embeddings):,}\n")
-        f.write(f"Dimensionality Profile:        {train_embeddings.shape[1]}D -> 3D\n\n")
-        f.write("--- EXPLAINED VARIANCE METRICS ---\n")
-        for k in range(3):
-            f.write(f"  - Principal Component {k+1}: {var_ratios[k]*100:.4f}% of global variance\n")
-        f.write(f"Total Cumulative Variance Captured: {np.sum(var_ratios)*100:.4f}%\n")
-    print(f"[SUCCESS] Exported statistical text summary log -> {report_path}")
-
-    # 5. Parse Path Mappings from Metadata CSV Log
-    idx_to_path = {}
-    with open(metadata_csv_path, mode='r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            idx_to_path[int(row['embedding_index'])] = row['image_path']
-
-    # 6. Load Pretrained Diff-AE Network
-    print("Loading pretrained Diffusion Autoencoder model checkpoints...")
-    conf = ffhq256_autoenc()
-    model = LitModel(conf)
-    state = torch.load(f'{conf.name}/last.ckpt', map_location='cpu')
-    model.load_state_dict(state['state_dict'], strict=False)
-    model.ema_model.eval()
-    model.ema_model.to(device)
-
-    # Image preprocessing pipeline
-    transform = transforms.Compose([
-        transforms.Resize(conf.img_size),
-        transforms.CenterCrop(conf.img_size),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    # Calculate cumulative explained variance
+    cumulative_variance = np.cumsum(pca_full.explained_variance_ratio_)
+    
+    # Find the number of components needed to reach the target variance
+    # np.argmax returns the first index where the condition is true
+    n_components = np.argmax(cumulative_variance >= target_var) + 1
+    actual_variance_explained = cumulative_variance[n_components - 1]
+    
+    print(f"Target variance ({target_var*100:.1f}%) reached at {n_components} components.")
+    
+    # 5. Transform the data using the optimal components
+    # We slice the already fitted components to save computation time
+    pca_optimal = PCA(n_components=n_components)
+    pca_optimal.components_ = pca_full.components_[:n_components]
+    pca_optimal.explained_variance_ = pca_full.explained_variance_[:n_components]
+    pca_optimal.explained_variance_ratio_ = pca_full.explained_variance_ratio_[:n_components]
+    pca_optimal.mean_ = pca_full.mean_
+    
+    print("Transforming training embeddings...")
+    X_train_pca = pca_optimal.transform(X_train_norm)
+    
+    # 6. Save outputs
+    report_path = data_dir / f"{prefix}_pca_report.txt"
+    pca_model_path = data_dir / f"{prefix}_pca_model.joblib"
+    pca_embs_path = data_dir / f"{prefix}_train_pca_{n_components}comp.npy"
+    
+    np.save(pca_embs_path, X_train_pca)
+    joblib.dump(pca_optimal, pca_model_path)
+    
+    # 7. Generate Text Report
+    report_lines = [
+        "===========================================================",
+        "               PCA ANALYSIS REPORT",
+        "===========================================================",
+        f"Date Generated    : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Dataset Prefix    : {prefix}",
+        f"Original Shape    : {X_train.shape} (Samples, Features)",
+        "Normalization     : Z-Score (using training mean and std)",
+        "-----------------------------------------------------------",
+        f"Target Variance   : {target_var * 100:.2f}%",
+        f"Components Kept   : {n_components} out of {X_train.shape[1]}",
+        f"Actual Variance   : {actual_variance_explained * 100:.4f}%",
+        f"New Data Shape    : {X_train_pca.shape}",
+        "-----------------------------------------------------------",
+        "Top 10 Components by Variance Explained:",
+    ]
+    
+    for i in range(min(10, n_components)):
+        var = pca_full.explained_variance_ratio_[i] * 100
+        cum_var = cumulative_variance[i] * 100
+        report_lines.append(f"  - PC{i+1:<3}: {var:05.2f}% (Cumulative: {cum_var:05.2f}%)")
+        
+    report_lines.extend([
+        "-----------------------------------------------------------",
+        "Saved Artifacts:",
+        f"  - Reduced Embs  : {pca_embs_path.name}",
+        f"  - PCA Model     : {pca_model_path.name}",
+        "==========================================================="
     ])
-
-    def load_image_tensor(path):
-        return transform(Image.open(path).convert('RGB')).unsqueeze(0).to(device)
-
-    # 7. Perform Vector Traversal and Generate Visual Grids
-    print("Beginning latent traversal along Principal Axes...")
-    for k in range(3):
-        pc_vector = pca.components_[k]
-        scores_k = train_scores[:, k]
-        sigma_k = np.std(scores_k)
+    
+    report_content = "\n".join(report_lines)
+    
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(report_content)
         
-        # Identify extreme outlier index points within the training split
-        local_min_idx = np.argsort(scores_k)[int(0.10 * len(scores_k))]
-        local_max_idx = np.argsort(scores_k)[int(0.90 * len(scores_k))]
-        
-        # Map back to absolute indices of the master dataset
-        master_min_idx = train_indices[local_min_idx]
-        master_max_idx = train_indices[local_max_idx]
-        
-        # Pull original base raw vectors
-        z_low_base = train_embeddings[local_min_idx]
-        z_high_base = train_embeddings[local_max_idx]
-        
-        # Define a safe jump distance step size (2.5 standard deviations)
-        jump_step = 2.5 * sigma_k
-        
-        grid_tensors = []
-        
-        with torch.no_grad():
-            # --- TOP ROW: LOW PRESENCE EMBEDDING -> INCREASING PC INFLUENCE ---
-            img_low = load_image_tensor(idx_to_path[master_min_idx])
-            # Pass original raw vector directly as a tensor
-            z_low_tensor = torch.tensor(z_low_base, dtype=torch.float32, device=device).unsqueeze(0)
-            xT_low = model.encode_stochastic(img_low, z_low_tensor, T=250)
-            
-            # Generate points: [Base Low, Jump 1, Jump 2]
-            for step in [0, 1, 2]:
-                z_manip = z_low_base + (step * jump_step) * pc_vector
-                z_manip_tensor = torch.tensor(z_manip, dtype=torch.float32, device=device).unsqueeze(0)
-                pred_img = model.render(xT_low, z_manip_tensor, T=20)
-                grid_tensors.append(pred_img.squeeze(0).cpu())
-                
-            # --- BOTTOM ROW: HIGH PRESENCE EMBEDDING -> DECREASING PC INFLUENCE ---
-            img_high = load_image_tensor(idx_to_path[master_max_idx])
-            z_high_tensor = torch.tensor(z_high_base, dtype=torch.float32, device=device).unsqueeze(0)
-            xT_high = model.encode_stochastic(img_high, z_high_tensor, T=250)
-            
-            # Generate points: [Base High, Jump 1, Jump 2]
-            for step in [0, 1, 2]:
-                z_manip = z_high_base - (step * jump_step) * pc_vector
-                z_manip_tensor = torch.tensor(z_manip, dtype=torch.float32, device=device).unsqueeze(0)
-                pred_img = model.render(xT_high, z_manip_tensor, T=20)
-                grid_tensors.append(pred_img.squeeze(0).cpu())
-                
-        # Export compiled visual grid file layouts (2 rows by 3 columns)
-        grid_path = out_dir / f"principal_component_{k+1}_attribute_grid.png"
-        grid_tensors = [torch.clamp(img, 0.0, 1.0) for img in grid_tensors]
-        grid_mesh = make_grid(grid_tensors, nrow=3, normalize=False)
-        save_image(grid_mesh, grid_path)
-        print(f" -> Exported Visual Grid for PC {k+1} to: {grid_path}")
-
-    print("\nProcessing complete. Review your exported text logs and structural transformation grids.")
+    print(f"\n[SUCCESS] PCA Pipeline complete.")
+    print(f"Report saved to: {report_path}")
+    print(report_content)
 
 if __name__ == "__main__":
-    TARGET_DATASET = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    run_pca_attribute_analysis(base_path_str=TARGET_DATASET)
+    main()
