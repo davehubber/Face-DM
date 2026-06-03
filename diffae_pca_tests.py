@@ -151,7 +151,8 @@ def main():
             for z_sem in seq_zsem_high:
                 z_tensor = torch.tensor(z_sem, dtype=torch.float32, device=device).unsqueeze(0)
                 out = model.render(xT_high, z_tensor, T=20)
-                grid_images.append(out.squeeze(0))
+                # MOVE TO CPU IMMEDIATELY
+                grid_images.append(out.squeeze(0).cpu()) 
 
             # Process LOW sequence
             img_low = load_img_tensor(path_low, conf.img_size).to(device)
@@ -161,12 +162,12 @@ def main():
             for z_sem in seq_zsem_low:
                 z_tensor = torch.tensor(z_sem, dtype=torch.float32, device=device).unsqueeze(0)
                 out = model.render(xT_low, z_tensor, T=20)
-                grid_images.append(out.squeeze(0))
+                # MOVE TO CPU IMMEDIATELY
+                grid_images.append(out.squeeze(0).cpu())
 
-        # Save Visual Grid
+        # Save Visual Grid - FIX APPLIED HERE
         grid_out_path = data_dir / f"PC{pc_idx+1}_traversal_grid.png"
-        # The outputs are bounded [-1, 1], normalize=True remaps them to [0, 1] for saving
-        save_image(grid_images, grid_out_path, nrow=3, normalize=True, value_range=(-1, 1))
+        save_image(grid_images, grid_out_path, nrow=3, normalize=False)
         print(f"Saved PC{pc_idx+1} traversal grid to: {grid_out_path.name}")
 
     # Generate truncated report
