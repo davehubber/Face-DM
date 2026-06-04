@@ -1,0 +1,76 @@
+Loading PCA model for conditioning: ffhq256_diffae_zsem_pca_model_151comp.joblib
+Generating 1000000 unique, order-agnostic training pairs...
+Dataset pairs generated successfully.
+Generating 10000 unique, order-agnostic training pairs...
+Dataset pairs generated successfully.
+Epoch 1 | Train Loss: 1.3873 | Val Loss: 1.2262
+Epoch 2 | Train Loss: 1.1676 | Val Loss: 1.1346
+Epoch 3 | Train Loss: 1.1187 | Val Loss: 1.1111
+Epoch 4 | Train Loss: 1.1020 | Val Loss: 1.1021
+Epoch 5 | Train Loss: 1.0911 | Val Loss: 1.0934
+Epoch 6 | Train Loss: 1.0797 | Val Loss: 1.0839
+Epoch 7 | Train Loss: 1.0699 | Val Loss: 1.0792
+Epoch 8 | Train Loss: 1.0591 | Val Loss: 1.0757
+Epoch 9 | Train Loss: 1.0492 | Val Loss: 1.0710
+Epoch 10 | Train Loss: 1.0394 | Val Loss: 1.0680
+Epoch 11 | Train Loss: 1.0284 | Val Loss: 1.0663
+Epoch 12 | Train Loss: 1.0181 | Val Loss: 1.0669
+Epoch 13 | Train Loss: 1.0080 | Val Loss: 1.0662
+Epoch 14 | Train Loss: 0.9990 | Val Loss: 1.0645
+Epoch 15 | Train Loss: 0.9888 | Val Loss: 1.0654
+Epoch 16 | Train Loss: 0.9794 | Val Loss: 1.0671
+Epoch 17 | Train Loss: 0.9704 | Val Loss: 1.0676
+Epoch 18 | Train Loss: 0.9619 | Val Loss: 1.0691
+Epoch 19 | Train Loss: 0.9535 | Val Loss: 1.0698
+Epoch 20 | Train Loss: 0.9457 | Val Loss: 1.0713
+Epoch 21 | Train Loss: 0.9378 | Val Loss: 1.0729
+Epoch 22 | Train Loss: 0.9298 | Val Loss: 1.0757
+Epoch 23 | Train Loss: 0.9229 | Val Loss: 1.0774
+Epoch 24 | Train Loss: 0.9155 | Val Loss: 1.0784
+Epoch 25 | Train Loss: 0.9093 | Val Loss: 1.0806
+Epoch 26 | Train Loss: 0.9023 | Val Loss: 1.0825
+Epoch 27 | Train Loss: 0.8967 | Val Loss: 1.0850
+Epoch 28 | Train Loss: 0.8899 | Val Loss: 1.0872
+Epoch 29 | Train Loss: 0.8841 | Val Loss: 1.0891
+Epoch 30 | Train Loss: 0.8792 | Val Loss: 1.0902
+Epoch 31 | Train Loss: 0.8732 | Val Loss: 1.0926
+Epoch 32 | Train Loss: 0.8681 | Val Loss: 1.0951
+Epoch 33 | Train Loss: 0.8627 | Val Loss: 1.0969
+Epoch 34 | Train Loss: 0.8580 | Val Loss: 1.0971
+Epoch 35 | Train Loss: 0.8530 | Val Loss: 1.1000
+Epoch 36 | Train Loss: 0.8486 | Val Loss: 1.1026
+Epoch 37 | Train Loss: 0.8439 | Val Loss: 1.1036
+Epoch 38 | Train Loss: 0.8395 | Val Loss: 1.1054
+Epoch 39 | Train Loss: 0.8349 | Val Loss: 1.1069
+Epoch 40 | Train Loss: 0.8314 | Val Loss: 1.1083
+Epoch 41 | Train Loss: 0.8277 | Val Loss: 1.1106
+Epoch 42 | Train Loss: 0.8232 | Val Loss: 1.1122
+Epoch 43 | Train Loss: 0.8200 | Val Loss: 1.1126
+Epoch 44 | Train Loss: 0.8157 | Val Loss: 1.1145
+Epoch 45 | Train Loss: 0.8124 | Val Loss: 1.1163
+Epoch 46 | Train Loss: 0.8086 | Val Loss: 1.1179
+Epoch 47 | Train Loss: 0.8053 | Val Loss: 1.1194
+Epoch 48 | Train Loss: 0.8016 | Val Loss: 1.1210
+Epoch 49 | Train Loss: 0.7990 | Val Loss: 1.1224
+Epoch 50 | Train Loss: 0.7954 | Val Loss: 1.1246
+Loading PCA model for conditioning: ffhq256_diffae_zsem_pca_model_151comp.joblib
+Generating 10000 unique, order-agnostic training pairs...
+Dataset pairs generated successfully.
+
+--- Evaluation Results: DIRECT PREDICTION ---
+Run Name: diffae_oneshot_pca_cond
+----------------------------------------
+Base Reference Angular Properties:
+  - CosSim(True Baseline z1, True Baseline z2): 0.000230
+
+[Embedding 1 Performance Alignment]
+  - L1 Distance:                       0.532151
+  - Cosine Similarity to Target:       0.741591
+
+[Embedding 2 Performance Alignment]
+  - L1 Distance:                       0.532140
+  - Cosine Similarity to Target:       0.740754
+
+Generated Outputs Inter-Relationship:
+  - CosSim(Aligned Pred z1, Aligned Pred z2):  0.685691
+
