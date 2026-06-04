@@ -21,7 +21,6 @@ class DirectDemorphDataset(Dataset):
         print(f"Generating {epoch_size} unique, order-agnostic training pairs...")
         pair_set = set()
         
-        # Fast rejection sampling to get strictly unique pairs where i < j
         while len(pair_set) < epoch_size:
             needed = epoch_size - len(pair_set)
             i = np.random.randint(0, self.num_samples, size=needed * 2)
@@ -80,12 +79,9 @@ class BaselineBlock(nn.Module):
 class BaselineDemorphNet(nn.Module):
     def __init__(self, x_dim=512, hidden_dim=2048, num_layers=10):
         super().__init__()
-        
         self.blocks = nn.ModuleList()
-        # First layer takes 512, outputs hidden_dim
         self.blocks.append(BaselineBlock(x_dim, hidden_dim))
         
-        # Subsequent layers concatenate the original 512 input to prevent signal decay
         for _ in range(num_layers - 1):
             self.blocks.append(BaselineBlock(hidden_dim + x_dim, hidden_dim))
             
@@ -104,17 +100,32 @@ class BaselineDemorphNet(nn.Module):
         return pred_z1, pred_z2
 
 # ==========================================
-# 3. Loss & Training Mechanics
+# 3. Penalized Loss & Training Mechanics
 # ==========================================
-def compute_permutation_invariant_loss(pred_z1, pred_z2, target_z1, target_z2):
+def compute_penalized_loss(pred_z1, pred_z2, target_z1, target_z2, c, lambda_rep=0.5, lambda_cyc=1.0, margin=0.1):
+    # 1. Base Permutation Invariant L1 Loss
     loss_a = F.l1_loss(pred_z1, target_z1, reduction='none').mean(dim=-1) + \
              F.l1_loss(pred_z2, target_z2, reduction='none').mean(dim=-1)
              
     loss_b = F.l1_loss(pred_z1, target_z2, reduction='none').mean(dim=-1) + \
              F.l1_loss(pred_z2, target_z1, reduction='none').mean(dim=-1)
              
-    loss = torch.min(loss_a, loss_b)
-    return loss.mean()
+    loss_base = torch.min(loss_a, loss_b).mean()
+    
+    # 2. Inter-Latent Repulsion (Cosine Similarity Penalty)
+    # Penalize if the cosine similarity between predictions is greater than the margin
+    cos_sim = F.cosine_similarity(pred_z1, pred_z2, dim=-1)
+    loss_repulsion = F.relu(cos_sim - margin).mean()
+    
+    # 3. Cycle Consistency (Anchor Penalty)
+    # Ensure the midpoint of predictions strictly equals the input morph 'c'
+    pred_c = (pred_z1 + pred_z2) / 2.0
+    loss_cycle = F.l1_loss(pred_c, c)
+    
+    # Total Loss
+    total_loss = loss_base + (lambda_rep * loss_repulsion) + (lambda_cyc * loss_cycle)
+    
+    return total_loss, loss_base, loss_repulsion, loss_cycle
 
 def train_baseline_demorph(diffae_path_str: str, run_name: str):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -123,32 +134,37 @@ def train_baseline_demorph(diffae_path_str: str, run_name: str):
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = exp_dir / "metrics.csv"
     
-    # 1. Load Data
+    # Hyperparameters for new losses
+    LAMBDA_REPULSION = 0.5
+    LAMBDA_CYCLE = 1.0
+    REPULSION_MARGIN = 0.1
+    
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     val_embs = load_split_and_normalize(diffae_path_str, "val")
     
     train_loader = DataLoader(DirectDemorphDataset(train_embs, epoch_size=1_000_000), batch_size=20_000, shuffle=True, num_workers=8)
     val_loader = DataLoader(DirectDemorphDataset(val_embs, epoch_size=10_000), batch_size=10_000, shuffle=False, num_workers=4)
 
-    # 2. Init Baseline Network
     net = BaselineDemorphNet().to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
         "learning_rate": 1e-4, "batch_size": 20_000, "num_layers": 10, 
-        "hidden_dim": 2048, "architecture": "direct_predict_baseline"
+        "hidden_dim": 2048, "architecture": "direct_predict_penalized",
+        "lambda_repulsion": LAMBDA_REPULSION, "lambda_cycle": LAMBDA_CYCLE,
+        "repulsion_margin": REPULSION_MARGIN
     })
 
     if not metrics_path.exists():
         with open(metrics_path, "w", newline="") as f:
-            csv.writer(f).writerow(["Epoch", "Train_Loss", "Val_Loss"])
+            csv.writer(f).writerow(["Epoch", "Total_Loss", "Base_L1", "Repulsion_Loss", "Cycle_Loss", "Val_Loss"])
 
     epochs = 50
     best_val_loss = float("inf")
     
     for epoch in range(epochs):
         net.train()
-        train_loss = 0.0
+        epoch_total, epoch_base, epoch_rep, epoch_cyc = 0.0, 0.0, 0.0, 0.0
         
         for batch_z1, batch_z2 in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
@@ -156,13 +172,25 @@ def train_baseline_demorph(diffae_path_str: str, run_name: str):
             
             c = (batch_z1 + batch_z2) / 2.0
             pred_z1, pred_z2 = net(c)
-            loss = compute_permutation_invariant_loss(pred_z1, pred_z2, batch_z1, batch_z2)
+            
+            loss, l_base, l_rep, l_cyc = compute_penalized_loss(
+                pred_z1, pred_z2, batch_z1, batch_z2, c, 
+                lambda_rep=LAMBDA_REPULSION, lambda_cyc=LAMBDA_CYCLE, margin=REPULSION_MARGIN
+            )
             
             loss.backward()
             optimizer.step()
-            train_loss += loss.item()
             
-        avg_train_loss = train_loss / len(train_loader)
+            epoch_total += loss.item()
+            epoch_base += l_base.item()
+            epoch_rep += l_rep.item()
+            epoch_cyc += l_cyc.item()
+            
+        num_batches = len(train_loader)
+        avg_total = epoch_total / num_batches
+        avg_base = epoch_base / num_batches
+        avg_rep = epoch_rep / num_batches
+        avg_cyc = epoch_cyc / num_batches
         
         # Validation Pass
         net.eval()
@@ -173,13 +201,22 @@ def train_baseline_demorph(diffae_path_str: str, run_name: str):
                 c = (batch_z1 + batch_z2) / 2.0
                 
                 pred_z1, pred_z2 = net(c)
-                val_loss += compute_permutation_invariant_loss(pred_z1, pred_z2, batch_z1, batch_z2).item()
+                v_loss, _, _, _ = compute_penalized_loss(
+                    pred_z1, pred_z2, batch_z1, batch_z2, c, 
+                    lambda_rep=LAMBDA_REPULSION, lambda_cyc=LAMBDA_CYCLE, margin=REPULSION_MARGIN
+                )
+                val_loss += v_loss.item()
                 
         avg_val_loss = val_loss / len(val_loader)
             
-        wandb.log({"epoch": epoch + 1, "train_loss": avg_train_loss, "val_loss": avg_val_loss})
+        wandb.log({
+            "epoch": epoch + 1, "train_total_loss": avg_total, 
+            "train_base_L1": avg_base, "train_repulsion": avg_rep, 
+            "train_cycle": avg_cyc, "val_total_loss": avg_val_loss
+        })
+        
         with open(metrics_path, "a", newline="") as f:
-            csv.writer(f).writerow([epoch + 1, f"{avg_train_loss:.6f}", f"{avg_val_loss:.6f}"])
+            csv.writer(f).writerow([epoch + 1, f"{avg_total:.6f}", f"{avg_base:.6f}", f"{avg_rep:.6f}", f"{avg_cyc:.6f}", f"{avg_val_loss:.6f}"])
             
         checkpoint_data = {'epoch': epoch + 1, 'model_state_dict': net.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}
         torch.save(checkpoint_data, ckpt_dir / "last.pt")
@@ -188,7 +225,7 @@ def train_baseline_demorph(diffae_path_str: str, run_name: str):
             best_val_loss = avg_val_loss
             torch.save(checkpoint_data, ckpt_dir / "best.pt")
             
-        print(f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+        print(f"Epoch {epoch+1} | Total: {avg_total:.4f} (Base: {avg_base:.4f} | Rep: {avg_rep:.4f} | Cyc: {avg_cyc:.4f}) | Val: {avg_val_loss:.4f}")
         
     wandb.finish()
 
@@ -254,7 +291,7 @@ def evaluate_baseline_demorph(diffae_path_str: str, run_name: str):
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    RUN_NAME = "diffae_oneshot_baseline"
+    RUN_NAME = "diffae_oneshot_penalized"
     
     train_baseline_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME)
     evaluate_baseline_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME)
