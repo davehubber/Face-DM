@@ -233,25 +233,41 @@ def train(args):
         ema_model.restore(unet.parameters())
         accelerator.wait_for_everyone()
 
-
 def calculate_metrics(bright_img, dark_img, pred_bright, pred_dark, bright_tensor, dark_tensor, pred_bright_tensor, pred_dark_tensor, lpips_model):
+    def prep_lpips(tensor):
+        return (tensor.unsqueeze(0).float() - 127.5) / 127.5
+
+    with torch.no_grad():
+        # Direct LPIPS mappings
+        l_bb = lpips_model(prep_lpips(pred_bright_tensor), prep_lpips(bright_tensor)).item()
+        l_dd = lpips_model(prep_lpips(pred_dark_tensor), prep_lpips(dark_tensor)).item()
+        
+        # Crossed LPIPS mappings
+        l_bd = lpips_model(prep_lpips(pred_bright_tensor), prep_lpips(dark_tensor)).item()
+        l_db = lpips_model(prep_lpips(pred_dark_tensor), prep_lpips(bright_tensor)).item()
+
+    # Alignment Check: If the crossed mapping has a lower perceptual distance sum, a swap occurred
+    is_swapped = (l_bd + l_db) < (l_bb + l_dd)
+
+    if is_swapped:
+        # Swap the numpy arrays to align identities before calculating standard metrics
+        pred_bright, pred_dark = pred_dark, pred_bright
+        
+        # The final LPIPS values are the crossed ones
+        final_lpips_bright = l_db  # Pred Dark is aligned with GT Bright
+        final_lpips_dark = l_bd    # Pred Bright is aligned with GT Dark
+    else:
+        final_lpips_bright = l_bb
+        final_lpips_dark = l_dd
+
+    # Calculate SSIM and PSNR using the correctly aligned numpy arrays
     ssim_bright = structural_similarity(bright_img, pred_bright, data_range=255, channel_axis=-1)
     ssim_dark = structural_similarity(dark_img, pred_dark, data_range=255, channel_axis=-1)
     
     psnr_bright = peak_signal_noise_ratio(bright_img, pred_bright, data_range=255)
     psnr_dark = peak_signal_noise_ratio(dark_img, pred_dark, data_range=255)
     
-    lpips_bright = lpips_model(
-        (bright_tensor.unsqueeze(0).float() - 127.5) / 127.5,
-        (pred_bright_tensor.unsqueeze(0).float() - 127.5) / 127.5,
-    ).item()
-    
-    lpips_dark = lpips_model(
-        (dark_tensor.unsqueeze(0).float() - 127.5) / 127.5,
-        (pred_dark_tensor.unsqueeze(0).float() - 127.5) / 127.5,
-    ).item()
-    
-    return ssim_bright, ssim_dark, psnr_bright, psnr_dark, lpips_bright, lpips_dark
+    return ssim_bright, ssim_dark, psnr_bright, psnr_dark, final_lpips_bright, final_lpips_dark, is_swapped
 
 
 def eval(args):
@@ -279,6 +295,8 @@ def eval(args):
 
     grid_predicted_bright, grid_predicted_dark, grid_bright, grid_dark, grid_mixed = [], [], [], [], []
     collected_for_grid = 0
+    total_evaluated = 0
+    total_swaps = 0
 
     for bright_images, dark_images in val_dataloader:
         mixed_images = bright_images * (1.0 - args.alpha_init) + dark_images * args.alpha_init
@@ -304,7 +322,7 @@ def eval(args):
 
         with torch.no_grad():
             for k in range(len(bright_np)):
-                sb, sd, pb, pd, lb, ld = calculate_metrics(
+                sb, sd, pb, pd, lb, ld, is_swapped = calculate_metrics(
                     bright_np[k],
                     dark_np[k],
                     predicted_bright_np[k],
@@ -316,12 +334,16 @@ def eval(args):
                     lpips_model,
                 )
 
+                if is_swapped:
+                    total_swaps += 1
+
                 ssim_bright.append(sb)
                 ssim_dark.append(sd)
                 psnr_bright.append(pb)
                 psnr_dark.append(pd)
                 lpips_bright.append(lb)
                 lpips_dark.append(ld)
+                total_evaluated += 1
 
     if collected_for_grid > 0:
         save_images(
@@ -335,6 +357,8 @@ def eval(args):
 
     metrics_report = (
         f"--- Iterative Evaluation Metrics (Entire Validation Set) ---\n"
+        f"Total Evaluated: {total_evaluated}\n"
+        f"LPIPS Alignment Swap Rate: {(total_swaps / max(total_evaluated, 1)) * 100:.2f}%\n"
         f"SSIM Bright: {np.average(ssim_bright):.4f}\n"
         f"SSIM Dark: {np.average(ssim_dark):.4f}\n"
         f"PSNR Bright: {np.average(psnr_bright):.4f}\n"
@@ -372,6 +396,8 @@ def one_shot_eval(args):
 
     grid_predicted_bright, grid_predicted_dark, grid_bright, grid_dark, grid_mixed = [], [], [], [], []
     collected_for_grid = 0
+    total_evaluated = 0
+    total_swaps = 0
 
     for bright_images, dark_images in val_dataloader:
         n = len(bright_images)
@@ -407,7 +433,7 @@ def one_shot_eval(args):
 
         with torch.no_grad():
             for k in range(n):
-                sb, sd, pb, pd, lb, ld = calculate_metrics(
+                sb, sd, pb, pd, lb, ld, is_swapped = calculate_metrics(
                     bright_np[k],
                     dark_np[k],
                     predicted_bright_np[k],
@@ -419,12 +445,16 @@ def one_shot_eval(args):
                     lpips_model,
                 )
 
+                if is_swapped:
+                    total_swaps += 1
+
                 ssim_bright.append(sb)
                 ssim_dark.append(sd)
                 psnr_bright.append(pb)
                 psnr_dark.append(pd)
                 lpips_bright.append(lb)
                 lpips_dark.append(ld)
+                total_evaluated += 1
 
     if collected_for_grid > 0:
         save_images(
@@ -438,6 +468,8 @@ def one_shot_eval(args):
 
     metrics_report = (
         f"--- One-Shot Evaluation Metrics (Entire Validation Set) ---\n"
+        f"Total Evaluated: {total_evaluated}\n"
+        f"LPIPS Alignment Swap Rate: {(total_swaps / max(total_evaluated, 1)) * 100:.2f}%\n"
         f"SSIM Bright: {np.average(ssim_bright):.4f}\n"
         f"SSIM Dark: {np.average(ssim_dark):.4f}\n"
         f"PSNR Bright: {np.average(psnr_bright):.4f}\n"
@@ -742,10 +774,10 @@ def launch():
     args.image_size = (args.image_size, args.image_size)
 
     #train(args)
-    #eval(args)
-    #one_shot_eval(args)
+    eval(args)
+    one_shot_eval(args)
     #visualize_sampling_path(args)
-    evaluate_full_validation_swaps(args)
+    #evaluate_full_validation_swaps(args)
 
 
 if __name__ == "__main__":
