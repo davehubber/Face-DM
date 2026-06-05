@@ -570,12 +570,13 @@ def evaluate_full_validation_swaps(args):
     mse_only_count = 0
     lpips_only_count = 0
 
-    # List to store tuples of (severity_score, dict_of_data)
     detected_swaps = []
+    mismatch_swaps = []
 
     alpha_init = args.alpha_init
 
     for bright_images, dark_images in val_dataloader:
+        # Move batches to GPU immediately
         bright_images = bright_images.to(device)
         dark_images = dark_images.to(device)
         
@@ -599,12 +600,10 @@ def evaluate_full_validation_swaps(args):
             p_d = pred_dark_uint8[i]
             m_img = mixed_uint8[i]
 
-            # Calculate MSE
             mse_pb_gtb = F.mse_loss(p_b.float(), b_gt.float()).item()
             mse_pb_gtd = F.mse_loss(p_b.float(), d_gt.float()).item()
             mse_swapped = mse_pb_gtd < mse_pb_gtb
 
-            # Calculate LPIPS
             def prep_lpips(tensor):
                 return (tensor.unsqueeze(0).float() - 127.5) / 127.5
 
@@ -613,6 +612,8 @@ def evaluate_full_validation_swaps(args):
                 lpips_pb_gtd = lpips_model(prep_lpips(p_b), prep_lpips(d_gt)).item()
             
             lpips_swapped = lpips_pb_gtd < lpips_pb_gtb
+
+            is_mismatch = (mse_swapped != lpips_swapped)
 
             if mse_swapped or lpips_swapped:
                 total_swaps += 1
@@ -627,26 +628,28 @@ def evaluate_full_validation_swaps(args):
                 elif lpips_swapped and not mse_swapped:
                     lpips_only_count += 1
 
-                # Severity: How much closer is the prediction to the wrong target?
-                # Higher positive number = more severe failure
                 severity = mse_pb_gtb - mse_pb_gtd
-
-                detected_swaps.append({
+                
+                swap_data = {
                     "severity": severity,
                     "mse_swapped": mse_swapped,
                     "lpips_swapped": lpips_swapped,
                     "mse_gap": severity,
                     "lpips_gap": lpips_pb_gtb - lpips_pb_gtd,
-                    "tensors": (m_img, b_gt, d_gt, p_b, p_d)
-                })
+                    "tensors": (m_img, b_gt, p_b, d_gt, p_d)
+                }
+
+                detected_swaps.append(swap_data)
+                
+                if is_mismatch and len(mismatch_swaps) < 5:
+                    mismatch_swaps.append(swap_data)
 
     # Sort swaps by severity (descending)
     detected_swaps.sort(key=lambda x: x["severity"], reverse=True)
     top_10_swaps = detected_swaps[:10]
 
-    # --- Write the Report ---
+    # --- Write the Text Report ---
     report_path = os.path.join(base_dir, "results", "identity_swap_report.txt")
-    
     always_overlap = (mse_only_count == 0 and lpips_only_count == 0)
     overlap_status = "YES" if always_overlap else "NO"
 
@@ -664,53 +667,71 @@ def evaluate_full_validation_swaps(args):
         f"Perfect Overlaps (Both triggered): {overlap_count}\n"
         f"Discrepancy: MSE triggered, LPIPS did not: {mse_only_count}\n"
         f"Discrepancy: LPIPS triggered, MSE did not: {lpips_only_count}\n\n"
-        f"--- Top 10 Most Severe Swaps ---\n"
-        f"(Severity is defined by the MSE Gap: how much closer the prediction is to the WRONG target)\n\n"
     )
-
-    # --- Save Top 10 Images and append to report ---
-    for rank, swap in enumerate(top_10_swaps, start=1):
-        m_img, b_gt, d_gt, p_b, p_d = swap["tensors"]
-        
-        overlap_str = "OVERLAP" if (swap['mse_swapped'] and swap['lpips_swapped']) else ("MSE ONLY" if swap['mse_swapped'] else "LPIPS ONLY")
-        
-        report += (
-            f"Rank {rank} | Severity (MSE Gap): {swap['mse_gap']:.2f} | Metric: {overlap_str}\n"
-        )
-
-        # Build a clearly labeled 5-column grid for this specific severe swap
-        # Layout: Mixed | GT Bright | Pred Bright (Wrong) | GT Dark | Pred Dark (Wrong)
-        grid_tensor = torch.stack([m_img, b_gt, p_b, d_gt, p_d])
-        grid = torchvision.utils.make_grid(grid_tensor, nrow=5, padding=4, pad_value=255)
-        
-        # Convert to PIL to add quick headers
-        ndarr = grid.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-        img_pil = Image.fromarray(ndarr)
-        
-        # Add extra space at the top for labels
-        width, height = img_pil.size
-        header_height = 20
-        final_img = Image.new("RGB", (width, height + header_height), "white")
-        final_img.paste(img_pil, (0, header_height))
-        
-        draw = ImageDraw.Draw(final_img)
-        # Calculate approximate column centers
-        col_w = width // 5
-        labels = ["Mixed Input", "GT Bright", "Pred Bright", "GT Dark", "Pred Dark"]
-        
-        for idx, text in enumerate(labels):
-            # Simple text positioning
-            x = (idx * col_w) + (col_w // 4)
-            draw.text((x, 2), text, fill="black")
-            
-        save_file = os.path.join(save_dir, f"rank_{rank}_severity_{int(swap['severity'])}.jpg")
-        final_img.save(save_file)
 
     with open(report_path, "w") as f:
         f.write(report)
+
+    # --- Scientific Grid Builder Helper ---
+    def build_scientific_grid(swap_list, row_labels, title):
+        if not swap_list:
+            return None
         
+        all_tensors = [t for swap in swap_list for t in swap["tensors"]]
+        grid_tensor = torch.stack(all_tensors)
+        
+        # 5 columns: Mixed, GT Bright, Pred Bright, GT Dark, Pred Dark
+        grid = torchvision.utils.make_grid(grid_tensor, nrow=5, padding=4, pad_value=255)
+        ndarr = grid.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+        img_pil = Image.fromarray(ndarr)
+        
+        img_w, img_h = img_pil.size
+        row_h = img_h // len(swap_list)
+        col_w = img_w // 5
+        
+        top_margin = 30
+        left_margin = 160 # Room for descriptive row text
+        
+        final_img = Image.new("RGB", (img_w + left_margin, img_h + top_margin), "white")
+        final_img.paste(img_pil, (left_margin, top_margin))
+        
+        draw = ImageDraw.Draw(final_img)
+        
+        col_headers = ["Mixed Input", "GT Bright", "Predicted Bright", "GT Dark", "Predicted Dark"]
+        for idx, text in enumerate(col_headers):
+            # Center approximation
+            text_w = len(text) * 6 
+            x = left_margin + (idx * col_w) + (col_w // 2) - (text_w // 2)
+            draw.text((x, top_margin // 2 - 5), text, fill="black")
+            
+        for idx, text in enumerate(row_labels):
+            y = top_margin + (idx * row_h) + (row_h // 2) - 15
+            draw.multiline_text((10, y), text, fill="black", spacing=4)
+            
+        return final_img
+
+    # --- Generate Top 10 Severe Swaps Grid ---
+    if top_10_swaps:
+        top_10_labels = [
+            f"Rank {i+1}\nMSE Gap: {s['mse_gap']:.2f}\n" + 
+            ("OVERLAP" if (s['mse_swapped'] and s['lpips_swapped']) else 
+            ("MSE ONLY" if s['mse_swapped'] else "LPIPS ONLY"))
+            for i, s in enumerate(top_10_swaps)
+        ]
+        top_10_grid = build_scientific_grid(top_10_swaps, top_10_labels, "Top 10 Severe Swaps")
+        top_10_grid.save(os.path.join(save_dir, "top_10_severe_swaps.jpg"))
+
+    # --- Generate Mismatch Examples Grid ---
+    if mismatch_swaps:
+        mismatch_labels = [
+            f"Mismatch {i+1}\nMSE: {s['mse_swapped']}\nLPIPS: {s['lpips_swapped']}\nMSE Gap: {s['mse_gap']:.2f}\nLPIPS Gap: {s['lpips_gap']:.4f}"
+            for i, s in enumerate(mismatch_swaps)
+        ]
+        mismatch_grid = build_scientific_grid(mismatch_swaps, mismatch_labels, "Metric Mismatches")
+        mismatch_grid.save(os.path.join(save_dir, "metric_mismatch_examples.jpg"))
+
     print(f"Evaluation complete. Report saved to: {report_path}")
-    print(f"Top 10 severe swap images saved to: {save_dir}\n")
+    print(f"Consolidated scientific grids saved to: {save_dir}\n")
 
 
 def launch():
