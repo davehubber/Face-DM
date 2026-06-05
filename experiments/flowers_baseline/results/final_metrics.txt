@@ -1,0 +1,7 @@
+--- Iterative Evaluation Metrics (Entire Validation Set) ---
+SSIM Bright: 0.6583
+SSIM Dark: 0.5793
+PSNR Bright: 18.0090
+PSNR Dark: 17.9875
+LPIPS Bright: 0.1747
+LPIPS Dark: 0.2131
