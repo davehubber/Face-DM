@@ -1,0 +1,16 @@
+--- Evaluation Results: BASELINE (NO COND) ---
+Run Name: diffae_oneshot_penalized
+----------------------------------------
+Base Reference Angular Properties:
+  - CosSim(True Baseline z1, True Baseline z2): -0.000477
+
+[Embedding 1 Performance Alignment]
+  - L1 Distance:                       0.554803
+  - Cosine Similarity to Target:       0.618983
+
+[Embedding 2 Performance Alignment]
+  - L1 Distance:                       0.554826
+  - Cosine Similarity to Target:       0.617647
+
+Generated Outputs Inter-Relationship:
+  - CosSim(Aligned Pred z1, Aligned Pred z2):  0.078215
