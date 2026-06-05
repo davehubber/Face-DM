@@ -532,12 +532,16 @@ def visualize_sampling_path(args):
     print(f"Saved successfully to: {save_path}")
 
 
-def evaluate_identity_swaps(args):
+def evaluate_full_validation_swaps(args):
+    import torchvision
+    from PIL import Image, ImageDraw, ImageFont
+    
     accelerator = Accelerator()
     device = accelerator.device
     base_dir = os.path.join("experiments", args.run_name)
-    save_dir = os.path.join(base_dir, "samples", "swaps")
+    save_dir = os.path.join(base_dir, "samples", "severe_swaps")
     os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(os.path.join(base_dir, "results"), exist_ok=True)
 
     val_dataloader = get_data(args, "val")
     model = get_unet(args.image_size)
@@ -556,65 +560,157 @@ def evaluate_identity_swaps(args):
     lpips_model = lpips.LPIPS(net="alex").to(device)
     lpips_model.eval()
 
-    fixed_bright_images, fixed_dark_images = [], []
-    for bright_images, dark_images in val_dataloader:
-        fixed_bright_images.append(bright_images)
-        fixed_dark_images.append(dark_images)
-        if sum(batch.shape[0] for batch in fixed_bright_images) >= args.num_fixed_samples:
-            break
-            
-    fixed_bright_images = torch.cat(fixed_bright_images)[: args.num_fixed_samples].to(device)
-    fixed_dark_images = torch.cat(fixed_dark_images)[: args.num_fixed_samples].to(device)
+    print(f"\n--- Running Full Validation Swap Evaluation ---")
+    
+    total_evaluated = 0
+    total_swaps = 0
+    mse_swaps_count = 0
+    lpips_swaps_count = 0
+    overlap_count = 0
+    mse_only_count = 0
+    lpips_only_count = 0
 
-    # Linear mixing
+    # List to store tuples of (severity_score, dict_of_data)
+    detected_swaps = []
+
     alpha_init = args.alpha_init
-    mixed_images = fixed_bright_images * (1.0 - alpha_init) + fixed_dark_images * alpha_init
 
-    pred_bright_uint8, pred_dark_uint8 = diffusion.sample(model, mixed_images, alpha_init)
-
-    bright_gt_uint8 = to_uint8(fixed_bright_images)
-    dark_gt_uint8 = to_uint8(fixed_dark_images)
-    mixed_uint8 = to_uint8(mixed_images)
-
-    swaps_detected = 0
-    print(f"\n--- Evaluating Identity Swaps ({args.num_fixed_samples} Fixed Pairs) ---")
-
-    for i in range(args.num_fixed_samples):
-        b_gt = bright_gt_uint8[i]
-        d_gt = dark_gt_uint8[i]
-        p_b = pred_bright_uint8[i]
-        p_d = pred_dark_uint8[i]
-
-        mse_pb_gtb = F.mse_loss(p_b.float(), b_gt.float()).item()
-        mse_pb_gtd = F.mse_loss(p_b.float(), d_gt.float()).item()
-        mse_swapped = mse_pb_gtd < mse_pb_gtb
-
-        def prep_lpips(tensor):
-            return (tensor.unsqueeze(0).float() - 127.5) / 127.5
-
-        with torch.no_grad():
-            lpips_pb_gtb = lpips_model(prep_lpips(p_b), prep_lpips(b_gt)).item()
-            lpips_pb_gtd = lpips_model(prep_lpips(p_b), prep_lpips(d_gt)).item()
+    for bright_images, dark_images in val_dataloader:
+        bright_images = bright_images.to(device)
+        dark_images = dark_images.to(device)
         
-        lpips_swapped = lpips_pb_gtd < lpips_pb_gtb
-
-        print(f"\nPair {i+1}:")
-        print(f"  MSE   | vs Bright: {mse_pb_gtb:.2f} | vs Dark: {mse_pb_gtd:.2f} | Swapped? {mse_swapped}")
-        print(f"  LPIPS | vs Bright: {lpips_pb_gtb:.4f} | vs Dark: {lpips_pb_gtd:.4f} | Swapped? {lpips_swapped}")
+        n = len(bright_images)
+        total_evaluated += n
         
-        if mse_swapped or lpips_swapped:
-            swaps_detected += 1
-            overlap = "OVERLAP" if (mse_swapped and lpips_swapped) else "NO OVERLAP"
-            print(f"  -> Swap Detected! ({overlap}) Saving isolated grid...")
-            
-            grid_tensor = torch.stack([mixed_uint8[i], b_gt, d_gt, p_b, p_d])
-            grid = torchvision.utils.make_grid(grid_tensor, nrow=5, padding=2, pad_value=255)
-            ndarr = grid.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-            
-            save_path = os.path.join(save_dir, f"swap_detected_pair_{i+1}.jpg")
-            Image.fromarray(ndarr).save(save_path)
+        # Standard Linear Mixing
+        mixed_images = bright_images * (1.0 - alpha_init) + dark_images * alpha_init
+        
+        # Inference
+        pred_bright_uint8, pred_dark_uint8 = diffusion.sample(model, mixed_images, alpha_init)
 
-    print(f"\nTotal swaps detected: {swaps_detected} out of {args.num_fixed_samples}\n")
+        bright_gt_uint8 = to_uint8(bright_images)
+        dark_gt_uint8 = to_uint8(dark_images)
+        mixed_uint8 = to_uint8(mixed_images)
+
+        for i in range(n):
+            b_gt = bright_gt_uint8[i]
+            d_gt = dark_gt_uint8[i]
+            p_b = pred_bright_uint8[i]
+            p_d = pred_dark_uint8[i]
+            m_img = mixed_uint8[i]
+
+            # Calculate MSE
+            mse_pb_gtb = F.mse_loss(p_b.float(), b_gt.float()).item()
+            mse_pb_gtd = F.mse_loss(p_b.float(), d_gt.float()).item()
+            mse_swapped = mse_pb_gtd < mse_pb_gtb
+
+            # Calculate LPIPS
+            def prep_lpips(tensor):
+                return (tensor.unsqueeze(0).float() - 127.5) / 127.5
+
+            with torch.no_grad():
+                lpips_pb_gtb = lpips_model(prep_lpips(p_b), prep_lpips(b_gt)).item()
+                lpips_pb_gtd = lpips_model(prep_lpips(p_b), prep_lpips(d_gt)).item()
+            
+            lpips_swapped = lpips_pb_gtd < lpips_pb_gtb
+
+            if mse_swapped or lpips_swapped:
+                total_swaps += 1
+                
+                if mse_swapped: mse_swaps_count += 1
+                if lpips_swapped: lpips_swaps_count += 1
+                
+                if mse_swapped and lpips_swapped:
+                    overlap_count += 1
+                elif mse_swapped and not lpips_swapped:
+                    mse_only_count += 1
+                elif lpips_swapped and not mse_swapped:
+                    lpips_only_count += 1
+
+                # Severity: How much closer is the prediction to the wrong target?
+                # Higher positive number = more severe failure
+                severity = mse_pb_gtb - mse_pb_gtd
+
+                detected_swaps.append({
+                    "severity": severity,
+                    "mse_swapped": mse_swapped,
+                    "lpips_swapped": lpips_swapped,
+                    "mse_gap": severity,
+                    "lpips_gap": lpips_pb_gtb - lpips_pb_gtd,
+                    "tensors": (m_img, b_gt, d_gt, p_b, p_d)
+                })
+
+    # Sort swaps by severity (descending)
+    detected_swaps.sort(key=lambda x: x["severity"], reverse=True)
+    top_10_swaps = detected_swaps[:10]
+
+    # --- Write the Report ---
+    report_path = os.path.join(base_dir, "results", "identity_swap_report.txt")
+    
+    always_overlap = (mse_only_count == 0 and lpips_only_count == 0)
+    overlap_status = "YES" if always_overlap else "NO"
+
+    report = (
+        f"==================================================\n"
+        f"       FULL VALIDATION IDENTITY SWAP REPORT       \n"
+        f"==================================================\n\n"
+        f"Total Pairs Evaluated: {total_evaluated}\n"
+        f"Total Swaps Detected (Any Metric): {total_swaps} ({(total_swaps / total_evaluated) * 100:.2f}%)\n\n"
+        f"--- Metric Breakdown ---\n"
+        f"Swaps detected by MSE: {mse_swaps_count}\n"
+        f"Swaps detected by LPIPS: {lpips_swaps_count}\n\n"
+        f"--- Overlap Analysis ---\n"
+        f"Do LPIPS and MSE overlap every time? {overlap_status}\n"
+        f"Perfect Overlaps (Both triggered): {overlap_count}\n"
+        f"Discrepancy: MSE triggered, LPIPS did not: {mse_only_count}\n"
+        f"Discrepancy: LPIPS triggered, MSE did not: {lpips_only_count}\n\n"
+        f"--- Top 10 Most Severe Swaps ---\n"
+        f"(Severity is defined by the MSE Gap: how much closer the prediction is to the WRONG target)\n\n"
+    )
+
+    # --- Save Top 10 Images and append to report ---
+    for rank, swap in enumerate(top_10_swaps, start=1):
+        m_img, b_gt, d_gt, p_b, p_d = swap["tensors"]
+        
+        overlap_str = "OVERLAP" if (swap['mse_swapped'] and swap['lpips_swapped']) else ("MSE ONLY" if swap['mse_swapped'] else "LPIPS ONLY")
+        
+        report += (
+            f"Rank {rank} | Severity (MSE Gap): {swap['mse_gap']:.2f} | Metric: {overlap_str}\n"
+        )
+
+        # Build a clearly labeled 5-column grid for this specific severe swap
+        # Layout: Mixed | GT Bright | Pred Bright (Wrong) | GT Dark | Pred Dark (Wrong)
+        grid_tensor = torch.stack([m_img, b_gt, p_b, d_gt, p_d])
+        grid = torchvision.utils.make_grid(grid_tensor, nrow=5, padding=4, pad_value=255)
+        
+        # Convert to PIL to add quick headers
+        ndarr = grid.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+        img_pil = Image.fromarray(ndarr)
+        
+        # Add extra space at the top for labels
+        width, height = img_pil.size
+        header_height = 20
+        final_img = Image.new("RGB", (width, height + header_height), "white")
+        final_img.paste(img_pil, (0, header_height))
+        
+        draw = ImageDraw.Draw(final_img)
+        # Calculate approximate column centers
+        col_w = width // 5
+        labels = ["Mixed Input", "GT Bright", "Pred Bright", "GT Dark", "Pred Dark"]
+        
+        for idx, text in enumerate(labels):
+            # Simple text positioning
+            x = (idx * col_w) + (col_w // 4)
+            draw.text((x, 2), text, fill="black")
+            
+        save_file = os.path.join(save_dir, f"rank_{rank}_severity_{int(swap['severity'])}.jpg")
+        final_img.save(save_file)
+
+    with open(report_path, "w") as f:
+        f.write(report)
+        
+    print(f"Evaluation complete. Report saved to: {report_path}")
+    print(f"Top 10 severe swap images saved to: {save_dir}\n")
 
 
 def launch():
@@ -646,8 +742,8 @@ def launch():
     #train(args)
     #eval(args)
     #one_shot_eval(args)
-    visualize_sampling_path(args)
-    evaluate_identity_swaps(args)
+    #visualize_sampling_path(args)
+    evaluate_full_validation_swaps(args)
 
 
 if __name__ == "__main__":

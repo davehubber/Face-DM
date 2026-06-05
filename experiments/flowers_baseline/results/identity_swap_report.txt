@@ -1,0 +1,30 @@
+==================================================
+       FULL VALIDATION IDENTITY SWAP REPORT       
+==================================================
+
+Total Pairs Evaluated: 1000
+Total Swaps Detected (Any Metric): 285 (28.50%)
+
+--- Metric Breakdown ---
+Swaps detected by MSE: 225
+Swaps detected by LPIPS: 270
+
+--- Overlap Analysis ---
+Do LPIPS and MSE overlap every time? NO
+Perfect Overlaps (Both triggered): 210
+Discrepancy: MSE triggered, LPIPS did not: 15
+Discrepancy: LPIPS triggered, MSE did not: 60
+
+--- Top 10 Most Severe Swaps ---
+(Severity is defined by the MSE Gap: how much closer the prediction is to the WRONG target)
+
+Rank 1 | Severity (MSE Gap): 7768.35 | Metric: OVERLAP
+Rank 2 | Severity (MSE Gap): 7250.80 | Metric: OVERLAP
+Rank 3 | Severity (MSE Gap): 6948.20 | Metric: OVERLAP
+Rank 4 | Severity (MSE Gap): 6614.81 | Metric: OVERLAP
+Rank 5 | Severity (MSE Gap): 6577.57 | Metric: OVERLAP
+Rank 6 | Severity (MSE Gap): 6372.63 | Metric: OVERLAP
+Rank 7 | Severity (MSE Gap): 5784.84 | Metric: OVERLAP
+Rank 8 | Severity (MSE Gap): 5744.13 | Metric: OVERLAP
+Rank 9 | Severity (MSE Gap): 5594.72 | Metric: OVERLAP
+Rank 10 | Severity (MSE Gap): 5582.82 | Metric: OVERLAP
