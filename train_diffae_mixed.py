@@ -135,10 +135,9 @@ class MixedLatentDiffusion(nn.Module):
         self.num_timesteps = num_train_timesteps
         
         # Calculated to reach alpha_bar_T = 0.75 (Variance = 0.25)
-        beta_val = 1.0 - (0.75 ** (1.0 / num_train_timesteps))
-        betas = torch.full((num_train_timesteps,), beta_val, dtype=torch.float32)
-        alphas = 1.0 - betas
-        alphas_cumprod = torch.cumprod(alphas, dim=0)
+        steps = torch.arange(num_train_timesteps, dtype=torch.float32)
+        alphas_cumprod = 0.75 ** (steps / (num_train_timesteps - 1))
+        betas = torch.cat([torch.zeros(1, dtype=torch.float32), 1.0 - (alphas_cumprod[1:] / alphas_cumprod[:-1])])
         
         self.register_buffer('betas', betas)
         self.register_buffer('alphas_cumprod', alphas_cumprod)
@@ -150,7 +149,7 @@ class MixedLatentDiffusion(nn.Module):
         x_0 = torch.cat([z1, z2], dim=-1)
         
         t = torch.randint(0, self.num_timesteps, (b,), device=z1.device).long()
-        gamma_t = (t / self.num_timesteps).unsqueeze(-1).float()
+        gamma_t = (t / (self.num_timesteps - 1)).unsqueeze(-1).float()
         
         # 1. Cold Interpolation (Implicit Conditioning)
         d_t = (1.0 - gamma_t) * x_0 + gamma_t * c_coupled
@@ -179,16 +178,18 @@ class MixedLatentDiffusion(nn.Module):
         c_coupled = torch.cat([c, c], dim=-1)
         
         # Start from the final analytical degradation state
-        x_t = torch.sqrt(torch.tensor(0.75, device=device)) * c_coupled + \
-              torch.sqrt(torch.tensor(0.25, device=device)) * torch.randn((b, 1024), device=device)
+        d_t = c_coupled
+        alpha_bar_t = self.alphas_cumprod[-1]
+        x_t = torch.sqrt(alpha_bar_t) * d_t + \
+              torch.sqrt(1.0 - alpha_bar_t) * torch.randn((b, 1024), device=device)
         
         step_size = self.num_timesteps // sample_steps
-        timesteps = torch.arange(self.num_timesteps - 1, -1, -step_size, device=device).long()
+        timesteps = torch.arange(self.num_timesteps - 1, 0, -step_size, device=device).long()
         
         prev_x0 = None
         for i, t in enumerate(tqdm(timesteps, desc='Mixed TACOs Sampling', leave=False)):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
-            gamma_t = torch.tensor(t.item() / self.num_timesteps, device=device)
+            gamma_t = torch.tensor(t.item() / (self.num_timesteps - 1), device=device)
             alpha_bar_t = self.alphas_cumprod[t]
             
             # Predict clean x0
@@ -207,21 +208,22 @@ class MixedLatentDiffusion(nn.Module):
             
             prev_x0 = pred_x0
             
-            # Extract pure noise estimate using the corrected prediction
-            d_hat_t = (1.0 - gamma_t) * pred_x0 + gamma_t * c_coupled
-            pred_noise = (x_t - torch.sqrt(alpha_bar_t) * d_hat_t) / torch.sqrt(1.0 - alpha_bar_t)
+            # Extract pure noise estimate using the stored deterministic component
+            pred_noise = (x_t - torch.sqrt(alpha_bar_t) * d_t) / torch.sqrt(1.0 - alpha_bar_t)
             
             # Compute next step down
             if i < len(timesteps) - 1:
                 t_prev = t - step_size
                 alpha_bar_prev = self.alphas_cumprod[t_prev]
-                gamma_prev = torch.tensor(t_prev.item() / self.num_timesteps, device=device)
+                gamma_prev = torch.tensor(t_prev.item() / (self.num_timesteps - 1), device=device)
             else:
                 alpha_bar_prev = torch.tensor(1.0, device=device)
                 gamma_prev = torch.tensor(0.0, device=device)
                 
+            d_hat_t = (1.0 - gamma_t) * pred_x0 + gamma_t * c_coupled
             d_hat_prev = (1.0 - gamma_prev) * pred_x0 + gamma_prev * c_coupled
-            x_t = torch.sqrt(alpha_bar_prev) * d_hat_prev + torch.sqrt(1.0 - alpha_bar_prev) * pred_noise
+            d_t = d_t - d_hat_t + d_hat_prev
+            x_t = torch.sqrt(alpha_bar_prev) * d_t + torch.sqrt(1.0 - alpha_bar_prev) * pred_noise
             
         final_z1, final_z2 = x_t.chunk(2, dim=-1)
         return final_z1, final_z2
@@ -243,7 +245,7 @@ def train_mixed_demorph(diffae_path_str: str, run_name: str):
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     val_embs = load_split_and_normalize(diffae_path_str, "val")
     
-    train_loader = DataLoader(CoupledLatentDataset(train_embs, epoch_size=1_000_000), batch_size=25_000, shuffle=True, num_workers=8)
+    train_loader = DataLoader(CoupledLatentDataset(train_embs, epoch_size=1_000_000), batch_size=15_000, shuffle=True, num_workers=8)
     val_loader = DataLoader(CoupledLatentDataset(val_embs, epoch_size=10_000, deterministic=True), batch_size=10_000, shuffle=False, num_workers=4)
 
     net = CoupledLatentDDIMNet().to(device)
@@ -251,7 +253,7 @@ def train_mixed_demorph(diffae_path_str: str, run_name: str):
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 25_000, "num_layers": 10, "hidden_dim": 2048, "num_train_timesteps": 250
+        "learning_rate": 1e-4, "batch_size": 15_000, "num_layers": 10, "hidden_dim": 2048, "num_train_timesteps": 250
     })
 
     epochs = 50
@@ -372,7 +374,7 @@ def evaluate_mixed_demorph(diffae_path_str: str, run_name: str):
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    RUN_NAME = "diffae_mixed_hot_cold"
+    RUN_NAME = "diffae_mixed_hot_cold_v2"
     
     train_mixed_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME)
     evaluate_mixed_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME)

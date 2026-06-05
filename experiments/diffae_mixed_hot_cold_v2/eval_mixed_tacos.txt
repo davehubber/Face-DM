@@ -1,0 +1,10 @@
+--- Evaluation Results: Mixed TACOs (50 Steps) ---
+Run Name: diffae_mixed_hot_cold_v2
+----------------------------------------
+[Embedding 1 Performance Alignment]
+  - L1 Distance:                       0.627315
+  - Cosine Similarity to Target:       0.622279
+
+[Embedding 2 Performance Alignment]
+  - L1 Distance:                       0.626585
+  - Cosine Similarity to Target:       0.623140

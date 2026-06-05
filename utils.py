@@ -13,7 +13,6 @@ from torch.utils.data import DataLoader, Dataset
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 SPLIT_SEED = 42
 VAL_PAIR_SEED = 1234
-DEFAULT_PAIRS_PER_IMAGE = 5
 
 
 def plot_images(images):
@@ -55,15 +54,14 @@ def list_image_files(dataset_path: str) -> List[str]:
     return image_files
 
 
-def split_image_files(image_files: Sequence[str], train_fraction: float) -> Tuple[List[str], List[str]]:
-    if not 0.0 < train_fraction < 1.0:
-        raise ValueError(f"train_fraction must be in (0, 1), got {train_fraction}")
+def split_image_files(image_files: Sequence[str], num_test_images: int) -> Tuple[List[str], List[str]]:
+    if num_test_images >= len(image_files) or num_test_images <= 0:
+        raise ValueError(f"num_test_images must be between 1 and {len(image_files)-1}, got {num_test_images}")
 
     shuffled = list(image_files)
     random.Random(SPLIT_SEED).shuffle(shuffled)
 
-    split_idx = max(1, min(len(shuffled) - 1, int(round(len(shuffled) * train_fraction))))
-    return shuffled[:split_idx], shuffled[split_idx:]
+    return shuffled[:-num_test_images], shuffled[-num_test_images:]
 
 
 def order_by_brightness(image_1: torch.Tensor, image_2: torch.Tensor):
@@ -84,9 +82,8 @@ class OnTheFlyPairedDataset(Dataset):
         self.augment = augment
         self.deterministic = deterministic
 
-        split_name = "train" if augment else "val"
-        mode = "deterministic" if deterministic else "random"
-        print(f"Size of {split_name}: {len(self.image_files)} source images, {self.num_pairs} {mode} pairs")
+        split_name = "test" if deterministic else "train"
+        print(f"Size of {split_name}: {len(self.image_files)} source images, {self.num_pairs} pairs")
 
     def __len__(self):
         return self.num_pairs
@@ -124,10 +121,6 @@ class OnTheFlyPairedDataset(Dataset):
         return bright_image, dark_image
 
 
-def _default_num_pairs(num_images: int) -> int:
-    return max(1, int(num_images) * DEFAULT_PAIRS_PER_IMAGE)
-
-
 def _seed_worker(worker_id: int):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
@@ -135,34 +128,32 @@ def _seed_worker(worker_id: int):
 
 
 def get_data(args, partition):
+    # Removed the torchvision.transforms.Resize step
     transforms = torchvision.transforms.Compose(
         [
-            torchvision.transforms.Resize(args.image_size),
             torchvision.transforms.ToTensor(),
             torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
         ]
     )
 
     image_files = list_image_files(args.dataset_path)
-    train_files, val_files = split_image_files(image_files, args.train_fraction)
+    train_files, val_files = split_image_files(image_files, args.test_images)
     split_files = train_files if partition == "train" else val_files
 
     if partition == "train":
-        num_pairs = args.train_samples_per_epoch or _default_num_pairs(len(split_files))
         dataset = OnTheFlyPairedDataset(
             dataset_path=args.dataset_path,
             image_files=split_files,
-            num_pairs=num_pairs,
+            num_pairs=args.train_samples_per_epoch,
             transform=transforms,
             augment=True,
             deterministic=False,
         )
     else:
-        num_pairs = args.val_samples or _default_num_pairs(len(split_files))
         dataset = OnTheFlyPairedDataset(
             dataset_path=args.dataset_path,
             image_files=split_files,
-            num_pairs=num_pairs,
+            num_pairs=args.test_images,
             transform=transforms,
             augment=False,
             deterministic=True,
