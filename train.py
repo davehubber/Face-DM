@@ -5,11 +5,13 @@ import lpips
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torchvision
 import wandb
 from accelerate import Accelerator
 from diffusers import UNet2DModel
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from diffusers.training_utils import EMAModel
+from PIL import Image
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 from torch import optim
 
@@ -33,8 +35,8 @@ class ColdDiffusion:
 
     def mix_images(self, bright_image, dark_image, t):
         weight = (self.alteration_per_t * t)[:, None, None, None]
-        # Applied square root to both coefficients
-        return bright_image * torch.sqrt(1.0 - weight) + dark_image * torch.sqrt(weight)
+        # Standard linear mixing
+        return bright_image * (1.0 - weight) + dark_image * weight
 
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
@@ -53,8 +55,8 @@ class ColdDiffusion:
                 model_out = model(x_t, t).sample
                 predicted_bright = model_out
                 
-                # Updated extraction logic to account for square root coefficients
-                predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_bright) / math.sqrt(alpha_init)
+                # Standard linear extraction
+                predicted_dark = (mixed_image - (1.0 - alpha_init) * predicted_bright) / alpha_init
 
                 x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
                     predicted_bright, predicted_dark, t - 1
@@ -62,8 +64,8 @@ class ColdDiffusion:
 
         model.train()
 
-        # Updated extraction logic for the final returned tensor
-        predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
+        # Standard linear extraction for the final returned tensor
+        predicted_dark = (mixed_image - (1.0 - alpha_init) * x_t) / alpha_init
         return to_uint8(x_t), to_uint8(predicted_dark)       
 
 
@@ -104,8 +106,7 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
 
 
 def save_training_preview(unet, diffusion, fixed_bright_images, fixed_dark_images, alpha_init, save_dir, is_best=False):
-    # Updated mixing logic for static previews
-    fixed_mixed = fixed_bright_images * math.sqrt(1.0 - alpha_init) + fixed_dark_images * math.sqrt(alpha_init)
+    fixed_mixed = fixed_bright_images * (1.0 - alpha_init) + fixed_dark_images * alpha_init
     predicted_bright, predicted_dark = diffusion.sample(unet, fixed_mixed, alpha_init)
 
     save_path = os.path.join(save_dir, "best.jpg" if is_best else "latest.jpg")
@@ -280,8 +281,7 @@ def eval(args):
     collected_for_grid = 0
 
     for bright_images, dark_images in val_dataloader:
-        # Updated mixing logic for eval base tensor
-        mixed_images = bright_images * math.sqrt(1.0 - args.alpha_init) + dark_images * math.sqrt(args.alpha_init)
+        mixed_images = bright_images * (1.0 - args.alpha_init) + dark_images * args.alpha_init
         
         predicted_bright, predicted_dark = diffusion.sample(model, mixed_images, alpha_init=args.alpha_init)	
 
@@ -376,8 +376,7 @@ def one_shot_eval(args):
     for bright_images, dark_images in val_dataloader:
         n = len(bright_images)
         
-        # Updated mixing logic
-        mixed_images = bright_images * math.sqrt(1.0 - args.alpha_init) + dark_images * math.sqrt(args.alpha_init)
+        mixed_images = bright_images * (1.0 - args.alpha_init) + dark_images * args.alpha_init
         
         init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
         t = torch.full((n,), init_timestep, device=device, dtype=torch.long)
@@ -385,8 +384,7 @@ def one_shot_eval(args):
         with torch.no_grad():
             predicted_bright = model(mixed_images, t).sample
             
-            # Updated extraction logic
-            predicted_dark = (mixed_images - math.sqrt(1.0 - args.alpha_init) * predicted_bright) / math.sqrt(args.alpha_init)
+            predicted_dark = (mixed_images - (1.0 - args.alpha_init) * predicted_bright) / args.alpha_init
 
         bright_uint8 = to_uint8(bright_images)
         dark_uint8 = to_uint8(dark_images)
@@ -452,6 +450,173 @@ def one_shot_eval(args):
     with open(os.path.join(base_dir, "results", "one_shot_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
+
+def visualize_sampling_path(args):
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
+    save_dir = os.path.join(base_dir, "samples", "path_visualization")
+    os.makedirs(save_dir, exist_ok=True)
+
+    val_dataloader = get_data(args, "val")
+    model = get_unet(args.image_size)
+    
+    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.to(device)
+    model.eval()
+
+    diffusion = ColdDiffusion(
+        max_timesteps=args.max_timesteps,
+        alpha_max=args.alpha_max,
+        device=device,
+    )
+
+    fixed_bright_images, fixed_dark_images = [], []
+    for bright_images, dark_images in val_dataloader:
+        fixed_bright_images.append(bright_images)
+        fixed_dark_images.append(dark_images)
+        if sum(batch.shape[0] for batch in fixed_bright_images) >= args.num_fixed_samples:
+            break
+            
+    fixed_bright_images = torch.cat(fixed_bright_images)[: args.num_fixed_samples].to(device)
+    fixed_dark_images = torch.cat(fixed_dark_images)[: args.num_fixed_samples].to(device)
+
+    # Extract exactly the 2nd pair (Index 1)
+    bright_gt = fixed_bright_images[1:2]
+    dark_gt = fixed_dark_images[1:2]
+
+    # Calculate initial mixing state (Linear)
+    alpha_init = args.alpha_init
+    mixed_image = bright_gt * (1.0 - alpha_init) + dark_gt * alpha_init
+    init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
+
+    path_pred_bright = []
+    path_pred_dark = []
+
+    print(f"Generating path visualization for pair 2 over {init_timestep} timesteps...")
+
+    with torch.no_grad():
+        x_t = mixed_image.clone()
+        for i in reversed(range(1, init_timestep + 1)):
+            t = torch.full((1,), i, device=device, dtype=torch.long)
+
+            predicted_bright = model(x_t, t).sample
+            
+            # Linear extraction
+            predicted_dark = (mixed_image - (1.0 - alpha_init) * predicted_bright) / alpha_init
+
+            path_pred_bright.append(to_uint8(predicted_bright.clone()))
+            path_pred_dark.append(to_uint8(predicted_dark.clone()))
+
+            x_t = x_t - diffusion.mix_images(predicted_bright, predicted_dark, t) + diffusion.mix_images(
+                predicted_bright, predicted_dark, t - 1
+            )
+
+    bright_gt_uint8 = to_uint8(bright_gt)[0] 
+    dark_gt_uint8 = to_uint8(dark_gt)[0]
+
+    row_gt_bright = [bright_gt_uint8] * init_timestep
+    row_gt_dark = [dark_gt_uint8] * init_timestep
+    row_pred_bright = [p[0] for p in path_pred_bright]
+    row_pred_dark = [p[0] for p in path_pred_dark]
+
+    grid_list = row_gt_bright + row_gt_dark + row_pred_bright + row_pred_dark
+    grid_tensor = torch.stack(grid_list)
+
+    grid = torchvision.utils.make_grid(grid_tensor, nrow=init_timestep, padding=2, pad_value=255)
+    ndarr = grid.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+    
+    save_path = os.path.join(save_dir, "sampling_path_pair_2.jpg")
+    Image.fromarray(ndarr).save(save_path)
+    print(f"Saved successfully to: {save_path}")
+
+
+def evaluate_identity_swaps(args):
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
+    save_dir = os.path.join(base_dir, "samples", "swaps")
+    os.makedirs(save_dir, exist_ok=True)
+
+    val_dataloader = get_data(args, "val")
+    model = get_unet(args.image_size)
+    
+    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.to(device)
+    model.eval()
+
+    diffusion = ColdDiffusion(
+        max_timesteps=args.max_timesteps,
+        alpha_max=args.alpha_max,
+        device=device,
+    )
+    
+    lpips_model = lpips.LPIPS(net="alex").to(device)
+    lpips_model.eval()
+
+    fixed_bright_images, fixed_dark_images = [], []
+    for bright_images, dark_images in val_dataloader:
+        fixed_bright_images.append(bright_images)
+        fixed_dark_images.append(dark_images)
+        if sum(batch.shape[0] for batch in fixed_bright_images) >= args.num_fixed_samples:
+            break
+            
+    fixed_bright_images = torch.cat(fixed_bright_images)[: args.num_fixed_samples].to(device)
+    fixed_dark_images = torch.cat(fixed_dark_images)[: args.num_fixed_samples].to(device)
+
+    # Linear mixing
+    alpha_init = args.alpha_init
+    mixed_images = fixed_bright_images * (1.0 - alpha_init) + fixed_dark_images * alpha_init
+
+    pred_bright_uint8, pred_dark_uint8 = diffusion.sample(model, mixed_images, alpha_init)
+
+    bright_gt_uint8 = to_uint8(fixed_bright_images)
+    dark_gt_uint8 = to_uint8(fixed_dark_images)
+    mixed_uint8 = to_uint8(mixed_images)
+
+    swaps_detected = 0
+    print(f"\n--- Evaluating Identity Swaps ({args.num_fixed_samples} Fixed Pairs) ---")
+
+    for i in range(args.num_fixed_samples):
+        b_gt = bright_gt_uint8[i]
+        d_gt = dark_gt_uint8[i]
+        p_b = pred_bright_uint8[i]
+        p_d = pred_dark_uint8[i]
+
+        mse_pb_gtb = F.mse_loss(p_b.float(), b_gt.float()).item()
+        mse_pb_gtd = F.mse_loss(p_b.float(), d_gt.float()).item()
+        mse_swapped = mse_pb_gtd < mse_pb_gtb
+
+        def prep_lpips(tensor):
+            return (tensor.unsqueeze(0).float() - 127.5) / 127.5
+
+        with torch.no_grad():
+            lpips_pb_gtb = lpips_model(prep_lpips(p_b), prep_lpips(b_gt)).item()
+            lpips_pb_gtd = lpips_model(prep_lpips(p_b), prep_lpips(d_gt)).item()
+        
+        lpips_swapped = lpips_pb_gtd < lpips_pb_gtb
+
+        print(f"\nPair {i+1}:")
+        print(f"  MSE   | vs Bright: {mse_pb_gtb:.2f} | vs Dark: {mse_pb_gtd:.2f} | Swapped? {mse_swapped}")
+        print(f"  LPIPS | vs Bright: {lpips_pb_gtb:.4f} | vs Dark: {lpips_pb_gtd:.4f} | Swapped? {lpips_swapped}")
+        
+        if mse_swapped or lpips_swapped:
+            swaps_detected += 1
+            overlap = "OVERLAP" if (mse_swapped and lpips_swapped) else "NO OVERLAP"
+            print(f"  -> Swap Detected! ({overlap}) Saving isolated grid...")
+            
+            grid_tensor = torch.stack([mixed_uint8[i], b_gt, d_gt, p_b, p_d])
+            grid = torchvision.utils.make_grid(grid_tensor, nrow=5, padding=2, pad_value=255)
+            ndarr = grid.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+            
+            save_path = os.path.join(save_dir, f"swap_detected_pair_{i+1}.jpg")
+            Image.fromarray(ndarr).save(save_path)
+
+    print(f"\nTotal swaps detected: {swaps_detected} out of {args.num_fixed_samples}\n")
+
+
 def launch():
     import argparse
 
@@ -478,9 +643,11 @@ def launch():
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
 
-    train(args)
-    eval(args)
-    one_shot_eval(args)
+    #train(args)
+    #eval(args)
+    #one_shot_eval(args)
+    visualize_sampling_path(args)
+    evaluate_identity_swaps(args)
 
 
 if __name__ == "__main__":
