@@ -56,12 +56,6 @@ class ColdDiffusion:
                 # Updated extraction logic to account for square root coefficients
                 predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_bright) / math.sqrt(alpha_init)
 
-                # --- NEW CLAMPING LOGIC ---
-                # Safely enforce bounds on the endpoint predictions without clipping the expanded x_t space
-                predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
-                predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
-                # --------------------------
-
                 x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
                     predicted_bright, predicted_dark, t - 1
                 )
