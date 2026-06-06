@@ -746,6 +746,190 @@ def evaluate_full_validation_swaps(args):
     print(f"Evaluation complete. Report saved to: {report_path}")
     print(f"Top 10 severe swap images saved to: {save_dir}\n")
 
+def evaluate_clipping_impact(args):
+    import torchvision
+    from PIL import Image
+    
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
+    save_dir = os.path.join(base_dir, "samples", "clipping_test")
+    os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(os.path.join(base_dir, "results"), exist_ok=True)
+
+    val_dataloader = get_data(args, "val")
+    model = get_unet(args.image_size)
+    
+    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.to(device)
+    model.eval()
+
+    diffusion = ColdDiffusion(
+        max_timesteps=args.max_timesteps,
+        alpha_max=args.alpha_max,
+        device=device,
+    )
+    lpips_model = lpips.LPIPS(net="alex").to(device)
+    lpips_model.eval()
+
+    # Define a custom internal sampling loop to inject the A/B testing
+    def sample_custom(mixed_image, clamp_predictions=False):
+        n = len(mixed_image)
+        init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
+        
+        max_oob_val = 0.0
+        oob_pixel_count = 0
+        total_pixels = 0
+        
+        with torch.no_grad():
+            x_t = mixed_image.clone().to(device)
+
+            for i in reversed(range(1, init_timestep + 1)):
+                t = torch.full((n,), i, device=device, dtype=torch.long)
+
+                predicted_bright = model(x_t, t).sample
+                predicted_dark = (mixed_image - (1.0 - args.alpha_init) * predicted_bright) / args.alpha_init
+
+                # Track OOB severity (only meaningful on the unclamped run)
+                if not clamp_predictions:
+                    for p in [predicted_bright, predicted_dark]:
+                        oob_mask = (p < -1.0) | (p > 1.0)
+                        oob_pixel_count += oob_mask.sum().item()
+                        total_pixels += p.numel()
+                        
+                        p_max = torch.max(torch.abs(p)).item()
+                        if p_max > max_oob_val:
+                            max_oob_val = p_max
+
+                # Apply clamping if requested
+                if clamp_predictions:
+                    predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
+                    predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
+
+                x_t = x_t - diffusion.mix_images(predicted_bright, predicted_dark, t) + diffusion.mix_images(
+                    predicted_bright, predicted_dark, t - 1
+                )
+
+        predicted_dark = (mixed_image - (1.0 - args.alpha_init) * x_t) / args.alpha_init
+        
+        # We always return the uint8 representations for metric calculation
+        return to_uint8(x_t), to_uint8(predicted_dark), oob_pixel_count, total_pixels, max_oob_val
+
+    print(f"\n--- Running OOB Clipping Impact Evaluation ---")
+    
+    # We will test on a fixed subset to save time (e.g., 50 images)
+    subset_size = 50
+    test_bright, test_dark = [], []
+    for bright_images, dark_images in val_dataloader:
+        test_bright.append(bright_images)
+        test_dark.append(dark_images)
+        if sum(b.shape[0] for b in test_bright) >= subset_size:
+            break
+            
+    test_bright = torch.cat(test_bright)[:subset_size].to(device)
+    test_dark = torch.cat(test_dark)[:subset_size].to(device)
+    mixed_images = test_bright * (1.0 - args.alpha_init) + test_dark * args.alpha_init
+
+    print(f"Testing on {subset_size} images across {math.ceil(args.alpha_init / diffusion.alteration_per_t)} timesteps...")
+
+    # Run A/B Tests
+    print("Running Baseline (Unclamped) Path...")
+    base_pb_uint8, base_pd_uint8, base_oob_count, base_tot_pixels, base_max_oob = sample_custom(mixed_images, clamp_predictions=False)
+    
+    print("Running Experimental (Clamped) Path...")
+    clamp_pb_uint8, clamp_pd_uint8, _, _, _ = sample_custom(mixed_images, clamp_predictions=True)
+
+    bright_gt_uint8 = to_uint8(test_bright)
+    dark_gt_uint8 = to_uint8(test_dark)
+    
+    base_metrics = {"ssim_b": [], "ssim_d": [], "psnr_b": [], "psnr_d": [], "lpips_b": [], "lpips_d": []}
+    clamp_metrics = {"ssim_b": [], "ssim_d": [], "psnr_b": [], "psnr_d": [], "lpips_b": [], "lpips_d": []}
+
+    bright_gt_np = bright_gt_uint8.cpu().permute(0, 2, 3, 1).numpy()
+    dark_gt_np = dark_gt_uint8.cpu().permute(0, 2, 3, 1).numpy()
+    
+    base_pb_np = base_pb_uint8.cpu().permute(0, 2, 3, 1).numpy()
+    base_pd_np = base_pd_uint8.cpu().permute(0, 2, 3, 1).numpy()
+    clamp_pb_np = clamp_pb_uint8.cpu().permute(0, 2, 3, 1).numpy()
+    clamp_pd_np = clamp_pd_uint8.cpu().permute(0, 2, 3, 1).numpy()
+
+    # Calculate metrics for both runs
+    with torch.no_grad():
+        for k in range(subset_size):
+            # Baseline
+            sb, sd, pb, pd, lb, ld, _ = calculate_metrics(
+                bright_gt_np[k], dark_gt_np[k], base_pb_np[k], base_pd_np[k],
+                bright_gt_uint8[k], dark_gt_uint8[k], base_pb_uint8[k], base_pd_uint8[k], lpips_model
+            )
+            base_metrics["ssim_b"].append(sb); base_metrics["ssim_d"].append(sd)
+            base_metrics["psnr_b"].append(pb); base_metrics["psnr_d"].append(pd)
+            base_metrics["lpips_b"].append(lb); base_metrics["lpips_d"].append(ld)
+
+            # Clamped
+            sb, sd, pb, pd, lb, ld, _ = calculate_metrics(
+                bright_gt_np[k], dark_gt_np[k], clamp_pb_np[k], clamp_pd_np[k],
+                bright_gt_uint8[k], dark_gt_uint8[k], clamp_pb_uint8[k], clamp_pd_uint8[k], lpips_model
+            )
+            clamp_metrics["ssim_b"].append(sb); clamp_metrics["ssim_d"].append(sd)
+            clamp_metrics["psnr_b"].append(pb); clamp_metrics["psnr_d"].append(pd)
+            clamp_metrics["lpips_b"].append(lb); clamp_metrics["lpips_d"].append(ld)
+
+    # Compile averages
+    base_avg = {k: np.average(v) for k, v in base_metrics.items()}
+    clamp_avg = {k: np.average(v) for k, v in clamp_metrics.items()}
+
+    oob_percentage = (base_oob_count / base_tot_pixels) * 100
+
+    report = (
+        f"==================================================\n"
+        f"        OOB PIXEL CLIPPING IMPACT REPORT          \n"
+        f"==================================================\n\n"
+        f"--- Out of Bounds (OOB) Severity ---\n"
+        f"Does the model generate out of bounds pixels during inference?\n"
+        f"Total Intermediate Pixels Evaluated: {base_tot_pixels}\n"
+        f"Pixels falling outside [-1.0, 1.0]:  {base_oob_count} ({oob_percentage:.4f}%)\n"
+        f"Absolute Maximum Tensor Magnitude:   {base_max_oob:.2f} (Expected max is 1.0)\n\n"
+        f"--- Performance Comparison (Subset Size: {subset_size}) ---\n"
+        f"             Baseline (Unclamped) | Clamped [-1, 1]  | Delta (Clamped - Base)\n"
+        f"LPIPS Bright: {base_avg['lpips_b']:.4f}             | {clamp_avg['lpips_b']:.4f}           | {clamp_avg['lpips_b'] - base_avg['lpips_b']:+.4f} (Lower is better)\n"
+        f"LPIPS Dark:   {base_avg['lpips_d']:.4f}             | {clamp_avg['lpips_d']:.4f}           | {clamp_avg['lpips_d'] - base_avg['lpips_d']:+.4f} (Lower is better)\n"
+        f"SSIM Bright:  {base_avg['ssim_b']:.4f}             | {clamp_avg['ssim_b']:.4f}           | {clamp_avg['ssim_b'] - base_avg['ssim_b']:+.4f} (Higher is better)\n"
+        f"SSIM Dark:    {base_avg['ssim_d']:.4f}             | {clamp_avg['ssim_d']:.4f}           | {clamp_avg['ssim_d'] - base_avg['ssim_d']:+.4f} (Higher is better)\n"
+        f"PSNR Bright:  {base_avg['psnr_b']:.4f}             | {clamp_avg['psnr_b']:.4f}           | {clamp_avg['psnr_b'] - base_avg['psnr_b']:+.4f} (Higher is better)\n"
+        f"PSNR Dark:    {base_avg['psnr_d']:.4f}             | {clamp_avg['psnr_d']:.4f}           | {clamp_avg['psnr_d'] - base_avg['psnr_d']:+.4f} (Higher is better)\n\n"
+    )
+
+    lpips_delta = (clamp_avg['lpips_b'] + clamp_avg['lpips_d']) - (base_avg['lpips_b'] + base_avg['lpips_d'])
+    if lpips_delta < 0:
+        report += "Conclusion: Clipping intermediate predictions consistently IMPROVED structural retrieval.\n"
+    elif lpips_delta > 0:
+        report += "Conclusion: Clipping intermediate predictions DAMAGED structural retrieval. The model relies on OOB vector magnitudes to traverse the latent space.\n"
+    else:
+        report += "Conclusion: Clipping had negligible or zero impact on final inference metrics.\n"
+
+    report_path = os.path.join(base_dir, "results", "clipping_impact_report.txt")
+    with open(report_path, "w") as f:
+        f.write(report)
+        
+    print(report)
+    print(f"Saved report to {report_path}")
+
+    # Generate a visual comparison grid for the first 10 pairs
+    vis_count = min(10, subset_size)
+    grid_tensor = torch.stack([
+        to_uint8(mixed_images)[:vis_count],
+        bright_gt_uint8[:vis_count],
+        base_pb_uint8[:vis_count],
+        clamp_pb_uint8[:vis_count],
+        dark_gt_uint8[:vis_count],
+        base_pd_uint8[:vis_count],
+        clamp_pd_uint8[:vis_count]
+    ], dim=1).view(-1, 3, args.image_size[0], args.image_size[1])
+
+    grid = torchvision.utils.make_grid(grid_tensor, nrow=7, padding=2, pad_value=255)
+    ndarr = grid.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+    Image.fromarray(ndarr).save(os.path.join(save_dir, "baseline_vs_clamped_visuals.jpg"))
 
 def launch():
     import argparse
@@ -774,10 +958,11 @@ def launch():
     args.image_size = (args.image_size, args.image_size)
 
     #train(args)
-    eval(args)
-    one_shot_eval(args)
+    #eval(args)
+    #one_shot_eval(args)
     #visualize_sampling_path(args)
     #evaluate_full_validation_swaps(args)
+    evaluate_clipping_impact(args)
 
 
 if __name__ == "__main__":
