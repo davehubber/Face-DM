@@ -58,6 +58,9 @@ class ColdDiffusion:
                 # Standard linear extraction
                 predicted_dark = (mixed_image - (1.0 - alpha_init) * predicted_bright) / alpha_init
 
+                predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
+                predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
+
                 x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
                     predicted_bright, predicted_dark, t - 1
                 )
@@ -958,11 +961,11 @@ def launch():
     args.image_size = (args.image_size, args.image_size)
 
     #train(args)
-    #eval(args)
-    #one_shot_eval(args)
+    eval(args)
+    one_shot_eval(args)
     #visualize_sampling_path(args)
     #evaluate_full_validation_swaps(args)
-    evaluate_clipping_impact(args)
+    #evaluate_clipping_impact(args)
 
 
 if __name__ == "__main__":
