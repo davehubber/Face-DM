@@ -1,9 +1,9 @@
 --- Iterative Evaluation Metrics (Entire Validation Set) ---
 Total Evaluated: 1000
-LPIPS Alignment Swap Rate: 36.10%
-SSIM Bright: 0.5364
-SSIM Dark: 0.4586
-PSNR Bright: 15.9856
-PSNR Dark: 15.8258
-LPIPS Bright: 0.1896
-LPIPS Dark: 0.2228
+LPIPS Alignment Swap Rate: 26.80%
+SSIM Bright: 0.6946
+SSIM Dark: 0.6336
+PSNR Bright: 18.9451
+PSNR Dark: 18.9395
+LPIPS Bright: 0.1313
+LPIPS Dark: 0.1455
