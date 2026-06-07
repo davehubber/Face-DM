@@ -64,6 +64,10 @@ def split_image_files(image_files: Sequence[str], num_test_images: int) -> Tuple
     return shuffled[:-num_test_images], shuffled[-num_test_images:]
 
 
+def order_by_brightness(image_1: torch.Tensor, image_2: torch.Tensor):
+    return (image_1, image_2) if image_1.mean() >= image_2.mean() else (image_2, image_1)
+
+
 class OnTheFlyPairedDataset(Dataset):
     def __init__(self, dataset_path: str, image_files: Sequence[str], num_pairs: int, transform=None, augment: bool = False, deterministic: bool = False):
         if len(image_files) < 2:
@@ -113,8 +117,8 @@ class OnTheFlyPairedDataset(Dataset):
             image_1 = self.transform(image_1)
             image_2 = self.transform(image_2)
 
-        # Removed brightness sorting. Pairs are returned exactly as sampled.
-        return image_1, image_2
+        bright_image, dark_image = order_by_brightness(image_1, image_2)
+        return bright_image, dark_image
 
 
 def _seed_worker(worker_id: int):
@@ -124,6 +128,7 @@ def _seed_worker(worker_id: int):
 
 
 def get_data(args, partition):
+    # Removed the torchvision.transforms.Resize step
     transforms = torchvision.transforms.Compose(
         [
             torchvision.transforms.ToTensor(),
