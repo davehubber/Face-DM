@@ -45,7 +45,7 @@ class ColdDiffusion:
 
         # Track swap state per sample: shape (n, 1, 1, 1)
         is_swapped = torch.zeros(n, 1, 1, 1, dtype=torch.bool, device=self.device)
-        first_dark = None
+        prev_dark = None
 
         model.eval()
         with torch.no_grad():
@@ -59,13 +59,12 @@ class ColdDiffusion:
                 p2 = model_out[:, 3:]  # Assumed Dark (initially)
 
                 if i == init_timestep:
-                    # Capture the initial dark prediction anchor
+                    # First step baseline setup: Assume standard channels
                     predicted_dark = p2
-                    first_dark = p2.clone()
                 else:
-                    # Compute sample-wise MSE against the static initial dark anchor
-                    mse_p1 = torch.mean((p1 - first_dark) ** 2, dim=[1, 2, 3], keepdim=True)
-                    mse_p2 = torch.mean((p2 - first_dark) ** 2, dim=[1, 2, 3], keepdim=True)
+                    # Compute sample-wise MSE against the immediately preceding dark prediction
+                    mse_p1 = torch.mean((p1 - prev_dark) ** 2, dim=[1, 2, 3], keepdim=True)
+                    mse_p2 = torch.mean((p2 - prev_dark) ** 2, dim=[1, 2, 3], keepdim=True)
                     
                     # Check for an identity inversion ONLY if a swap hasn't been locked in yet
                     new_swap = (~is_swapped) & (mse_p1 < mse_p2)
@@ -81,6 +80,9 @@ class ColdDiffusion:
                 predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
                 predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
                 # --------------------------
+
+                # Update the tracking target for the next step's comparison
+                prev_dark = predicted_dark.clone()
 
                 # Pass dark image first to mixing method
                 x_t = x_t - self.mix_images(predicted_dark, predicted_bright, t) + self.mix_images(
