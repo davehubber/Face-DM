@@ -45,7 +45,10 @@ class ColdDiffusion:
 
         # Track swap state per sample: shape (n, 1, 1, 1)
         is_swapped = torch.zeros(n, 1, 1, 1, dtype=torch.bool, device=self.device)
-        prev_dark = None
+        first_dark = None
+        
+        # Retrieve the initialized LPIPS network instance
+        lpips_model = self._get_lpips_model()
 
         model.eval()
         with torch.no_grad():
@@ -59,15 +62,21 @@ class ColdDiffusion:
                 p2 = model_out[:, 3:]  # Assumed Dark (initially)
 
                 if i == init_timestep:
-                    # First step baseline setup: Assume standard channels
+                    # Capture the initial dark prediction anchor
                     predicted_dark = p2
+                    first_dark = p2.clone()
                 else:
-                    # Compute sample-wise MSE against the immediately preceding dark prediction
-                    mse_p1 = torch.mean((p1 - prev_dark) ** 2, dim=[1, 2, 3], keepdim=True)
-                    mse_p2 = torch.mean((p2 - prev_dark) ** 2, dim=[1, 2, 3], keepdim=True)
+                    # Clamp to [-1, 1] range to ensure stable LPIPS perceptual distance behavior
+                    p1_clamped = torch.clamp(p1, -1.0, 1.0)
+                    p2_clamped = torch.clamp(p2, -1.0, 1.0)
+                    first_dark_clamped = torch.clamp(first_dark, -1.0, 1.0)
+
+                    # Compute batch-wise perceptual distances (returns shape: [n, 1, 1, 1])
+                    dist_p1 = lpips_model(p1_clamped, first_dark_clamped)
+                    dist_p2 = lpips_model(p2_clamped, first_dark_clamped)
                     
                     # Check for an identity inversion ONLY if a swap hasn't been locked in yet
-                    new_swap = (~is_swapped) & (mse_p1 < mse_p2)
+                    new_swap = (~is_swapped) & (dist_p1 < dist_p2)
                     is_swapped = is_swapped | new_swap
                     
                     # Route channels dynamically based on the persistent mask
@@ -80,9 +89,6 @@ class ColdDiffusion:
                 predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
                 predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
                 # --------------------------
-
-                # Update the tracking target for the next step's comparison
-                prev_dark = predicted_dark.clone()
 
                 # Pass dark image first to mixing method
                 x_t = x_t - self.mix_images(predicted_dark, predicted_bright, t) + self.mix_images(
