@@ -70,6 +70,6 @@ def resize_images_parallel(source_dir_path):
 # --- RUN THE SCRIPT ---
 if __name__ == "__main__":
     # Replace this with the actual path to your image folder
-    folder_to_process = "path/to/your/image_folder" 
+    folder_to_process = "/nas-ctm01/datasets/public/BIOMETRICS/CELEBA/celebamask-hq-db/CelebA-HQ-img/" 
     
     resize_images_parallel(folder_to_process)

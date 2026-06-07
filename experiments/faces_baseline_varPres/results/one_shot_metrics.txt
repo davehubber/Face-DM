@@ -1,0 +1,9 @@
+--- One-Shot Evaluation Metrics (Entire Validation Set) ---
+Total Evaluated: 1000
+LPIPS Alignment Swap Rate: 10.30%
+SSIM Bright: 0.7810
+SSIM Dark: 0.7467
+PSNR Bright: 21.0104
+PSNR Dark: 21.0123
+LPIPS Bright: 0.0645
+LPIPS Dark: 0.0695

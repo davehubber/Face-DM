@@ -50,13 +50,16 @@ class ColdDiffusion:
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
 
+                # Model predicts 6 channels: (Bright, Dark)
                 model_out = model(x_t, t).sample
-                predicted_bright = model_out
                 
-                # Updated extraction logic to account for square root coefficients
+                # ONLY use the bright image prediction. Discard the UNet's dark prediction.
+                predicted_bright = model_out[:, :3]
+                
+                # Extract the dark image mathematically
                 predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_bright) / math.sqrt(alpha_init)
 
-                # --- NEW CLAMPING LOGIC ---
+                # --- CLAMPING LOGIC ---
                 # Safely enforce bounds on the endpoint predictions without clipping the expanded x_t space
                 predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
                 predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
@@ -68,7 +71,7 @@ class ColdDiffusion:
 
         model.train()
 
-        # Updated extraction logic for the final returned tensor
+        # Final extraction for returning
         predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
         return to_uint8(x_t), to_uint8(predicted_dark)       
 
@@ -78,7 +81,7 @@ def get_unet(image_size):
     return UNet2DModel(
         sample_size=resolution,
         in_channels=3,
-        out_channels=3,
+        out_channels=6, # Updated to predict both images
         layers_per_block=2,
         block_out_channels=(64, 128, 256, 512),
         down_block_types=("DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "DownBlock2D"),
@@ -97,9 +100,12 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
             t = diffusion.sample_timesteps(bright_images.shape[0]).to(accelerator.device)
             x_t = diffusion.mix_images(bright_images, dark_images, t)
 
-            predicted_bright = model(x_t, t).sample
+            model_out = model(x_t, t).sample
+            pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
             
-            loss = F.mse_loss(predicted_bright, bright_images, reduction="sum")
+            # Loss evaluates both UNet predictions against ground truths
+            loss = F.mse_loss(pred_bright_unet, bright_images, reduction="sum") + \
+                   F.mse_loss(pred_dark_unet, dark_images, reduction="sum")
 
             loss_sum += loss.detach()
             loss_count += bright_images.numel()
@@ -110,7 +116,6 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
 
 
 def save_training_preview(unet, diffusion, fixed_bright_images, fixed_dark_images, alpha_init, save_dir, is_best=False):
-    # Updated mixing logic for static previews
     fixed_mixed = fixed_bright_images * math.sqrt(1.0 - alpha_init) + fixed_dark_images * math.sqrt(alpha_init)
     predicted_bright, predicted_dark = diffusion.sample(unet, fixed_mixed, alpha_init)
 
@@ -185,9 +190,11 @@ def train(args):
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_images(bright_images, dark_images, t)
 
-                predicted_bright = model(x_t, t).sample
+                model_out = model(x_t, t).sample
+                pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
                 
-                loss = F.mse_loss(predicted_bright, bright_images)
+                # Combine losses to force the UNet to learn representations for both
+                loss = F.mse_loss(pred_bright_unet, bright_images) + F.mse_loss(pred_dark_unet, dark_images)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -224,7 +231,7 @@ def train(args):
             if is_best:
                 torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "unet_ema_best.pt"))
 
-            if (epoch + 1) % args.sample_every == 0 or is_best:
+            if (epoch + 1) % args.sample_every == 0:
                 save_training_preview(
                     unet=unet,
                     diffusion=diffusion,
@@ -305,7 +312,6 @@ def eval(args):
     total_swaps = 0
 
     for bright_images, dark_images in val_dataloader:
-        # Updated mixing logic for eval base tensor
         mixed_images = bright_images * math.sqrt(1.0 - args.alpha_init) + dark_images * math.sqrt(args.alpha_init)
         
         predicted_bright, predicted_dark = diffusion.sample(model, mixed_images, alpha_init=args.alpha_init)    
@@ -409,17 +415,23 @@ def one_shot_eval(args):
     for bright_images, dark_images in val_dataloader:
         n = len(bright_images)
         
-        # Updated mixing logic
         mixed_images = bright_images * math.sqrt(1.0 - args.alpha_init) + dark_images * math.sqrt(args.alpha_init)
         
         init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
         t = torch.full((n,), init_timestep, device=device, dtype=torch.long)
 
         with torch.no_grad():
-            predicted_bright = model(mixed_images, t).sample
+            model_out = model(mixed_images, t).sample
             
-            # Updated extraction logic
+            # Use only the bright prediction
+            predicted_bright = model_out[:, :3]
+            
+            # Mathematically extract the dark prediction
             predicted_dark = (mixed_images - math.sqrt(1.0 - args.alpha_init) * predicted_bright) / math.sqrt(args.alpha_init)
+            
+            # Apply bounds clamping for the one-shot preview (optional but recommended for consistency)
+            predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
+            predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
 
         bright_uint8 = to_uint8(bright_images)
         dark_uint8 = to_uint8(dark_images)
@@ -499,7 +511,7 @@ def launch():
     parser.add_argument("--run_name", required=True, help="Name of the experiment folder")
 
     parser.add_argument("--test_images", default=1000, type=int, help="Number of distinct test images and test pairs")
-    parser.add_argument("--train_samples_per_epoch", default=50000, type=int, help="Number of random train pairs per epoch")
+    parser.add_argument("--train_samples_per_epoch", default=30000, type=int, help="Number of random train pairs per epoch")
     parser.add_argument("--num_workers", default=None, type=int, help="DataLoader worker count")
 
     parser.add_argument("--alpha_max", default=0.5, type=float, help="Maximum dark-image weight at the last timestep")
