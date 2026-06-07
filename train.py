@@ -449,13 +449,11 @@ def one_shot_eval(args):
         with torch.no_grad():
             model_out = model(mixed_images, t).sample
             
-            # Use only the bright prediction
+            # Extract both outputs directly from the 6-channel UNet map
             predicted_bright = model_out[:, :3]
+            predicted_dark = model_out[:, 3:]
             
-            # Mathematically extract the dark prediction
-            predicted_dark = (mixed_images - math.sqrt(1.0 - args.alpha_init) * predicted_bright) / math.sqrt(args.alpha_init)
-            
-            # Apply bounds clamping for the one-shot preview (optional but recommended for consistency)
+            # Apply bounds clamping for stable image logging and metric consistency
             predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
             predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
 
@@ -480,6 +478,7 @@ def one_shot_eval(args):
 
         with torch.no_grad():
             for k in range(n):
+                # The existing calculate_metrics function will still handle the identity alignment validation
                 sb, sd, pb, pd, lb, ld, is_swapped = calculate_metrics(
                     bright_np[k],
                     dark_np[k],
@@ -556,8 +555,8 @@ def launch():
     args.image_size = (args.image_size, args.image_size)
 
     #train(args)
-    eval(args)
-    #one_shot_eval(args)
+    #eval(args)
+    one_shot_eval(args)
 
 
 if __name__ == "__main__":
