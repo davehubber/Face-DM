@@ -33,7 +33,6 @@ class ColdDiffusion:
 
     def mix_images(self, bright_image, dark_image, t):
         weight = (self.alteration_per_t * t)[:, None, None, None]
-        # Applied square root to both coefficients
         return bright_image * torch.sqrt(1.0 - weight) + dark_image * torch.sqrt(weight)
 
     def sample_timesteps(self, n):
@@ -43,66 +42,47 @@ class ColdDiffusion:
         n = len(mixed_image)
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
 
-        # Setup tracking states for the dark branch's LPIPS swap detection
-        is_swapped = torch.zeros(n, 1, 1, 1, dtype=torch.bool, device=self.device)
-        first_dark = None
-        lpips_model = self._get_lpips_model()
-
         model.eval()
         with torch.no_grad():
-            # Initialize both trajectory states to the original mixture
-            x_t_bright = mixed_image.to(self.device)
-            x_t_dark = mixed_image.to(self.device)
+            x_t = mixed_image.to(self.device)
+            prev_tracked = None
 
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
 
-                # --- STAGE 1: Extract Bright Branch Predictions ---
-                model_out_b = model(x_t_bright, t).sample
-                pred_bright_from_b = model_out_b[:, :3]
-
-                # --- STAGE 2: Extract Dark Branch Predictions + Handle Swaps ---
-                model_out_d = model(x_t_dark, t).sample
-                p1_d = model_out_d[:, :3]
-                p2_d = model_out_d[:, 3:]
+                model_out = model(x_t, t).sample
+                p1 = model_out[:, :3]
+                p2 = model_out[:, 3:]
 
                 if i == init_timestep:
-                    predicted_dark_from_d = p2_d
-                    first_dark = p2_d.clone()
+                    # Anchor onto the first 3 channels from the model's first prediction
+                    tracked_pred = p1
+                    prev_tracked = p1.clone()
                 else:
-                    # Perceptual alignment check to prevent identity crossover on the dark branch
-                    p1_d_clamped = torch.clamp(p1_d, -1.0, 1.0)
-                    p2_d_clamped = torch.clamp(p2_d, -1.0, 1.0)
-                    first_dark_clamped = torch.clamp(first_dark, -1.0, 1.0)
-
-                    dist_p1 = lpips_model(p1_d_clamped, first_dark_clamped)
-                    dist_p2 = lpips_model(p2_d_clamped, first_dark_clamped)
-
-                    new_swap = (~is_swapped) & (dist_p1 < dist_p2)
-                    is_swapped = is_swapped | new_swap
-
-                    predicted_dark_from_d = torch.where(is_swapped, p1_d, p2_d)
-
-                # Enforce strict value ranges on predictions before cross-feeding
-                pred_bright_from_b = torch.clamp(pred_bright_from_b, -1.0, 1.0)
-                predicted_dark_from_d = torch.clamp(predicted_dark_from_d, -1.0, 1.0)
-
-                # --- STAGE 3: Cross-Guided Trajectory Step Updates ---
+                    # Trace the anchored identity step-by-step using MSE
+                    mse_p1 = torch.mean((p1 - prev_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
+                    mse_p2 = torch.mean((p2 - prev_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
+                    
+                    tracked_pred = torch.where(mse_p1 < mse_p2, p1, p2)
+                    prev_tracked = tracked_pred.clone()
                 
-                # Bright Path Step: Uses its own bright prediction, but feeds on the Dark Branch's dark prediction
-                x_t_bright = x_t_bright - self.mix_images(pred_bright_from_b, predicted_dark_from_d, t) + self.mix_images(
-                    pred_bright_from_b, predicted_dark_from_d, t - 1
-                )
+                # The secondary target is always extracted mathematically 
+                extracted_other = (mixed_image - math.sqrt(1.0 - alpha_init) * tracked_pred) / math.sqrt(alpha_init)
 
-                # Dark Path Step: Uses its own dark prediction, but feeds on the Bright Branch's bright prediction
-                x_t_dark = x_t_dark - self.mix_images(predicted_dark_from_d, pred_bright_from_b, t) + self.mix_images(
-                    predicted_dark_from_d, pred_bright_from_b, t - 1
+                # --- CLAMPING LOGIC ---
+                tracked_pred = torch.clamp(tracked_pred, -1.0, 1.0)
+                extracted_other = torch.clamp(extracted_other, -1.0, 1.0)
+                # --------------------------
+
+                x_t = x_t - self.mix_images(tracked_pred, extracted_other, t) + self.mix_images(
+                    tracked_pred, extracted_other, t - 1
                 )
 
         model.train()
 
-        # Both paths have run to completion (t=0), converging to their respective targets
-        return to_uint8(x_t_bright), to_uint8(x_t_dark)
+        # Final mathematical derivation for the output pair execution
+        extracted_other = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
+        return to_uint8(x_t), to_uint8(extracted_other)       
 
 
 def get_unet(image_size):
@@ -110,7 +90,7 @@ def get_unet(image_size):
     return UNet2DModel(
         sample_size=resolution,
         in_channels=3,
-        out_channels=6, # Updated to predict both images
+        out_channels=6, 
         layers_per_block=2,
         block_out_channels=(64, 128, 256, 512),
         down_block_types=("DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "DownBlock2D"),
@@ -119,7 +99,6 @@ def get_unet(image_size):
 
 
 def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
-    """Calculates fast validation loss by sampling random timesteps."""
     model.eval()
     loss_sum = torch.zeros(1, device=accelerator.device)
     loss_count = torch.zeros(1, device=accelerator.device)
@@ -132,9 +111,14 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
             model_out = model(x_t, t).sample
             pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
             
-            # Loss evaluates both UNet predictions against ground truths
-            loss = F.mse_loss(pred_bright_unet, bright_images, reduction="sum") + \
-                   F.mse_loss(pred_dark_unet, dark_images, reduction="sum")
+            # Permutation Invariant Loss evaluation (Summed across tokens for collection)
+            loss_perm1 = F.mse_loss(pred_bright_unet, bright_images, reduction="none").sum(dim=[1, 2, 3]) + \
+                         F.mse_loss(pred_dark_unet, dark_images, reduction="none").sum(dim=[1, 2, 3])
+            
+            loss_perm2 = F.mse_loss(pred_bright_unet, dark_images, reduction="none").sum(dim=[1, 2, 3]) + \
+                         F.mse_loss(pred_dark_unet, bright_images, reduction="none").sum(dim=[1, 2, 3])
+
+            loss = torch.minimum(loss_perm1, loss_perm2).sum()
 
             loss_sum += loss.detach()
             loss_count += bright_images.numel()
@@ -222,8 +206,14 @@ def train(args):
                 model_out = model(x_t, t).sample
                 pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
                 
-                # Combine losses to force the UNet to learn representations for both
-                loss = F.mse_loss(pred_bright_unet, bright_images) + F.mse_loss(pred_dark_unet, dark_images)
+                # Permutation Invariant Loss formulation per-sample
+                loss_perm1 = F.mse_loss(pred_bright_unet, bright_images, reduction="none").mean(dim=[1, 2, 3]) + \
+                             F.mse_loss(pred_dark_unet, dark_images, reduction="none").mean(dim=[1, 2, 3])
+                
+                loss_perm2 = F.mse_loss(pred_bright_unet, dark_images, reduction="none").mean(dim=[1, 2, 3]) + \
+                             F.mse_loss(pred_dark_unet, bright_images, reduction="none").mean(dim=[1, 2, 3])
+
+                loss = torch.minimum(loss_perm1, loss_perm2).mean()
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -280,29 +270,21 @@ def calculate_metrics(bright_img, dark_img, pred_bright, pred_dark, bright_tenso
         return (tensor.unsqueeze(0).float() - 127.5) / 127.5
 
     with torch.no_grad():
-        # Direct LPIPS mappings
         l_bb = lpips_model(prep_lpips(pred_bright_tensor), prep_lpips(bright_tensor)).item()
         l_dd = lpips_model(prep_lpips(pred_dark_tensor), prep_lpips(dark_tensor)).item()
-        
-        # Crossed LPIPS mappings
         l_bd = lpips_model(prep_lpips(pred_bright_tensor), prep_lpips(dark_tensor)).item()
         l_db = lpips_model(prep_lpips(pred_dark_tensor), prep_lpips(bright_tensor)).item()
 
-    # Alignment Check: If crossed mapping has lower perceptual distance sum, a swap occurred
     is_swapped = (l_bd + l_db) < (l_bb + l_dd)
 
     if is_swapped:
-        # Swap the numpy arrays to mathematically align identities
         pred_bright, pred_dark = pred_dark, pred_bright
-        
-        # Return the corresponding crossed values
         final_lpips_bright = l_db
         final_lpips_dark = l_bd
     else:
         final_lpips_bright = l_bb
         final_lpips_dark = l_dd
 
-    # SSIM and PSNR calculated with correctly aligned outputs
     ssim_bright = structural_similarity(bright_img, pred_bright, data_range=255, channel_axis=-1)
     ssim_dark = structural_similarity(dark_img, pred_dark, data_range=255, channel_axis=-1)
     
@@ -452,11 +434,10 @@ def one_shot_eval(args):
         with torch.no_grad():
             model_out = model(mixed_images, t).sample
             
-            # Extract both outputs directly from the 6-channel UNet map
+            # Follows the start pattern of our main sample method (Primary extraction from channel slice 0:3)
             predicted_bright = model_out[:, :3]
-            predicted_dark = model_out[:, 3:]
+            predicted_dark = (mixed_images - math.sqrt(1.0 - args.alpha_init) * predicted_bright) / math.sqrt(args.alpha_init)
             
-            # Apply bounds clamping for stable image logging and metric consistency
             predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
             predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
 
@@ -481,7 +462,6 @@ def one_shot_eval(args):
 
         with torch.no_grad():
             for k in range(n):
-                # The existing calculate_metrics function will still handle the identity alignment validation
                 sb, sd, pb, pd, lb, ld, is_swapped = calculate_metrics(
                     bright_np[k],
                     dark_np[k],
@@ -531,6 +511,7 @@ def one_shot_eval(args):
     with open(os.path.join(base_dir, "results", "one_shot_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
+
 def launch():
     import argparse
 
@@ -557,9 +538,9 @@ def launch():
     args = parser.parse_args()
     args.image_size = (args.image_size, args.image_size)
 
-    #train(args)
+    train(args)
     eval(args)
-    #one_shot_eval(args)
+    one_shot_eval(args)
 
 
 if __name__ == "__main__":

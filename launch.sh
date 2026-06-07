@@ -2,10 +2,10 @@
 #
 #SBATCH --partition=gpu_min24gb_ext        # Partition where the job will be run. Check with "$ sinfo".
 #SBATCH --qos=gpu_min24gb_ext              # QoS level. Must match the partition name. External users must add the suffix "_ext". Check with "$sacctmgr show qos".
-#SBATCH --job-name=faces_dual_iso        # Job name
+#SBATCH --job-name=faces_dual_pit        # Job name
 #SBATCH --output=slurm_%x.%j.out           # File containing STDOUT output
 #SBATCH --error=slurm_%x.%j.err            # File containing STDERR output. If ommited, use STDOUT.
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python train.py --dataset_path "/nas-ctm01/datasets/public/BIOMETRICS/CELEBA/celebamask-hq-db/CelebA-HQ-img-64x64/" --run_name "faces_dual_iso" --batch_size 256
+python train.py --dataset_path "/nas-ctm01/datasets/public/BIOMETRICS/CELEBA/celebamask-hq-db/CelebA-HQ-img-64x64/" --run_name "faces_dual_pit" --batch_size 256
