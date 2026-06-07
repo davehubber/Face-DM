@@ -42,64 +42,86 @@ class ColdDiffusion:
     def sample(self, model, mixed_image, alpha_init=0.5):
         n = len(mixed_image)
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
-
-        # Track swap state per sample: shape (n, 1, 1, 1)
-        is_swapped = torch.zeros(n, 1, 1, 1, dtype=torch.bool, device=self.device)
-        first_dark = None
-        
-        # Retrieve the initialized LPIPS network instance
-        lpips_model = self._get_lpips_model()
-
         model.eval()
+
+        # ==========================================
+        # STAGE 1: Standard Bright Image Trajectory
+        # ==========================================
         with torch.no_grad():
-            x_t = mixed_image.to(self.device)
+            x_t_bright = mixed_image.to(self.device)
 
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
 
-                model_out = model(x_t, t).sample
-                p1 = model_out[:, :3]  # Assumed Bright (initially)
-                p2 = model_out[:, 3:]  # Assumed Dark (initially)
+                model_out = model(x_t_bright, t).sample
+                predicted_bright = model_out[:, :3]
+                
+                # Standard mathematical dark extraction for Stage 1 step progression
+                predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_bright) / math.sqrt(alpha_init)
+
+                # Clamp intermediate steps
+                predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
+                predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
+
+                # Standard mixing trajectory (Bright image passed first)
+                x_t_bright = x_t_bright - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
+                    predicted_bright, predicted_dark, t - 1
+                )
+
+            # Secure the fully sampled continuous bright anchor (keep in [-1, 1] for mixing)
+            final_bright = torch.clamp(x_t_bright, -1.0, 1.0)
+
+        # ==========================================
+        # STAGE 2: Dark Image Trajectory with Static Bright Guidance
+        # ==========================================
+        is_swapped = torch.zeros(n, 1, 1, 1, dtype=torch.bool, device=self.device)
+        first_dark = None
+        lpips_model = self._get_lpips_model()
+
+        with torch.no_grad():
+            # Reset x_t back to the starting mixture for the dark run
+            x_t_dark = mixed_image.to(self.device)
+
+            for i in reversed(range(1, init_timestep + 1)):
+                t = torch.full((n,), i, device=self.device, dtype=torch.long)
+
+                model_out = model(x_t_dark, t).sample
+                p1 = model_out[:, :3]  # Assumed Bright
+                p2 = model_out[:, 3:]  # Assumed Dark
 
                 if i == init_timestep:
-                    # Capture the initial dark prediction anchor
                     predicted_dark = p2
                     first_dark = p2.clone()
                 else:
-                    # Clamp to [-1, 1] range to ensure stable LPIPS perceptual distance behavior
+                    # Stable clamping for LPIPS compatibility
                     p1_clamped = torch.clamp(p1, -1.0, 1.0)
                     p2_clamped = torch.clamp(p2, -1.0, 1.0)
                     first_dark_clamped = torch.clamp(first_dark, -1.0, 1.0)
 
-                    # Compute batch-wise perceptual distances (returns shape: [n, 1, 1, 1])
+                    # Evaluate identity preservation
                     dist_p1 = lpips_model(p1_clamped, first_dark_clamped)
                     dist_p2 = lpips_model(p2_clamped, first_dark_clamped)
                     
-                    # Check for an identity inversion ONLY if a swap hasn't been locked in yet
+                    # Check and lock swap decisions sample-by-sample
                     new_swap = (~is_swapped) & (dist_p1 < dist_p2)
                     is_swapped = is_swapped | new_swap
                     
-                    # Route channels dynamically based on the persistent mask
                     predicted_dark = torch.where(is_swapped, p1, p2)
 
-                # Mathematically resolve the bright counterpart
-                predicted_bright = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_dark) / math.sqrt(alpha_init)
-
-                # --- CLAMPING LOGIC ---
                 predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
-                predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
-                # --------------------------
 
-                # Pass dark image first to mixing method
-                x_t = x_t - self.mix_images(predicted_dark, predicted_bright, t) + self.mix_images(
-                    predicted_dark, predicted_bright, t - 1
+                # Swapped trajectory mix: Dark is first parameter, 
+                # and the fully sampled 'final_bright' acts as the static second parameter.
+                x_t_dark = x_t_dark - self.mix_images(predicted_dark, final_bright, t) + self.mix_images(
+                    predicted_dark, final_bright, t - 1
                 )
+
+            final_dark = x_t_dark
 
         model.train()
 
-        # Final extraction from converged dark trajectory
-        predicted_bright = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
-        return to_uint8(predicted_bright), to_uint8(x_t)
+        # Convert both cleanly generated paths to uint8 format for logging/evaluation compatibility
+        return to_uint8(final_bright), to_uint8(final_dark)
 
 
 def get_unet(image_size):
@@ -555,8 +577,8 @@ def launch():
     args.image_size = (args.image_size, args.image_size)
 
     #train(args)
-    #eval(args)
-    one_shot_eval(args)
+    eval(args)
+    #one_shot_eval(args)
 
 
 if __name__ == "__main__":
