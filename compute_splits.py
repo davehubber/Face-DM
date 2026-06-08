@@ -223,7 +223,7 @@ def joint_split_and_extract_stats(
 if __name__ == "__main__":
     DIFFAE_FILE = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
     DIFFAE_METADATA = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_metadata.csv"
-    ARCFACE_FILE = "/nas-ctm01/homes/dacordeiro/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
+    ARCFACE_FILE = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
     
     DIFFAE_ROOT = "/nas-ctm01/homes/dacordeiro/diffae/"
     CHECKPOINT = "/nas-ctm01/homes/dacordeiro/Face-DM/ffhq256_autoenc/last.ckpt"
