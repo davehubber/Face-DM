@@ -33,6 +33,7 @@ class ColdDiffusion:
 
     def mix_images(self, bright_image, dark_image, t):
         weight = (self.alteration_per_t * t)[:, None, None, None]
+        # Applied square root to both coefficients
         return bright_image * torch.sqrt(1.0 - weight) + dark_image * torch.sqrt(weight)
 
     def sample_timesteps(self, n):
@@ -45,50 +46,34 @@ class ColdDiffusion:
         model.eval()
         with torch.no_grad():
             x_t = mixed_image.to(self.device)
-            anchor_tracked = None
 
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
 
+                # Model predicts 6 channels: (Bright, Dark)
                 model_out = model(x_t, t).sample
-                p1 = model_out[:, :3]
-                p2 = model_out[:, 3:]
-
-                if i == init_timestep:
-                    # Anchor onto the first 3 channels from the model's first prediction
-                    tracked_pred = p1
-                    anchor_tracked = p1.clone()
-                else:
-                    # Compare current predictions to the first stored prediction anchors
-                    mse_p1 = torch.mean((p1 - anchor_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
-                    mse_p2 = torch.mean((p2 - anchor_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
-                    
-                    # Determine which channel currently holds our anchored identity
-                    swap_mask = mse_p2 < mse_p1
-                    
-                    tracked_pred = torch.where(swap_mask, p2, p1)
-                    
-                    # --- CONDITIONAL ANCHOR UPDATE ---
-                    # If they are swapped, update the anchor with the new prediction for that sample
-                    anchor_tracked = torch.where(swap_mask, tracked_pred, anchor_tracked)
                 
-                # The secondary target is always extracted mathematically 
-                extracted_other = (mixed_image - math.sqrt(1.0 - alpha_init) * tracked_pred) / math.sqrt(alpha_init)
+                # ONLY use the bright image prediction. Discard the UNet's dark prediction.
+                predicted_bright = model_out[:, :3]
+                
+                # Extract the dark image mathematically
+                predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_bright) / math.sqrt(alpha_init)
 
                 # --- CLAMPING LOGIC ---
-                tracked_pred = torch.clamp(tracked_pred, -1.0, 1.0)
-                extracted_other = torch.clamp(extracted_other, -1.0, 1.0)
+                # Safely enforce bounds on the endpoint predictions without clipping the expanded x_t space
+                predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
+                predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
                 # --------------------------
 
-                x_t = x_t - self.mix_images(tracked_pred, extracted_other, t) + self.mix_images(
-                    tracked_pred, extracted_other, t - 1
+                x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
+                    predicted_bright, predicted_dark, t - 1
                 )
 
         model.train()
 
-        # Final mathematical derivation for the output pair execution
-        extracted_other = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
-        return to_uint8(x_t), to_uint8(extracted_other)
+        # Final extraction for returning
+        predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
+        return to_uint8(x_t), to_uint8(predicted_dark)       
 
 
 def get_unet(image_size):
@@ -96,7 +81,7 @@ def get_unet(image_size):
     return UNet2DModel(
         sample_size=resolution,
         in_channels=3,
-        out_channels=6, 
+        out_channels=6, # Updated to predict both images
         layers_per_block=2,
         block_out_channels=(64, 128, 256, 512),
         down_block_types=("DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "DownBlock2D"),
@@ -105,6 +90,7 @@ def get_unet(image_size):
 
 
 def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
+    """Calculates fast validation loss by sampling random timesteps."""
     model.eval()
     loss_sum = torch.zeros(1, device=accelerator.device)
     loss_count = torch.zeros(1, device=accelerator.device)
@@ -117,14 +103,9 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
             model_out = model(x_t, t).sample
             pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
             
-            # Permutation Invariant Loss evaluation (Summed across tokens for collection)
-            loss_perm1 = F.mse_loss(pred_bright_unet, bright_images, reduction="none").sum(dim=[1, 2, 3]) + \
-                         F.mse_loss(pred_dark_unet, dark_images, reduction="none").sum(dim=[1, 2, 3])
-            
-            loss_perm2 = F.mse_loss(pred_bright_unet, dark_images, reduction="none").sum(dim=[1, 2, 3]) + \
-                         F.mse_loss(pred_dark_unet, bright_images, reduction="none").sum(dim=[1, 2, 3])
-
-            loss = torch.minimum(loss_perm1, loss_perm2).sum()
+            # Loss evaluates both UNet predictions against ground truths
+            loss = F.mse_loss(pred_bright_unet, bright_images, reduction="sum") + \
+                   F.mse_loss(pred_dark_unet, dark_images, reduction="sum")
 
             loss_sum += loss.detach()
             loss_count += bright_images.numel()
@@ -212,14 +193,8 @@ def train(args):
                 model_out = model(x_t, t).sample
                 pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
                 
-                # Permutation Invariant Loss formulation per-sample
-                loss_perm1 = F.mse_loss(pred_bright_unet, bright_images, reduction="none").mean(dim=[1, 2, 3]) + \
-                             F.mse_loss(pred_dark_unet, dark_images, reduction="none").mean(dim=[1, 2, 3])
-                
-                loss_perm2 = F.mse_loss(pred_bright_unet, dark_images, reduction="none").mean(dim=[1, 2, 3]) + \
-                             F.mse_loss(pred_dark_unet, bright_images, reduction="none").mean(dim=[1, 2, 3])
-
-                loss = torch.minimum(loss_perm1, loss_perm2).mean()
+                # Combine losses to force the UNet to learn representations for both
+                loss = F.mse_loss(pred_bright_unet, bright_images) + F.mse_loss(pred_dark_unet, dark_images)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -276,21 +251,29 @@ def calculate_metrics(bright_img, dark_img, pred_bright, pred_dark, bright_tenso
         return (tensor.unsqueeze(0).float() - 127.5) / 127.5
 
     with torch.no_grad():
+        # Direct LPIPS mappings
         l_bb = lpips_model(prep_lpips(pred_bright_tensor), prep_lpips(bright_tensor)).item()
         l_dd = lpips_model(prep_lpips(pred_dark_tensor), prep_lpips(dark_tensor)).item()
+        
+        # Crossed LPIPS mappings
         l_bd = lpips_model(prep_lpips(pred_bright_tensor), prep_lpips(dark_tensor)).item()
         l_db = lpips_model(prep_lpips(pred_dark_tensor), prep_lpips(bright_tensor)).item()
 
+    # Alignment Check: If crossed mapping has lower perceptual distance sum, a swap occurred
     is_swapped = (l_bd + l_db) < (l_bb + l_dd)
 
     if is_swapped:
+        # Swap the numpy arrays to mathematically align identities
         pred_bright, pred_dark = pred_dark, pred_bright
+        
+        # Return the corresponding crossed values
         final_lpips_bright = l_db
         final_lpips_dark = l_bd
     else:
         final_lpips_bright = l_bb
         final_lpips_dark = l_dd
 
+    # SSIM and PSNR calculated with correctly aligned outputs
     ssim_bright = structural_similarity(bright_img, pred_bright, data_range=255, channel_axis=-1)
     ssim_dark = structural_similarity(dark_img, pred_dark, data_range=255, channel_axis=-1)
     
@@ -440,10 +423,13 @@ def one_shot_eval(args):
         with torch.no_grad():
             model_out = model(mixed_images, t).sample
             
-            # Follows the start pattern of our main sample method (Primary extraction from channel slice 0:3)
+            # Use only the bright prediction
             predicted_bright = model_out[:, :3]
+            
+            # Mathematically extract the dark prediction
             predicted_dark = (mixed_images - math.sqrt(1.0 - args.alpha_init) * predicted_bright) / math.sqrt(args.alpha_init)
             
+            # Apply bounds clamping for the one-shot preview (optional but recommended for consistency)
             predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
             predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
 
@@ -518,6 +504,188 @@ def one_shot_eval(args):
         f.write(metrics_report)
 
 
+def evaluate_brightness_correlation(args):
+    """
+    Evaluates the statistical correlation between image pair brightness differences 
+    and the model's capacity to cleanly separate and reconstruct identities.
+    """
+    accelerator = Accelerator()
+    device = accelerator.device
+    base_dir = os.path.join("experiments", args.run_name)
+
+    # Load original validation dataloader (ordered by brightness on-the-fly)
+    val_dataloader = get_data(args, "val")
+    model = get_unet(args.image_size)
+
+    model, val_dataloader = accelerator.prepare(model, val_dataloader)
+    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
+    
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"No checkpoint found at {model_path}. Please train the model first.")
+        
+    accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+
+    diffusion = ColdDiffusion(
+        max_timesteps=args.max_timesteps,
+        alpha_max=args.alpha_max,
+        device=device,
+    )
+    lpips_model = lpips.LPIPS(net="alex").to(device)
+
+    # Data collection arrays
+    brightness_deltas = []
+    ssim_b_list, ssim_d_list = [], []
+    psnr_b_list, psnr_d_list = [], []
+    lpips_b_list, lpips_d_list = [], []
+    swaps_list = []
+
+    print("\n>>> Launching Brightness Delta vs Separation Correlation Study...")
+
+    for bright_images, dark_images in val_dataloader:
+        mixed_images = bright_images * math.sqrt(1.0 - args.alpha_init) + dark_images * math.sqrt(args.alpha_init)
+        
+        # Original iterative sampling loop 
+        predicted_bright, predicted_dark = diffusion.sample(model, mixed_images, alpha_init=args.alpha_init)    
+
+        bright_uint8 = to_uint8(bright_images)
+        dark_uint8 = to_uint8(dark_images)
+
+        bright_np = bright_uint8.cpu().permute(0, 2, 3, 1).numpy()
+        predicted_bright_np = predicted_bright.cpu().permute(0, 2, 3, 1).numpy()
+        dark_np = dark_uint8.cpu().permute(0, 2, 3, 1).numpy()
+        predicted_dark_np = predicted_dark.cpu().permute(0, 2, 3, 1).numpy()
+
+        with torch.no_grad():
+            for k in range(len(bright_np)):
+                # Calculate mean scalar brightness on absolute 0-255 scale
+                b_mean = bright_np[k].mean()
+                d_mean = dark_np[k].mean()
+                delta_b = b_mean - d_mean # Always positive due to original sorting rules
+                
+                # Use original metrics pipeline (including cross-mapping alignment check)
+                sb, sd, pb, pd, lb, ld, is_swapped = calculate_metrics(
+                    bright_np[k],
+                    dark_np[k],
+                    predicted_bright_np[k],
+                    predicted_dark_np[k],
+                    bright_uint8[k],
+                    dark_uint8[k],
+                    predicted_bright[k],
+                    predicted_dark[k],
+                    lpips_model,
+                )
+
+                brightness_deltas.append(delta_b)
+                ssim_b_list.append(sb)
+                ssim_d_list.append(sd)
+                psnr_b_list.append(pb)
+                psnr_d_list.append(pd)
+                lpips_b_list.append(lb)
+                lpips_d_list.append(ld)
+                swaps_list.append(1.0 if is_swapped else 0.0)
+
+    # Convert collections to numpy for statistical analysis
+    brightness_deltas = np.array(brightness_deltas)
+    ssim_b_list = np.array(ssim_b_list)
+    ssim_d_list = np.array(ssim_d_list)
+    psnr_b_list = np.array(psnr_b_list)
+    psnr_d_list = np.array(psnr_d_list)
+    lpips_b_list = np.array(lpips_b_list)
+    lpips_d_list = np.array(lpips_d_list)
+    swaps_list = np.array(swaps_list)
+
+    # Helper helper function for Pearson r correlation
+    def compute_pearson_r(x, y):
+        if len(np.unique(x)) <= 1 or len(np.unique(y)) <= 1:
+            return 0.0
+        return np.corrcoef(x, y)[0, 1]
+
+    # Calculate correlation statistics
+    r_ssim_b = compute_pearson_r(brightness_deltas, ssim_b_list)
+    r_ssim_d = compute_pearson_r(brightness_deltas, ssim_d_list)
+    r_psnr_b = compute_pearson_r(brightness_deltas, psnr_b_list)
+    r_psnr_d = compute_pearson_r(brightness_deltas, psnr_d_list)
+    r_lpips_b = compute_pearson_r(brightness_deltas, lpips_b_list)
+    r_lpips_d = compute_pearson_r(brightness_deltas, lpips_d_list)
+    r_swaps = compute_pearson_r(brightness_deltas, swaps_list)
+
+    # Stratified Quartile Binning Analysis
+    quantiles = np.percentile(brightness_deltas, [25, 50, 75])
+    bin_edges = np.concatenate(([brightness_deltas.min()], quantiles, [brightness_deltas.max()]))
+    
+    bin_reports = []
+    for i in range(4):
+        if i == 3:
+            mask = (brightness_deltas >= bin_edges[i]) & (brightness_deltas <= bin_edges[i+1])
+        else:
+            mask = (brightness_deltas >= bin_edges[i]) & (brightness_deltas < bin_edges[i+1])
+        
+        if np.sum(mask) == 0:
+            continue
+            
+        bin_reports.append({
+            "range": f"{bin_edges[i]:.2f} to {bin_edges[i+1]:.2f}",
+            "count": np.sum(mask),
+            "mean_delta": np.mean(brightness_deltas[mask]),
+            "ssim_b": np.mean(ssim_b_list[mask]),
+            "ssim_d": np.mean(ssim_d_list[mask]),
+            "psnr_b": np.mean(psnr_b_list[mask]),
+            "psnr_d": np.mean(psnr_d_list[mask]),
+            "lpips_b": np.mean(lpips_b_list[mask]),
+            "lpips_d": np.mean(lpips_d_list[mask]),
+            "swap_rate": np.mean(swaps_list[mask]) * 100
+        })
+
+    # Build clear, scannable report text structure
+    report = []
+    report.append("=========================================================================")
+    report.append("        COLD DIFFUSION IDENTITY SEPARATION CORRELATION REPORT")
+    report.append("=========================================================================\n")
+    report.append(f"Target Experiment Split: Validation / Test Set")
+    report.append(f"Total Image Pairs Evaluated: {len(brightness_deltas)}")
+    report.append(f"Observed Brightness Deltas: Min {brightness_deltas.min():.2f} to Max {brightness_deltas.max():.2f}\n")
+    
+    report.append("-------------------------------------------------------------------------")
+    report.append("1. LINEAR CORRELATION ANALYSIS (Pearson r Coefficients)")
+    report.append("-------------------------------------------------------------------------")
+    report.append("Interpretation Guide:")
+    report.append("  - Positive r for SSIM/PSNR means wider brightness gaps yield higher generation quality.")
+    report.append("  - Negative r for LPIPS/Swaps means wider brightness gaps reduce perceptual error/swapping.\n")
+    report.append(f"  Brightness Delta vs SSIM Bright  : {r_ssim_b:+.4f}")
+    report.append(f"  Brightness Delta vs SSIM Dark    : {r_ssim_d:+.4f}")
+    report.append(f"  Brightness Delta vs PSNR Bright  : {r_psnr_b:+.4f}")
+    report.append(f"  Brightness Delta vs PSNR Dark    : {r_psnr_d:+.4f}")
+    report.append(f"  Brightness Delta vs LPIPS Bright : {r_lpips_b:+.4f}")
+    report.append(f"  Brightness Delta vs LPIPS Dark   : {r_lpips_d:+.4f}")
+    report.append(f"  Brightness Delta vs Swap Rate    : {r_swaps:+.4f}\n")
+    
+    report.append("-------------------------------------------------------------------------")
+    report.append("2. STRATIFIED QUARTILE ANALYSIS (Dataset Split into 4 Equal-Sized Bins)")
+    report.append("-------------------------------------------------------------------------")
+    for idx, br in enumerate(bin_reports):
+        report.append(f"\nBIN {idx+1} | Brightness Difference Range: [{br['range']}] (Samples = {br['count']})")
+        report.append(f"  -> Average Brightness Delta : {br['mean_delta']:.2f}")
+        report.append(f"  -> Identity Swap Rate       : {br['swap_rate']:.2f}%")
+        report.append(f"  -> SSIM Reconstructed (B/D) : {br['ssim_b']:.4f} / {br['ssim_d']:.4f}")
+        report.append(f"  -> PSNR Reconstructed (B/D) : {br['psnr_b']:.2f} dB / {br['psnr_d']:.2f} dB")
+        report.append(f"  -> LPIPS Distances    (B/D) : {br['lpips_b']:.4f} / {br['lpips_d']:.4f}")
+
+    report_output = "\n".join(report)
+    
+    # Print out to terminal window console
+    print(report_output)
+    
+    # Save systematically to final_metrics path area
+    out_dir = os.path.join(base_dir, "results")
+    os.makedirs(out_dir, exist_ok=True)
+    out_file = os.path.join(out_dir, "brightness_separation_analysis.txt")
+    with open(out_file, "w") as f:
+        f.write(report_output)
+        
+    print(f"\n>>> Statistical analysis report successfully dumped to: {out_file}\n")
+
+
 def launch():
     import argparse
 
@@ -545,8 +713,9 @@ def launch():
     args.image_size = (args.image_size, args.image_size)
 
     #train(args)
-    eval(args)
+    #eval(args)
     #one_shot_eval(args)
+    evaluate_brightness_correlation(args)
 
 
 if __name__ == "__main__":
