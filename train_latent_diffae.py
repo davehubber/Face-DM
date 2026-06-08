@@ -149,23 +149,43 @@ class DeterministicColdDemorph(nn.Module):
         w2 = torch.sqrt(0.5 * gamma)
         return w1 * z1 + w2 * z2
 
-    def compute_loss(self, z1, z2):
+    def compute_loss(self, z1, z2, t=None):
         b = z1.shape[0]
-        t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
+        if t is None:
+            t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
         
         x_t = self.degrade(z1, z2, t)
         pred = self.model(x_t, t)
         
         pred_z1_raw, pred_z2_raw = pred.chunk(2, dim=-1)
         
+        # 1. Standard L1 PIT Loss
         loss_A = F.l1_loss(pred_z1_raw, z1, reduction='none').mean(dim=-1) + \
                  F.l1_loss(pred_z2_raw, z2, reduction='none').mean(dim=-1)
                  
         loss_B = F.l1_loss(pred_z1_raw, z2, reduction='none').mean(dim=-1) + \
                  F.l1_loss(pred_z2_raw, z1, reduction='none').mean(dim=-1)
         
-        loss = torch.min(loss_A, loss_B)
-        return loss.mean()
+        pit_loss = torch.min(loss_A, loss_B)
+        
+        # 2. The Spread Penalty (Magnitude Matching)
+        # Using L2 norm to measure the Euclidean spread between embeddings
+        true_spread = torch.norm(z1 - z2, p=2, dim=-1)
+        pred_spread = torch.norm(pred_z1_raw - pred_z2_raw, p=2, dim=-1)
+        
+        spread_loss = F.mse_loss(pred_spread, true_spread, reduction='none')
+        
+        # 3. Dynamic Weighting (Highest at t=T, zero at t=0)
+        # We square the ratio so it decays sharply, allowing PIT to dominate late in sampling
+        t_ratio = (t.float() / self.num_timesteps) ** 2 
+        
+        # Base lambda hyperparameter (you may need to tune this, 0.1 to 0.5 is a good start)
+        lambda_spread = 0.25 
+        
+        # 4. Total Loss
+        total_loss = pit_loss + (lambda_spread * t_ratio * spread_loss)
+        
+        return total_loss.mean()        
 
     @torch.no_grad()
     def tacos_sample_loop(self, c):
@@ -214,12 +234,12 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     
     if not metrics_path.exists():
         with open(metrics_path, "w", newline="") as f:
-            csv.writer(f).writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_TACOs_Reconstruct_L1"])
+            csv.writer(f).writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_Last_T_Loss", "Val_TACOs_Reconstruct_L1"])
             
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
     
-    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=32_768, shuffle=True, num_workers=8)
+    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=16_384, shuffle=True, num_workers=8)
     val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
@@ -227,7 +247,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps
+        "learning_rate": 1e-4, "batch_size": 16_384, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps
     })
 
     best_val_loss = float("inf")
@@ -248,15 +268,22 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
         
         net.eval()
         val_cheap_loss = 0.0
+        val_last_t_loss = 0.0
         val_tacos_loss = None
         
         with torch.no_grad():
             for batch_z1, batch_z2 in val_loader:
                 batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
+                # 1. Regular validation loss (randomized uniform t selection)
                 val_cheap_loss += diffusion.compute_loss(batch_z1, batch_z2).item()
-        avg_val_cheap_loss = val_cheap_loss / len(val_loader)
+                
+                # 2. Hard boundary validation loss (locked strictly at final timestep t=T)
+                fixed_t = torch.full((batch_z1.shape[0],), diffusion.num_timesteps, device=device, dtype=torch.long)
+                val_last_t_loss += diffusion.compute_loss(batch_z1, batch_z2, t=fixed_t).item()
 
-        # Updated logging execution frequency to trigger every 25 epochs
+        avg_val_cheap_loss = val_cheap_loss / len(val_loader)
+        avg_val_last_t_loss = val_last_t_loss / len(val_loader)
+
         if (epoch + 1) % 25 == 0 or (epoch + 1) == epochs:
             val_tacos_loss_total = 0.0
             with torch.no_grad():
@@ -270,12 +297,23 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
                     val_tacos_loss_total += torch.min(dist_a, dist_b).mean().item()
             val_tacos_loss = val_tacos_loss_total / len(val_loader)
             
-        log_dict = {"epoch": epoch + 1, "train_loss": avg_train_loss, "val_cheap_loss": avg_val_cheap_loss}
+        log_dict = {
+            "epoch": epoch + 1, 
+            "train_loss": avg_train_loss, 
+            "val_cheap_loss": avg_val_cheap_loss,
+            "val_last_t_loss": avg_val_last_t_loss
+        }
         if val_tacos_loss is not None: log_dict["val_tacos_reconstruct_l1"] = val_tacos_loss
         wandb.log(log_dict)
         
         with open(metrics_path, "a", newline="") as f:
-            csv.writer(f).writerow([epoch + 1, f"{avg_train_loss:.6f}", f"{avg_val_cheap_loss:.6f}", f"{val_tacos_loss:.6f}" if val_tacos_loss is not None else "N/A"])
+            csv.writer(f).writerow([
+                epoch + 1, 
+                f"{avg_train_loss:.6f}", 
+                f"{avg_val_cheap_loss:.6f}", 
+                f"{avg_val_last_t_loss:.6f}",
+                f"{val_tacos_loss:.6f}" if val_tacos_loss is not None else "N/A"
+            ])
             
         checkpoint_data = {'epoch': epoch + 1, 'model_state_dict': net.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}
         torch.save(checkpoint_data, ckpt_dir / "last.pt")
@@ -284,7 +322,11 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
             best_val_loss = avg_val_cheap_loss
             torch.save(checkpoint_data, ckpt_dir / "best.pt")
             
-        print(f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} | Val Cheap Loss: {avg_val_cheap_loss:.4f}" + (f" | Val TACOs L1: {val_tacos_loss:.4f}" if val_tacos_loss is not None else ""))
+        print(
+            f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} | "
+            f"Val Cheap Loss: {avg_val_cheap_loss:.4f} | Val Last-T Loss: {avg_val_last_t_loss:.4f}" + 
+            (f" | Val TACOs L1: {val_tacos_loss:.4f}" if val_tacos_loss is not None else "")
+        )
     wandb.finish()
 
 # ==========================================
@@ -376,7 +418,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    RUN_NAME = "diffae_baseline"
+    RUN_NAME = "diffae_spreadLoss0.25"
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
