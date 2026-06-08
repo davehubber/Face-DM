@@ -1,8 +1,0 @@
-Size of test: 1000 source images, 1000 pairs
-Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]
-Loading model from: /nas-ctm01/homes/dacordeiro/.conda/envs/test/lib/python3.10/site-packages/lpips/weights/v0.1/alex.pth
-
---- Running Full Validation Swap Evaluation ---
-Evaluation complete. Report saved to: experiments/flowers_baseline/results/identity_swap_report.txt
-Consolidated scientific grids saved to: experiments/flowers_baseline/samples/severe_swaps
-
