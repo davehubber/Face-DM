@@ -177,15 +177,15 @@ class DeterministicColdDemorph(nn.Module):
         
         # 3. Dynamic Weighting (Highest at t=T, zero at t=0)
         # We square the ratio so it decays sharply, allowing PIT to dominate late in sampling
-        t_ratio = (t.float() / self.num_timesteps) ** 2 
+        # t_ratio = (t.float() / self.num_timesteps) ** 2 
         
         # Base lambda hyperparameter (you may need to tune this, 0.1 to 0.5 is a good start)
-        lambda_spread = 0.25 
+        lambda_spread = 0.1
         
         # 4. Total Loss
-        total_loss = pit_loss + (lambda_spread * t_ratio * spread_loss)
+        total_loss = pit_loss + (lambda_spread * spread_loss)
         
-        return total_loss.mean()        
+        return total_loss.mean()
 
     @torch.no_grad()
     def tacos_sample_loop(self, c):
@@ -223,9 +223,33 @@ class DeterministicColdDemorph(nn.Module):
         return final_z1, final_z2
 
 # ==========================================
-# 4. Training & Validation Mechanics
+# 4. Early Stopping Tracker Engine
 # ==========================================
-def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 300, epochs: int = 150):
+class EarlyStopping:
+    """Monitors validation improvement metrics and stops training when stuck."""
+    def __init__(self, patience: int = 15, min_delta: float = 1e-5):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = float('inf')
+        self.early_stop = False
+
+    def __call__(self, val_loss: float) -> bool:
+        # Check if the validation step achieved a noticeable performance improvement
+        if val_loss < (self.best_loss - self.min_delta):
+            self.best_loss = val_loss
+            self.counter = 0  # Reset patience window
+        else:
+            self.counter += 1
+            print(f" EarlyStopping Counter: {self.counter} out of {self.patience}")
+            if self.counter >= self.patience:
+                self.early_stop = True
+        return self.early_stop
+
+# ==========================================
+# 5. Training & Validation Mechanics
+# ==========================================
+def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 300, epochs: int = 150, patience: int = 20):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
     ckpt_dir = exp_dir / "checkpoints"
@@ -246,8 +270,11 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
     
+    # Initialize Early Stopping class instance
+    early_stopper = EarlyStopping(patience=patience, min_delta=1e-5)
+    
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 16_384, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps
+        "learning_rate": 1e-4, "batch_size": 16_384, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience
     })
 
     best_val_loss = float("inf")
@@ -274,10 +301,8 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
         with torch.no_grad():
             for batch_z1, batch_z2 in val_loader:
                 batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-                # 1. Regular validation loss (randomized uniform t selection)
                 val_cheap_loss += diffusion.compute_loss(batch_z1, batch_z2).item()
                 
-                # 2. Hard boundary validation loss (locked strictly at final timestep t=T)
                 fixed_t = torch.full((batch_z1.shape[0],), diffusion.num_timesteps, device=device, dtype=torch.long)
                 val_last_t_loss += diffusion.compute_loss(batch_z1, batch_z2, t=fixed_t).item()
 
@@ -327,10 +352,16 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
             f"Val Cheap Loss: {avg_val_cheap_loss:.4f} | Val Last-T Loss: {avg_val_last_t_loss:.4f}" + 
             (f" | Val TACOs L1: {val_tacos_loss:.4f}" if val_tacos_loss is not None else "")
         )
+
+        # Evaluate early stopping criteria using the cheap loss tracker
+        if early_stopper(avg_val_cheap_loss):
+            print(f"\n[EARLY STOPPING TRIGGERED] Validation profile plateaued for {patience} epochs. Terminating run.")
+            break
+
     wandb.finish()
 
 # ==========================================
-# 5. Evaluation Script
+# 6. Evaluation Script
 # ==========================================
 def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 300, mode: str = 'iterative'):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -370,8 +401,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
             dist_b = F.l1_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
             mask_a = (dist_a <= dist_b).unsqueeze(-1)
             
-            aligned_pred_z1 = torch.where(mask_a, pred_z1, pred_z2)
-            aligned_pred_z2 = torch.where(mask_a, pred_z2, pred_z1)
+            aligned_pred_z1 = torch.where(mask_a, pred_z1, batch_z2)
+            aligned_pred_z2 = torch.where(mask_a, pred_z2, batch_z1)
 
             # 1. Predictions vs Ground-Truth Alignment
             l1_gt_1 = F.l1_loss(aligned_pred_z1, batch_z1).item()
@@ -418,8 +449,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    RUN_NAME = "diffae_spreadLoss0.25"
+    RUN_NAME = "diffae_spreadLoss0.1"
     
-    train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150)
+    train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='iterative')
