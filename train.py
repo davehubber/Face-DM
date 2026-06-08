@@ -45,7 +45,7 @@ class ColdDiffusion:
         model.eval()
         with torch.no_grad():
             x_t = mixed_image.to(self.device)
-            prev_tracked = None
+            anchor_tracked = None
 
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
@@ -57,14 +57,20 @@ class ColdDiffusion:
                 if i == init_timestep:
                     # Anchor onto the first 3 channels from the model's first prediction
                     tracked_pred = p1
-                    prev_tracked = p1.clone()
+                    anchor_tracked = p1.clone()
                 else:
-                    # Trace the anchored identity step-by-step using MSE
-                    mse_p1 = torch.mean((p1 - prev_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
-                    mse_p2 = torch.mean((p2 - prev_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
+                    # Compare current predictions to the first stored prediction anchors
+                    mse_p1 = torch.mean((p1 - anchor_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
+                    mse_p2 = torch.mean((p2 - anchor_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
                     
-                    tracked_pred = torch.where(mse_p1 < mse_p2, p1, p2)
-                    prev_tracked = tracked_pred.clone()
+                    # Determine which channel currently holds our anchored identity
+                    swap_mask = mse_p2 < mse_p1
+                    
+                    tracked_pred = torch.where(swap_mask, p2, p1)
+                    
+                    # --- CONDITIONAL ANCHOR UPDATE ---
+                    # If they are swapped, update the anchor with the new prediction for that sample
+                    anchor_tracked = torch.where(swap_mask, tracked_pred, anchor_tracked)
                 
                 # The secondary target is always extracted mathematically 
                 extracted_other = (mixed_image - math.sqrt(1.0 - alpha_init) * tracked_pred) / math.sqrt(alpha_init)
@@ -82,7 +88,7 @@ class ColdDiffusion:
 
         # Final mathematical derivation for the output pair execution
         extracted_other = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
-        return to_uint8(x_t), to_uint8(extracted_other)       
+        return to_uint8(x_t), to_uint8(extracted_other)
 
 
 def get_unet(image_size):
