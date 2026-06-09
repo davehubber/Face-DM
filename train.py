@@ -43,6 +43,10 @@ class ColdDiffusion:
         n = len(mixed_image)
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
 
+        # Track swap state per sample: shape (n, 1, 1, 1)
+        is_swapped = torch.zeros(n, 1, 1, 1, dtype=torch.bool, device=self.device)
+        first_dark = None
+
         model.eval()
         with torch.no_grad():
             x_t = mixed_image.to(self.device)
@@ -50,30 +54,44 @@ class ColdDiffusion:
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
 
-                # Model predicts 6 channels: (Bright, Dark)
                 model_out = model(x_t, t).sample
-                
-                # ONLY use the bright image prediction. Discard the UNet's dark prediction.
-                predicted_bright = model_out[:, :3]
-                
-                # Extract the dark image mathematically
-                predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_bright) / math.sqrt(alpha_init)
+                p1 = model_out[:, :3]  # Assumed Bright (initially)
+                p2 = model_out[:, 3:]  # Assumed Dark (initially)
+
+                if i == init_timestep:
+                    # Capture the initial dark prediction anchor
+                    predicted_dark = p2
+                    first_dark = p2.clone()
+                else:
+                    # Compute sample-wise MSE against the static initial dark anchor
+                    mse_p1 = torch.mean((p1 - first_dark) ** 2, dim=[1, 2, 3], keepdim=True)
+                    mse_p2 = torch.mean((p2 - first_dark) ** 2, dim=[1, 2, 3], keepdim=True)
+                    
+                    # Check for an identity inversion ONLY if a swap hasn't been locked in yet
+                    new_swap = (~is_swapped) & (mse_p1 < mse_p2)
+                    is_swapped = is_swapped | new_swap
+                    
+                    # Route channels dynamically based on the persistent mask
+                    predicted_dark = torch.where(is_swapped, p1, p2)
+
+                # Mathematically resolve the bright counterpart
+                predicted_bright = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_dark) / math.sqrt(alpha_init)
 
                 # --- CLAMPING LOGIC ---
-                # Safely enforce bounds on the endpoint predictions without clipping the expanded x_t space
-                predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
                 predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
+                predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
                 # --------------------------
 
-                x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
-                    predicted_bright, predicted_dark, t - 1
+                # Pass dark image first to mixing method
+                x_t = x_t - self.mix_images(predicted_dark, predicted_bright, t) + self.mix_images(
+                    predicted_dark, predicted_bright, t - 1
                 )
 
         model.train()
 
-        # Final extraction for returning
-        predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
-        return to_uint8(x_t), to_uint8(predicted_dark)       
+        # Final extraction from converged dark trajectory
+        predicted_bright = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
+        return to_uint8(predicted_bright), to_uint8(x_t)
 
 
 def get_unet(image_size):
@@ -554,7 +572,7 @@ def launch():
 
     #train(args)
     eval(args)
-    one_shot_eval(args)
+    #one_shot_eval(args)
 
 
 if __name__ == "__main__":
