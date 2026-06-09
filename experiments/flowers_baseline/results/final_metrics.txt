@@ -7,3 +7,5 @@ PSNR Bright: 18.9434
 PSNR Dark: 18.9392
 LPIPS Bright: 0.1313
 LPIPS Dark: 0.1454
+Success Rate Bright (%S): 89.30%
+Success Rate Dark (%S): 90.10%
