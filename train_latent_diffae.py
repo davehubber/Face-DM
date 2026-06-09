@@ -244,7 +244,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
     
     # Training Batch Size configured to 16,384
-    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=16_384, shuffle=True, num_workers=8)
+    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=32_768, shuffle=True, num_workers=8)
     val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
@@ -254,7 +254,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     early_stopper = EarlyStopping(patience=patience, min_delta=1e-5)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 16_384, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience
+        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience
     })
 
     best_val_loss = float("inf")
