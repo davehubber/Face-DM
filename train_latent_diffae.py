@@ -169,21 +169,17 @@ class DeterministicColdDemorph(nn.Module):
         pit_loss = torch.min(loss_A, loss_B)
         
         # 2. The Spread Penalty (Magnitude Matching)
-        # Using L2 norm to measure the Euclidean spread between embeddings
         true_spread = torch.norm(z1 - z2, p=2, dim=-1)
         pred_spread = torch.norm(pred_z1_raw - pred_z2_raw, p=2, dim=-1)
         
         spread_loss = F.mse_loss(pred_spread, true_spread, reduction='none')
         
-        # 3. Dynamic Weighting (Highest at t=T, zero at t=0)
-        # We square the ratio so it decays sharply, allowing PIT to dominate late in sampling
-        # t_ratio = (t.float() / self.num_timesteps) ** 2 
-        
-        # Base lambda hyperparameter (you may need to tune this, 0.1 to 0.5 is a good start)
+        # Conditional step: activate spread_loss ONLY at the last timestep (t == T)
+        is_last_t = (t == self.num_timesteps).float()
         lambda_spread = 0.1
         
-        # 4. Total Loss
-        total_loss = pit_loss + (lambda_spread * spread_loss)
+        # 4. Total Loss Calculation
+        total_loss = pit_loss + (lambda_spread * spread_loss * is_last_t)
         
         return total_loss.mean()
 
@@ -235,10 +231,9 @@ class EarlyStopping:
         self.early_stop = False
 
     def __call__(self, val_loss: float) -> bool:
-        # Check if the validation step achieved a noticeable performance improvement
         if val_loss < (self.best_loss - self.min_delta):
             self.best_loss = val_loss
-            self.counter = 0  # Reset patience window
+            self.counter = 0  
         else:
             self.counter += 1
             print(f" EarlyStopping Counter: {self.counter} out of {self.patience}")
@@ -270,7 +265,6 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
     
-    # Initialize Early Stopping class instance
     early_stopper = EarlyStopping(patience=patience, min_delta=1e-5)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
@@ -353,7 +347,6 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
             (f" | Val TACOs L1: {val_tacos_loss:.4f}" if val_tacos_loss is not None else "")
         )
 
-        # Evaluate early stopping criteria using the cheap loss tracker
         if early_stopper(avg_val_cheap_loss):
             print(f"\n[EARLY STOPPING TRIGGERED] Validation profile plateaued for {patience} epochs. Terminating run.")
             break
@@ -449,7 +442,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    RUN_NAME = "diffae_spreadLoss0.1"
+    RUN_NAME = "diffae_spreadLoss0.1_finalTS"
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
