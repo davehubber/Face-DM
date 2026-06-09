@@ -13,7 +13,7 @@ import csv
 # 1. Dataset & Data Loading
 # ==========================================
 class ColdDiffAEDemorphTrainDataset(Dataset):
-    """Generates random on-the-fly training pairs from the training matrix."""
+    """Generates random on-the-fly training pairs and strictly enforces magnitude ordering."""
     def __init__(self, embeddings: np.ndarray, epoch_size: int = 1_000_000):
         self.embeddings = embeddings
         self.epoch_size = epoch_size
@@ -27,11 +27,17 @@ class ColdDiffAEDemorphTrainDataset(Dataset):
         offset = np.random.randint(1, self.num_samples)
         idx2 = (idx1 + offset) % self.num_samples
             
-        return (torch.tensor(self.embeddings[idx1], dtype=torch.float32), 
-                torch.tensor(self.embeddings[idx2], dtype=torch.float32))
+        z1 = self.embeddings[idx1]
+        z2 = self.embeddings[idx2]
+        
+        # Enforce ordering: z1 must always be the embedding with the smaller magnitude
+        if np.linalg.norm(z1) > np.linalg.norm(z2):
+            z1, z2 = z2, z1
+            
+        return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
 
 class ColdDiffAEDemorphTestPairsDataset(Dataset):
-    """Loads pre-paired evaluation arrays directly from disk."""
+    """Loads pre-paired evaluation arrays and strictly enforces magnitude ordering."""
     def __init__(self, paired_embeddings: np.ndarray):
         self.pairs = paired_embeddings
 
@@ -41,6 +47,11 @@ class ColdDiffAEDemorphTestPairsDataset(Dataset):
     def __getitem__(self, idx):
         z1 = self.pairs[idx, 0]
         z2 = self.pairs[idx, 1]
+        
+        # Enforce ordering: z1 must always be the embedding with the smaller magnitude
+        if np.linalg.norm(z1) > np.linalg.norm(z2):
+            z1, z2 = z2, z1
+            
         return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
 
 def load_split_and_normalize(base_path_str: str, split: str) -> np.ndarray:
@@ -134,7 +145,7 @@ class ColdDemorphNet(nn.Module):
         return self.final_linear(h)
 
 # ==========================================
-# 3. Cold Diffusion Process (Dual-Target PIT)
+# 3. Cold Diffusion Process (Ordered Trajectory)
 # ==========================================
 class DeterministicColdDemorph(nn.Module):
     def __init__(self, model, num_timesteps=300):
@@ -159,28 +170,11 @@ class DeterministicColdDemorph(nn.Module):
         
         pred_z1_raw, pred_z2_raw = pred.chunk(2, dim=-1)
         
-        # 1. Standard L1 PIT Loss
-        loss_A = F.l1_loss(pred_z1_raw, z1, reduction='none').mean(dim=-1) + \
-                 F.l1_loss(pred_z2_raw, z2, reduction='none').mean(dim=-1)
-                 
-        loss_B = F.l1_loss(pred_z1_raw, z2, reduction='none').mean(dim=-1) + \
-                 F.l1_loss(pred_z2_raw, z1, reduction='none').mean(dim=-1)
+        # Static, ordered L1 Loss mapping (PIT and Spread Loss removed completely)
+        loss_z1 = F.l1_loss(pred_z1_raw, z1, reduction='none').mean(dim=-1)
+        loss_z2 = F.l1_loss(pred_z2_raw, z2, reduction='none').mean(dim=-1)
         
-        pit_loss = torch.min(loss_A, loss_B)
-        
-        # 2. The Spread Penalty (Magnitude Matching)
-        true_spread = torch.norm(z1 - z2, p=2, dim=-1)
-        pred_spread = torch.norm(pred_z1_raw - pred_z2_raw, p=2, dim=-1)
-        
-        spread_loss = F.mse_loss(pred_spread, true_spread, reduction='none')
-        
-        # Conditional step: activate spread_loss ONLY at the last timestep (t == T)
-        is_last_t = (t == self.num_timesteps).float()
-        lambda_spread = 0.1
-        
-        # 4. Total Loss Calculation
-        total_loss = pit_loss + (lambda_spread * spread_loss * is_last_t)
-        
+        total_loss = loss_z1 + loss_z2
         return total_loss.mean()
 
     @torch.no_grad()
@@ -190,23 +184,15 @@ class DeterministicColdDemorph(nn.Module):
         timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
         x_t = c.clone()
         
-        prev_pred_z1 = None
         for t in tqdm(timesteps, desc='TACOs Sampling', leave=False):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
             pred_raw = self.model(x_t, t_batch)
-            pred_raw_1, pred_raw_2 = pred_raw.chunk(2, dim=-1)
             
-            if prev_pred_z1 is None:
-                pred_z1 = pred_raw_1
-            else:
-                dist_1 = F.l1_loss(pred_raw_1, prev_pred_z1, reduction='none').mean(dim=-1)
-                dist_2 = F.l1_loss(pred_raw_2, prev_pred_z1, reduction='none').mean(dim=-1)
-                
-                swap_mask = dist_2 < dist_1
-                pred_z1 = torch.where(swap_mask.unsqueeze(-1), pred_raw_2, pred_raw_1)
+            # Unpack directly—Head 1 is statically bound to our target z1 path
+            pred_z1, _ = pred_raw.chunk(2, dim=-1)
             
+            # Mathematically extract z2 to keep the variance-preserving path exact
             pred_z2 = self.SQRT_2 * c - pred_z1
-            prev_pred_z1 = pred_z1
             
             t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
             deg_t = self.degrade(pred_z1, pred_z2, t_batch)
@@ -222,7 +208,6 @@ class DeterministicColdDemorph(nn.Module):
 # 4. Early Stopping Tracker Engine
 # ==========================================
 class EarlyStopping:
-    """Monitors validation improvement metrics and stops training when stuck."""
     def __init__(self, patience: int = 15, min_delta: float = 1e-5):
         self.patience = patience
         self.min_delta = min_delta
@@ -258,6 +243,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
     
+    # Training Batch Size configured to 16,384
     train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=16_384, shuffle=True, num_workers=8)
     val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
 
@@ -389,7 +375,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
                 pred_z1 = pred_raw_1
                 pred_z2 = SQRT_2 * batch_c_vp - pred_z1
 
-            # --- Permutation-Invariant Alignment Logic ---
+            # --- Permutation-Invariant Alignment Logic Retained for Evaluation ---
             dist_a = F.l1_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
             dist_b = F.l1_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
             mask_a = (dist_a <= dist_b).unsqueeze(-1)
@@ -442,7 +428,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    RUN_NAME = "diffae_spreadLoss0.1_finalTS"
+    RUN_NAME = "diffae_smallMag"
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
