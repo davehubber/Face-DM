@@ -1,0 +1,13 @@
+==================================================
+      DIFFUSION AUTOENCODER PCA ANALYSIS REPORT   
+==================================================
+
+Training split sample count: 69000
+Semantic embedding dimensionality: 512
+
+--- Variance Explained by Top 3 Principal Components ---
+  * Principal Component 1: 2.4659%
+  * Principal Component 2: 2.1146%
+  * Principal Component 3: 1.9848%
+
+Total cumulative variance explained by top 3 PCs: 6.5653%
