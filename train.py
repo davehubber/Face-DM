@@ -33,7 +33,6 @@ class ColdDiffusion:
 
     def mix_images(self, bright_image, dark_image, t):
         weight = (self.alteration_per_t * t)[:, None, None, None]
-        # Applied square root to both coefficients
         return bright_image * torch.sqrt(1.0 - weight) + dark_image * torch.sqrt(weight)
 
     def sample_timesteps(self, n):
@@ -43,55 +42,47 @@ class ColdDiffusion:
         n = len(mixed_image)
         init_timestep = math.ceil(alpha_init / self.alteration_per_t)
 
-        # Track swap state per sample: shape (n, 1, 1, 1)
-        is_swapped = torch.zeros(n, 1, 1, 1, dtype=torch.bool, device=self.device)
-        first_dark = None
-
         model.eval()
         with torch.no_grad():
             x_t = mixed_image.to(self.device)
+            prev_tracked = None
 
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
 
                 model_out = model(x_t, t).sample
-                p1 = model_out[:, :3]  # Assumed Bright (initially)
-                p2 = model_out[:, 3:]  # Assumed Dark (initially)
+                p1 = model_out[:, :3]
+                p2 = model_out[:, 3:]
 
                 if i == init_timestep:
-                    # Capture the initial dark prediction anchor
-                    predicted_dark = p2
-                    first_dark = p2.clone()
+                    # Anchor onto the first 3 channels from the model's first prediction
+                    tracked_pred = p1
+                    prev_tracked = p1.clone()
                 else:
-                    # Compute sample-wise MSE against the static initial dark anchor
-                    mse_p1 = torch.mean((p1 - first_dark) ** 2, dim=[1, 2, 3], keepdim=True)
-                    mse_p2 = torch.mean((p2 - first_dark) ** 2, dim=[1, 2, 3], keepdim=True)
+                    # Trace the anchored identity step-by-step using MSE
+                    mse_p1 = torch.mean((p1 - prev_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
+                    mse_p2 = torch.mean((p2 - prev_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
                     
-                    # Check for an identity inversion ONLY if a swap hasn't been locked in yet
-                    new_swap = (~is_swapped) & (mse_p1 < mse_p2)
-                    is_swapped = is_swapped | new_swap
-                    
-                    # Route channels dynamically based on the persistent mask
-                    predicted_dark = torch.where(is_swapped, p1, p2)
-
-                # Mathematically resolve the bright counterpart
-                predicted_bright = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_dark) / math.sqrt(alpha_init)
+                    tracked_pred = torch.where(mse_p1 < mse_p2, p1, p2)
+                    prev_tracked = tracked_pred.clone()
+                
+                # The secondary target is always extracted mathematically 
+                extracted_other = (mixed_image - math.sqrt(1.0 - alpha_init) * tracked_pred) / math.sqrt(alpha_init)
 
                 # --- CLAMPING LOGIC ---
-                predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
-                predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
+                tracked_pred = torch.clamp(tracked_pred, -1.0, 1.0)
+                extracted_other = torch.clamp(extracted_other, -1.0, 1.0)
                 # --------------------------
 
-                # Pass dark image first to mixing method
-                x_t = x_t - self.mix_images(predicted_dark, predicted_bright, t) + self.mix_images(
-                    predicted_dark, predicted_bright, t - 1
+                x_t = x_t - self.mix_images(tracked_pred, extracted_other, t) + self.mix_images(
+                    tracked_pred, extracted_other, t - 1
                 )
 
         model.train()
 
-        # Final extraction from converged dark trajectory
-        predicted_bright = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
-        return to_uint8(predicted_bright), to_uint8(x_t)
+        # Final mathematical derivation for the output pair execution
+        extracted_other = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
+        return to_uint8(x_t), to_uint8(extracted_other)       
 
 
 def get_unet(image_size):
@@ -99,7 +90,7 @@ def get_unet(image_size):
     return UNet2DModel(
         sample_size=resolution,
         in_channels=3,
-        out_channels=6, # Updated to predict both images
+        out_channels=6, 
         layers_per_block=2,
         block_out_channels=(64, 128, 256, 512),
         down_block_types=("DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "DownBlock2D"),
@@ -108,7 +99,6 @@ def get_unet(image_size):
 
 
 def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
-    """Calculates fast validation loss by sampling random timesteps."""
     model.eval()
     loss_sum = torch.zeros(1, device=accelerator.device)
     loss_count = torch.zeros(1, device=accelerator.device)
@@ -121,9 +111,14 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
             model_out = model(x_t, t).sample
             pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
             
-            # Loss evaluates both UNet predictions against ground truths
-            loss = F.mse_loss(pred_bright_unet, bright_images, reduction="sum") + \
-                   F.mse_loss(pred_dark_unet, dark_images, reduction="sum")
+            # Permutation Invariant Loss evaluation (Summed across tokens for collection)
+            loss_perm1 = F.mse_loss(pred_bright_unet, bright_images, reduction="none").sum(dim=[1, 2, 3]) + \
+                         F.mse_loss(pred_dark_unet, dark_images, reduction="none").sum(dim=[1, 2, 3])
+            
+            loss_perm2 = F.mse_loss(pred_bright_unet, dark_images, reduction="none").sum(dim=[1, 2, 3]) + \
+                         F.mse_loss(pred_dark_unet, bright_images, reduction="none").sum(dim=[1, 2, 3])
+
+            loss = torch.minimum(loss_perm1, loss_perm2).sum()
 
             loss_sum += loss.detach()
             loss_count += bright_images.numel()
@@ -211,8 +206,14 @@ def train(args):
                 model_out = model(x_t, t).sample
                 pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
                 
-                # Combine losses to force the UNet to learn representations for both
-                loss = F.mse_loss(pred_bright_unet, bright_images) + F.mse_loss(pred_dark_unet, dark_images)
+                # Permutation Invariant Loss formulation per-sample
+                loss_perm1 = F.mse_loss(pred_bright_unet, bright_images, reduction="none").mean(dim=[1, 2, 3]) + \
+                             F.mse_loss(pred_dark_unet, dark_images, reduction="none").mean(dim=[1, 2, 3])
+                
+                loss_perm2 = F.mse_loss(pred_bright_unet, dark_images, reduction="none").mean(dim=[1, 2, 3]) + \
+                             F.mse_loss(pred_dark_unet, bright_images, reduction="none").mean(dim=[1, 2, 3])
+
+                loss = torch.minimum(loss_perm1, loss_perm2).mean()
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -572,7 +573,7 @@ def launch():
 
     #train(args)
     eval(args)
-    #one_shot_eval(args)
+    one_shot_eval(args)
 
 
 if __name__ == "__main__":
