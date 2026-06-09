@@ -173,8 +173,7 @@ def run_pca_pipeline():
             rendered_images, 
             grid_path, 
             nrow=3, 
-            normalize=True, 
-            value_range=(-1, 1)
+            normalize=False,
         )
         print(f"Successfully saved rendering visualization grid to: {grid_path}")
 
