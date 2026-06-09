@@ -35,8 +35,7 @@ class ColdDiffusion:
 
     def mix_images(self, bright_image, dark_image, t):
         weight = (self.alteration_per_t * t)[:, None, None, None]
-        # Standard linear mixing
-        return bright_image * (1.0 - weight) + dark_image * weight
+        return bright_image * torch.sqrt(1.0 - weight) + dark_image * torch.sqrt(weight)
 
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.max_timesteps + 1, size=(n,), device=self.device)
@@ -55,8 +54,7 @@ class ColdDiffusion:
                 model_out = model(x_t, t).sample
                 predicted_bright = model_out
                 
-                # Standard linear extraction
-                predicted_dark = (mixed_image - (1.0 - alpha_init) * predicted_bright) / alpha_init
+                predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_bright) / math.sqrt(alpha_init)
 
                 predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
                 predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
@@ -67,8 +65,7 @@ class ColdDiffusion:
 
         model.train()
 
-        # Standard linear extraction for the final returned tensor
-        predicted_dark = (mixed_image - (1.0 - alpha_init) * x_t) / alpha_init
+        predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
         return to_uint8(x_t), to_uint8(predicted_dark)       
 
 
@@ -109,7 +106,7 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
 
 
 def save_training_preview(unet, diffusion, fixed_bright_images, fixed_dark_images, alpha_init, save_dir, is_best=False):
-    fixed_mixed = fixed_bright_images * (1.0 - alpha_init) + fixed_dark_images * alpha_init
+    fixed_mixed = fixed_bright_images * math.sqrt(1.0 - alpha_init) + fixed_dark_images * math.sqrt(alpha_init)
     predicted_bright, predicted_dark = diffusion.sample(unet, fixed_mixed, alpha_init)
 
     save_path = os.path.join(save_dir, "best.jpg" if is_best else "latest.jpg")
@@ -312,7 +309,7 @@ def eval(args):
     total_swaps = 0
 
     for bright_images, dark_images in val_dataloader:
-        mixed_images = bright_images * (1.0 - args.alpha_init) + dark_images * args.alpha_init
+        mixed_images = bright_images * math.sqrt(1.0 - args.alpha_init) + dark_images * math.sqrt(args.alpha_init)
         
         predicted_bright, predicted_dark = diffusion.sample(model, mixed_images, alpha_init=args.alpha_init)	
 
@@ -422,7 +419,7 @@ def one_shot_eval(args):
     for bright_images, dark_images in val_dataloader:
         n = len(bright_images)
         
-        mixed_images = bright_images * (1.0 - args.alpha_init) + dark_images * args.alpha_init
+        mixed_images = bright_images * math.sqrt(1.0 - args.alpha_init) + dark_images * math.sqrt(args.alpha_init)
         
         init_timestep = math.ceil(args.alpha_init / diffusion.alteration_per_t)
         t = torch.full((n,), init_timestep, device=device, dtype=torch.long)
@@ -430,7 +427,7 @@ def one_shot_eval(args):
         with torch.no_grad():
             predicted_bright = model(mixed_images, t).sample
             
-            predicted_dark = (mixed_images - (1.0 - args.alpha_init) * predicted_bright) / args.alpha_init
+            predicted_dark = (mixed_images - math.sqrt(1.0 - args.alpha_init) * predicted_bright) / math.sqrt(args.alpha_init)
 
         bright_uint8 = to_uint8(bright_images)
         dark_uint8 = to_uint8(dark_images)
@@ -508,271 +505,6 @@ def one_shot_eval(args):
     with open(os.path.join(base_dir, "results", "one_shot_metrics.txt"), "w") as f:
         f.write(metrics_report)
 
-
-def visualize_sampling_path(args):
-    accelerator = Accelerator()
-    device = accelerator.device
-    base_dir = os.path.join("experiments", args.run_name)
-    save_dir = os.path.join(base_dir, "samples", "path_visualization")
-    os.makedirs(save_dir, exist_ok=True)
-
-    val_dataloader = get_data(args, "val")
-    model = get_unet(args.image_size)
-    
-    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.to(device)
-    model.eval()
-
-    diffusion = ColdDiffusion(
-        max_timesteps=args.max_timesteps,
-        alpha_max=args.alpha_max,
-        device=device,
-    )
-
-    fixed_bright_images, fixed_dark_images = [], []
-    for bright_images, dark_images in val_dataloader:
-        fixed_bright_images.append(bright_images)
-        fixed_dark_images.append(dark_images)
-        if sum(batch.shape[0] for batch in fixed_bright_images) >= args.num_fixed_samples:
-            break
-            
-    fixed_bright_images = torch.cat(fixed_bright_images)[: args.num_fixed_samples].to(device)
-    fixed_dark_images = torch.cat(fixed_dark_images)[: args.num_fixed_samples].to(device)
-
-    # Extract exactly the 2nd pair (Index 1)
-    bright_gt = fixed_bright_images[1:2]
-    dark_gt = fixed_dark_images[1:2]
-
-    # Calculate initial mixing state (Linear)
-    alpha_init = args.alpha_init
-    mixed_image = bright_gt * (1.0 - alpha_init) + dark_gt * alpha_init
-    init_timestep = math.ceil(alpha_init / diffusion.alteration_per_t)
-
-    path_pred_bright = []
-    path_pred_dark = []
-
-    print(f"Generating path visualization for pair 2 over {init_timestep} timesteps...")
-
-    with torch.no_grad():
-        x_t = mixed_image.clone()
-        for i in reversed(range(1, init_timestep + 1)):
-            t = torch.full((1,), i, device=device, dtype=torch.long)
-
-            predicted_bright = model(x_t, t).sample
-            
-            # Linear extraction
-            predicted_dark = (mixed_image - (1.0 - alpha_init) * predicted_bright) / alpha_init
-
-            path_pred_bright.append(to_uint8(predicted_bright.clone()))
-            path_pred_dark.append(to_uint8(predicted_dark.clone()))
-
-            x_t = x_t - diffusion.mix_images(predicted_bright, predicted_dark, t) + diffusion.mix_images(
-                predicted_bright, predicted_dark, t - 1
-            )
-
-    bright_gt_uint8 = to_uint8(bright_gt)[0] 
-    dark_gt_uint8 = to_uint8(dark_gt)[0]
-
-    row_gt_bright = [bright_gt_uint8] * init_timestep
-    row_gt_dark = [dark_gt_uint8] * init_timestep
-    row_pred_bright = [p[0] for p in path_pred_bright]
-    row_pred_dark = [p[0] for p in path_pred_dark]
-
-    grid_list = row_gt_bright + row_gt_dark + row_pred_bright + row_pred_dark
-    grid_tensor = torch.stack(grid_list)
-
-    grid = torchvision.utils.make_grid(grid_tensor, nrow=init_timestep, padding=2, pad_value=255)
-    ndarr = grid.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-    
-    save_path = os.path.join(save_dir, "sampling_path_pair_2.jpg")
-    Image.fromarray(ndarr).save(save_path)
-    print(f"Saved successfully to: {save_path}")
-
-
-def evaluate_full_validation_swaps(args):
-    import torchvision
-    from PIL import Image
-    
-    accelerator = Accelerator()
-    device = accelerator.device
-    base_dir = os.path.join("experiments", args.run_name)
-    save_dir = os.path.join(base_dir, "samples", "severe_swaps")
-    os.makedirs(save_dir, exist_ok=True)
-    os.makedirs(os.path.join(base_dir, "results"), exist_ok=True)
-
-    val_dataloader = get_data(args, "val")
-    model = get_unet(args.image_size)
-    
-    model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.to(device)
-    model.eval()
-
-    diffusion = ColdDiffusion(
-        max_timesteps=args.max_timesteps,
-        alpha_max=args.alpha_max,
-        device=device,
-    )
-    
-    lpips_model = lpips.LPIPS(net="alex").to(device)
-    lpips_model.eval()
-
-    print(f"\n--- Running Full Validation Swap Evaluation ---")
-    
-    total_evaluated = 0
-    total_swaps = 0
-    mse_swaps_count = 0
-    lpips_swaps_count = 0
-    overlap_count = 0
-    mse_only_count = 0
-    lpips_only_count = 0
-
-    # Ambiguity Tracking Variables
-    mismatch_ambiguity_sum = 0.0
-    mismatch_count = 0
-    agreement_ambiguity_sum = 0.0
-    agreement_count = 0
-
-    detected_swaps = []
-    alpha_init = args.alpha_init
-
-    for bright_images, dark_images in val_dataloader:
-        # Move batches to GPU immediately
-        bright_images = bright_images.to(device)
-        dark_images = dark_images.to(device)
-        
-        n = len(bright_images)
-        total_evaluated += n
-        
-        # Standard Linear Mixing
-        mixed_images = bright_images * (1.0 - alpha_init) + dark_images * alpha_init
-        
-        # Inference
-        pred_bright_uint8, pred_dark_uint8 = diffusion.sample(model, mixed_images, alpha_init)
-
-        bright_gt_uint8 = to_uint8(bright_images)
-        dark_gt_uint8 = to_uint8(dark_images)
-        mixed_uint8 = to_uint8(mixed_images)
-
-        for i in range(n):
-            b_gt = bright_gt_uint8[i]
-            d_gt = dark_gt_uint8[i]
-            p_b = pred_bright_uint8[i]
-            p_d = pred_dark_uint8[i]
-            m_img = mixed_uint8[i]
-
-            # Metric: MSE
-            mse_pb_gtb = F.mse_loss(p_b.float(), b_gt.float()).item()
-            mse_pb_gtd = F.mse_loss(p_b.float(), d_gt.float()).item()
-            mse_swapped = mse_pb_gtd < mse_pb_gtb
-
-            # Metric: LPIPS
-            def prep_lpips(tensor):
-                return (tensor.unsqueeze(0).float() - 127.5) / 127.5
-
-            with torch.no_grad():
-                lpips_pb_gtb = lpips_model(prep_lpips(p_b), prep_lpips(b_gt)).item()
-                lpips_pb_gtd = lpips_model(prep_lpips(p_b), prep_lpips(d_gt)).item()
-            
-            lpips_swapped = lpips_pb_gtd < lpips_pb_gtb
-
-            # Compare Metrics
-            is_mismatch = (mse_swapped != lpips_swapped)
-
-            # Ambiguity Measurement (Distance from predictions to the original mixed state)
-            ambiguity_b = F.mse_loss(p_b.float(), m_img.float()).item()
-            ambiguity_d = F.mse_loss(p_d.float(), m_img.float()).item()
-            avg_ambiguity = (ambiguity_b + ambiguity_d) / 2.0
-
-            if is_mismatch:
-                mismatch_ambiguity_sum += avg_ambiguity
-                mismatch_count += 1
-            else:
-                agreement_ambiguity_sum += avg_ambiguity
-                agreement_count += 1
-
-            if mse_swapped or lpips_swapped:
-                total_swaps += 1
-                
-                if mse_swapped: mse_swaps_count += 1
-                if lpips_swapped: lpips_swaps_count += 1
-                
-                if mse_swapped and lpips_swapped:
-                    overlap_count += 1
-                elif mse_swapped and not lpips_swapped:
-                    mse_only_count += 1
-                elif lpips_swapped and not mse_swapped:
-                    lpips_only_count += 1
-
-                # Severity: How much closer is the prediction to the wrong target via MSE?
-                severity = mse_pb_gtb - mse_pb_gtd
-                
-                detected_swaps.append({
-                    "severity": severity,
-                    "mse_gap": severity,
-                    "tensors": (m_img, b_gt, p_b, d_gt, p_d)
-                })
-
-    # Sort swaps by severity (descending) and extract top 10
-    detected_swaps.sort(key=lambda x: x["severity"], reverse=True)
-    top_10_swaps = detected_swaps[:10]
-
-    # --- Generate Ambiguity Stats ---
-    avg_mismatch_ambiguity = (mismatch_ambiguity_sum / mismatch_count) if mismatch_count > 0 else 0
-    avg_agreement_ambiguity = (agreement_ambiguity_sum / agreement_count) if agreement_count > 0 else 0
-
-    # --- Write the Text Report ---
-    report_path = os.path.join(base_dir, "results", "identity_swap_report.txt")
-    always_overlap = (mse_only_count == 0 and lpips_only_count == 0)
-    overlap_status = "YES" if always_overlap else "NO"
-
-    report = (
-        f"==================================================\n"
-        f"       FULL VALIDATION IDENTITY SWAP REPORT       \n"
-        f"==================================================\n\n"
-        f"Total Pairs Evaluated: {total_evaluated}\n"
-        f"Total Swaps Detected (Any Metric): {total_swaps} ({(total_swaps / total_evaluated) * 100:.2f}%)\n\n"
-        f"--- Metric Breakdown ---\n"
-        f"Swaps detected by MSE: {mse_swaps_count}\n"
-        f"Swaps detected by LPIPS: {lpips_swaps_count}\n\n"
-        f"--- Overlap Analysis ---\n"
-        f"Do LPIPS and MSE overlap every time? {overlap_status}\n"
-        f"Perfect Overlaps (Both triggered): {overlap_count}\n"
-        f"Discrepancy: MSE triggered, LPIPS did not: {mse_only_count}\n"
-        f"Discrepancy: LPIPS triggered, MSE did not: {lpips_only_count}\n\n"
-        f"--- Mismatch Ambiguity Analysis ---\n"
-        f"Hypothesis: When metrics disagree, the model failed to confidently separate the identities, \n"
-        f"leaving the predictions highly ambiguous and structurally similar to the initial mixed image.\n\n"
-        f"Average MSE between Predictions and Mixed Input (When Metrics MISMATCH): {avg_mismatch_ambiguity:.2f}\n"
-        f"Average MSE between Predictions and Mixed Input (When Metrics AGREE):    {avg_agreement_ambiguity:.2f}\n"
-    )
-    
-    if mismatch_count > 0 and avg_mismatch_ambiguity < avg_agreement_ambiguity:
-        report += f"\nConclusion: Mismatched pairs have a LOWER distance to the mixed input. The predictions are indeed more ambiguous.\n"
-    elif mismatch_count > 0:
-        report += f"\nConclusion: Mismatched pairs have a HIGHER/EQUAL distance to the mixed input. The ambiguity hypothesis is not fully supported.\n"
-
-    with open(report_path, "w") as f:
-        f.write(report)
-
-    # --- Save Top 10 Severe Swaps (Unlabeled & Separate) ---
-    for rank, swap in enumerate(top_10_swaps, start=1):
-        m_img, b_gt, p_b, d_gt, p_d = swap["tensors"]
-        
-        # Layout: Mixed | GT Bright | Pred Bright | GT Dark | Pred Dark
-        grid_tensor = torch.stack([m_img, b_gt, p_b, d_gt, p_d])
-        grid = torchvision.utils.make_grid(grid_tensor, nrow=5, padding=2, pad_value=255)
-        
-        ndarr = grid.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-        
-        save_file = os.path.join(save_dir, f"rank_{rank}_severity_{int(swap['severity'])}.jpg")
-        Image.fromarray(ndarr).save(save_file)
-
-    print(f"Evaluation complete. Report saved to: {report_path}")
-    print(f"Top 10 severe swap images saved to: {save_dir}\n")
-
-
 def launch():
     import argparse
 
@@ -802,8 +534,6 @@ def launch():
     #train(args)
     eval(args)
     one_shot_eval(args)
-    #visualize_sampling_path(args)
-    #evaluate_full_validation_swaps(args)
 
 
 if __name__ == "__main__":
