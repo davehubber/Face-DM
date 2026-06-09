@@ -30,8 +30,8 @@ class ColdDiffAEDemorphTrainDataset(Dataset):
         z1 = self.embeddings[idx1]
         z2 = self.embeddings[idx2]
         
-        # Enforce ordering: z1 must always be the embedding with the smaller magnitude
-        if np.linalg.norm(z1) > np.linalg.norm(z2):
+        # Enforce ordering: z1 must always be the embedding with the bigger magnitude
+        if np.linalg.norm(z1) < np.linalg.norm(z2):
             z1, z2 = z2, z1
             
         return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
@@ -48,8 +48,8 @@ class ColdDiffAEDemorphTestPairsDataset(Dataset):
         z1 = self.pairs[idx, 0]
         z2 = self.pairs[idx, 1]
         
-        # Enforce ordering: z1 must always be the embedding with the smaller magnitude
-        if np.linalg.norm(z1) > np.linalg.norm(z2):
+        # Enforce ordering: z1 must always be the embedding with the bigger magnitude
+        if np.linalg.norm(z1) < np.linalg.norm(z2):
             z1, z2 = z2, z1
             
         return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
@@ -428,7 +428,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    RUN_NAME = "diffae_smallMag"
+    RUN_NAME = "diffae_bigMag"
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')

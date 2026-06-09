@@ -1,0 +1,16 @@
+--- Evaluation Results: ITERATIVE ---
+Run Name: diffae_smallMag
+----------------------------------------
+[1. Prediction to Ground-Truth Alignment]
+  - Embedding 1 -> L1 Distance: 0.713073 | Cosine Similarity: 0.503219
+  - Embedding 2 -> L1 Distance: 0.713073 | Cosine Similarity: 0.535221
+
+[2. Proximity to True Average Mixture (c)]
+  - Predicted 1 to c -> L1 Distance: 0.334586 | Cosine Similarity: 0.869579
+  - Baseline GT 1 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.675151
+  - Predicted 2 to c -> L1 Distance: 0.334586 | Cosine Similarity: 0.840797
+  - Baseline GT 2 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.734268
+
+[3. Predicted Outputs Inter-Relationship / Spread]
+  - Inter-Predicted (p1 vs p2) -> L1: 0.669172 | Cosine Similarity: 0.485412
+  - Inter-Ground-Truth (z1 vs z2) -> L1: 1.125759 | Cosine Similarity: -0.002203
