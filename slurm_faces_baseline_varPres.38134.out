@@ -4,15 +4,15 @@ Loading model from: /nas-ctm01/homes/dacordeiro/.conda/envs/test/lib/python3.10/
 
 --- Iterative Evaluation Metrics (Entire Validation Set) ---
 Total Evaluated: 1000
-LPIPS Alignment Swap Rate: 23.80%
-SSIM Bright: 0.7198
-SSIM Dark: 0.6629
-PSNR Bright: 19.7567
-PSNR Dark: 19.7538
-LPIPS Bright: 0.1134
-LPIPS Dark: 0.1263
-Success Rate Bright (%S): 96.40%
-Success Rate Dark (%S): 92.90%
+LPIPS Alignment Swap Rate: 13.60%
+SSIM Bright: 0.7967
+SSIM Dark: 0.7579
+PSNR Bright: 21.3723
+PSNR Dark: 21.3584
+LPIPS Bright: 0.0581
+LPIPS Dark: 0.0702
+Success Rate Bright (%S): 98.30%
+Success Rate Dark (%S): 96.40%
 
 Size of test: 1000 source images, 1000 pairs
 Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]
@@ -20,13 +20,13 @@ Loading model from: /nas-ctm01/homes/dacordeiro/.conda/envs/test/lib/python3.10/
 
 --- One-Shot Evaluation Metrics (Entire Validation Set) ---
 Total Evaluated: 1000
-LPIPS Alignment Swap Rate: 19.30%
-SSIM Bright: 0.7024
-SSIM Dark: 0.6497
-PSNR Bright: 19.2765
-PSNR Dark: 19.2836
-LPIPS Bright: 0.1339
-LPIPS Dark: 0.1413
-Success Rate Bright (%S): 94.90%
-Success Rate Dark (%S): 90.60%
+LPIPS Alignment Swap Rate: 10.40%
+SSIM Bright: 0.7810
+SSIM Dark: 0.7468
+PSNR Bright: 21.0105
+PSNR Dark: 21.0123
+LPIPS Bright: 0.0645
+LPIPS Dark: 0.0695
+Success Rate Bright (%S): 98.00%
+Success Rate Dark (%S): 97.00%
 

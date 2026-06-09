@@ -5,13 +5,11 @@ import lpips
 import numpy as np
 import torch
 import torch.nn.functional as F
-import torchvision
 import wandb
 from accelerate import Accelerator
 from diffusers import UNet2DModel
 from diffusers.optimization import get_cosine_schedule_with_warmup
 from diffusers.training_utils import EMAModel
-from PIL import Image
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 from torch import optim
 
@@ -35,6 +33,7 @@ class ColdDiffusion:
 
     def mix_images(self, bright_image, dark_image, t):
         weight = (self.alteration_per_t * t)[:, None, None, None]
+        # Applied square root to both coefficients
         return bright_image * torch.sqrt(1.0 - weight) + dark_image * torch.sqrt(weight)
 
     def sample_timesteps(self, n):
@@ -51,13 +50,20 @@ class ColdDiffusion:
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
 
+                # Model predicts 6 channels: (Bright, Dark)
                 model_out = model(x_t, t).sample
-                predicted_bright = model_out
                 
+                # ONLY use the bright image prediction. Discard the UNet's dark prediction.
+                predicted_bright = model_out[:, :3]
+                
+                # Extract the dark image mathematically
                 predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_bright) / math.sqrt(alpha_init)
 
+                # --- CLAMPING LOGIC ---
+                # Safely enforce bounds on the endpoint predictions without clipping the expanded x_t space
                 predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
                 predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
+                # --------------------------
 
                 x_t = x_t - self.mix_images(predicted_bright, predicted_dark, t) + self.mix_images(
                     predicted_bright, predicted_dark, t - 1
@@ -65,6 +71,7 @@ class ColdDiffusion:
 
         model.train()
 
+        # Final extraction for returning
         predicted_dark = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
         return to_uint8(x_t), to_uint8(predicted_dark)       
 
@@ -74,7 +81,7 @@ def get_unet(image_size):
     return UNet2DModel(
         sample_size=resolution,
         in_channels=3,
-        out_channels=3,
+        out_channels=6, # Updated to predict both images
         layers_per_block=2,
         block_out_channels=(64, 128, 256, 512),
         down_block_types=("DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "DownBlock2D"),
@@ -93,9 +100,12 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
             t = diffusion.sample_timesteps(bright_images.shape[0]).to(accelerator.device)
             x_t = diffusion.mix_images(bright_images, dark_images, t)
 
-            predicted_bright = model(x_t, t).sample
+            model_out = model(x_t, t).sample
+            pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
             
-            loss = F.mse_loss(predicted_bright, bright_images, reduction="sum")
+            # Loss evaluates both UNet predictions against ground truths
+            loss = F.mse_loss(pred_bright_unet, bright_images, reduction="sum") + \
+                   F.mse_loss(pred_dark_unet, dark_images, reduction="sum")
 
             loss_sum += loss.detach()
             loss_count += bright_images.numel()
@@ -180,9 +190,11 @@ def train(args):
             with accelerator.accumulate(model):
                 x_t = diffusion.mix_images(bright_images, dark_images, t)
 
-                predicted_bright = model(x_t, t).sample
+                model_out = model(x_t, t).sample
+                pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
                 
-                loss = F.mse_loss(predicted_bright, bright_images)
+                # Combine losses to force the UNet to learn representations for both
+                loss = F.mse_loss(pred_bright_unet, bright_images) + F.mse_loss(pred_dark_unet, dark_images)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -219,7 +231,7 @@ def train(args):
             if is_best:
                 torch.save(unet.state_dict(), os.path.join(base_dir, "checkpoints", "unet_ema_best.pt"))
 
-            if (epoch + 1) % args.sample_every == 0 or is_best:
+            if (epoch + 1) % args.sample_every == 0:
                 save_training_preview(
                     unet=unet,
                     diffusion=diffusion,
@@ -247,35 +259,35 @@ def calculate_metrics(bright_img, dark_img, pred_bright, pred_dark, bright_tenso
         l_bd = lpips_model(prep_lpips(pred_bright_tensor), prep_lpips(dark_tensor)).item()
         l_db = lpips_model(prep_lpips(pred_dark_tensor), prep_lpips(bright_tensor)).item()
 
-    # Alignment Check: If the crossed mapping has a lower perceptual distance sum, a swap occurred
+    # Alignment Check: If crossed mapping has lower perceptual distance sum, a swap occurred
     is_swapped = (l_bd + l_db) < (l_bb + l_dd)
 
     if is_swapped:
-        # Swap the numpy arrays to align identities before calculating standard metrics
+        # Swap the numpy arrays to mathematically align identities
         pred_bright, pred_dark = pred_dark, pred_bright
         
-        # The final LPIPS values are the crossed ones
-        final_lpips_bright = l_db  # Pred Dark is aligned with GT Bright
-        final_lpips_dark = l_bd    # Pred Bright is aligned with GT Dark
+        # Return the corresponding crossed values
+        final_lpips_bright = l_db
+        final_lpips_dark = l_bd
     else:
         final_lpips_bright = l_bb
         final_lpips_dark = l_dd
 
-    # Calculate SSIM and PSNR using the correctly aligned numpy arrays
+    # SSIM and PSNR calculated with correctly aligned outputs
     ssim_bright = structural_similarity(bright_img, pred_bright, data_range=255, channel_axis=-1)
     ssim_dark = structural_similarity(dark_img, pred_dark, data_range=255, channel_axis=-1)
     
     psnr_bright = peak_signal_noise_ratio(bright_img, pred_bright, data_range=255)
     psnr_dark = peak_signal_noise_ratio(dark_img, pred_dark, data_range=255)
     
-    # Calculate baseline SSIM from the input mixed/average image
+    # Calculate baseline SSIM from the input mixed/superimposed image
     ssim_mixed_bright = structural_similarity(bright_img, mixed_img, data_range=255, channel_axis=-1)
     ssim_mixed_dark = structural_similarity(dark_img, mixed_img, data_range=255, channel_axis=-1)
 
-    # Success rate criteria: Is the prediction closer to ground truth than the input mixed image?
+    # Reversal success criteria (%S): Reconstructed image must be closer to ground truth than its input mixture
     success_bright = 1.0 if ssim_bright > ssim_mixed_bright else 0.0
     success_dark = 1.0 if ssim_dark > ssim_mixed_dark else 0.0
-
+    
     return ssim_bright, ssim_dark, psnr_bright, psnr_dark, final_lpips_bright, final_lpips_dark, is_swapped, success_bright, success_dark
 
 
@@ -289,6 +301,7 @@ def eval(args):
 
     model, val_dataloader = accelerator.prepare(model, val_dataloader)
 
+    # Leaving target pointing to unet_ema.pt as requested
     model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
     accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
@@ -311,7 +324,7 @@ def eval(args):
     for bright_images, dark_images in val_dataloader:
         mixed_images = bright_images * math.sqrt(1.0 - args.alpha_init) + dark_images * math.sqrt(args.alpha_init)
         
-        predicted_bright, predicted_dark = diffusion.sample(model, mixed_images, alpha_init=args.alpha_init)	
+        predicted_bright, predicted_dark = diffusion.sample(model, mixed_images, alpha_init=args.alpha_init)    
 
         bright_uint8 = to_uint8(bright_images)
         dark_uint8 = to_uint8(dark_images)
@@ -397,6 +410,8 @@ def one_shot_eval(args):
     model = get_unet(args.image_size)
 
     model, val_dataloader = accelerator.prepare(model, val_dataloader)
+    
+    # Leaving target pointing to unet_ema.pt as requested
     model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
     accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
@@ -425,9 +440,15 @@ def one_shot_eval(args):
         t = torch.full((n,), init_timestep, device=device, dtype=torch.long)
 
         with torch.no_grad():
-            predicted_bright = model(mixed_images, t).sample
+            model_out = model(mixed_images, t).sample
             
-            predicted_dark = (mixed_images - math.sqrt(1.0 - args.alpha_init) * predicted_bright) / math.sqrt(args.alpha_init)
+            # Use direct model predictions for both endpoints instead of mathematical extraction
+            predicted_bright = model_out[:, :3]
+            predicted_dark = model_out[:, 3:]
+            
+            # Apply bounds clamping for the one-shot preview predictions
+            predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
+            predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
 
         bright_uint8 = to_uint8(bright_images)
         dark_uint8 = to_uint8(dark_images)
@@ -513,15 +534,15 @@ def launch():
     parser.add_argument("--run_name", required=True, help="Name of the experiment folder")
 
     parser.add_argument("--test_images", default=1000, type=int, help="Number of distinct test images and test pairs")
-    parser.add_argument("--train_samples_per_epoch", default=25000, type=int, help="Number of random train pairs per epoch")
+    parser.add_argument("--train_samples_per_epoch", default=30000, type=int, help="Number of random train pairs per epoch")
     parser.add_argument("--num_workers", default=None, type=int, help="DataLoader worker count")
 
     parser.add_argument("--alpha_max", default=0.5, type=float, help="Maximum dark-image weight at the last timestep")
     parser.add_argument("--alpha_init", default=0.5, type=float, help="Dark-image weight used for previews and evaluation")
-    parser.add_argument("--max_timesteps", default=250, type=int, help="Number of diffusion timesteps")
+    parser.add_argument("--max_timesteps", default=300, type=int, help="Number of diffusion timesteps")
     parser.add_argument("--image_size", default=64, type=int, help="Square image size")
     parser.add_argument("--batch_size", default=16, type=int, help="Batch size")
-    parser.add_argument("--epochs", default=100, type=int, help="Number of training epochs")
+    parser.add_argument("--epochs", default=150, type=int, help="Number of training epochs")
     parser.add_argument("--lr", default=3e-4, type=float, help="Learning rate")
     parser.add_argument("--gradient_accumulation_steps", default=1, type=int, help="Gradient accumulation steps")
     
