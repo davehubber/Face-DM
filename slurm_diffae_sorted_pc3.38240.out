@@ -1,0 +1,97 @@
+Epoch 1 | Train Loss: 1.3288 | Val Cheap Loss: 1.1487 | Val Last-T Loss: 1.2119
+Epoch 2 | Train Loss: 1.1059 | Val Cheap Loss: 1.0867 | Val Last-T Loss: 1.1672
+Epoch 3 | Train Loss: 1.0738 | Val Cheap Loss: 1.0743 | Val Last-T Loss: 1.1580
+Epoch 4 | Train Loss: 1.0621 | Val Cheap Loss: 1.0747 | Val Last-T Loss: 1.1575
+ EarlyStopping Counter: 1 out of 20
+Epoch 5 | Train Loss: 1.0558 | Val Cheap Loss: 1.0548 | Val Last-T Loss: 1.1444
+Epoch 6 | Train Loss: 1.0469 | Val Cheap Loss: 1.0536 | Val Last-T Loss: 1.1407
+Epoch 7 | Train Loss: 1.0390 | Val Cheap Loss: 1.0552 | Val Last-T Loss: 1.1417
+ EarlyStopping Counter: 1 out of 20
+Epoch 8 | Train Loss: 1.0326 | Val Cheap Loss: 1.0452 | Val Last-T Loss: 1.1331
+Epoch 9 | Train Loss: 1.0243 | Val Cheap Loss: 1.0463 | Val Last-T Loss: 1.1306
+ EarlyStopping Counter: 1 out of 20
+Epoch 10 | Train Loss: 1.0175 | Val Cheap Loss: 1.0412 | Val Last-T Loss: 1.1274
+Epoch 11 | Train Loss: 1.0112 | Val Cheap Loss: 1.0388 | Val Last-T Loss: 1.1243
+Epoch 12 | Train Loss: 1.0044 | Val Cheap Loss: 1.0391 | Val Last-T Loss: 1.1212
+ EarlyStopping Counter: 1 out of 20
+Epoch 13 | Train Loss: 0.9985 | Val Cheap Loss: 1.0374 | Val Last-T Loss: 1.1178
+Epoch 14 | Train Loss: 0.9921 | Val Cheap Loss: 1.0413 | Val Last-T Loss: 1.1177
+ EarlyStopping Counter: 1 out of 20
+Epoch 15 | Train Loss: 0.9869 | Val Cheap Loss: 1.0389 | Val Last-T Loss: 1.1163
+ EarlyStopping Counter: 2 out of 20
+Epoch 16 | Train Loss: 0.9814 | Val Cheap Loss: 1.0423 | Val Last-T Loss: 1.1144
+ EarlyStopping Counter: 3 out of 20
+Epoch 17 | Train Loss: 0.9762 | Val Cheap Loss: 1.0403 | Val Last-T Loss: 1.1148
+ EarlyStopping Counter: 4 out of 20
+Epoch 18 | Train Loss: 0.9713 | Val Cheap Loss: 1.0405 | Val Last-T Loss: 1.1116
+ EarlyStopping Counter: 5 out of 20
+Epoch 19 | Train Loss: 0.9657 | Val Cheap Loss: 1.0399 | Val Last-T Loss: 1.1111
+ EarlyStopping Counter: 6 out of 20
+Epoch 20 | Train Loss: 0.9614 | Val Cheap Loss: 1.0426 | Val Last-T Loss: 1.1112
+ EarlyStopping Counter: 7 out of 20
+Epoch 21 | Train Loss: 0.9562 | Val Cheap Loss: 1.0426 | Val Last-T Loss: 1.1090
+ EarlyStopping Counter: 8 out of 20
+Epoch 22 | Train Loss: 0.9524 | Val Cheap Loss: 1.0403 | Val Last-T Loss: 1.1094
+ EarlyStopping Counter: 9 out of 20
+Epoch 23 | Train Loss: 0.9478 | Val Cheap Loss: 1.0464 | Val Last-T Loss: 1.1082
+ EarlyStopping Counter: 10 out of 20
+Epoch 24 | Train Loss: 0.9433 | Val Cheap Loss: 1.0493 | Val Last-T Loss: 1.1078
+ EarlyStopping Counter: 11 out of 20
+Epoch 25 | Train Loss: 0.9397 | Val Cheap Loss: 1.0503 | Val Last-T Loss: 1.1080 | Val TACOs L1: 1.0937
+ EarlyStopping Counter: 12 out of 20
+Epoch 26 | Train Loss: 0.9354 | Val Cheap Loss: 1.0535 | Val Last-T Loss: 1.1086
+ EarlyStopping Counter: 13 out of 20
+Epoch 27 | Train Loss: 0.9318 | Val Cheap Loss: 1.0514 | Val Last-T Loss: 1.1081
+ EarlyStopping Counter: 14 out of 20
+Epoch 28 | Train Loss: 0.9276 | Val Cheap Loss: 1.0512 | Val Last-T Loss: 1.1085
+ EarlyStopping Counter: 15 out of 20
+Epoch 29 | Train Loss: 0.9245 | Val Cheap Loss: 1.0539 | Val Last-T Loss: 1.1073
+ EarlyStopping Counter: 16 out of 20
+Epoch 30 | Train Loss: 0.9211 | Val Cheap Loss: 1.0516 | Val Last-T Loss: 1.1074
+ EarlyStopping Counter: 17 out of 20
+Epoch 31 | Train Loss: 0.9173 | Val Cheap Loss: 1.0599 | Val Last-T Loss: 1.1088
+ EarlyStopping Counter: 18 out of 20
+Epoch 32 | Train Loss: 0.9145 | Val Cheap Loss: 1.0592 | Val Last-T Loss: 1.1081
+ EarlyStopping Counter: 19 out of 20
+Epoch 33 | Train Loss: 0.9114 | Val Cheap Loss: 1.0620 | Val Last-T Loss: 1.1077
+ EarlyStopping Counter: 20 out of 20
+
+[EARLY STOPPING TRIGGERED] Validation profile plateaued. Terminating run.
+
+--- Evaluation Results: ONE_SHOT ---
+Run Name: diffae_sorted_pc3
+Sorted via PC Component Index: 3
+----------------------------------------
+[1. Prediction to Ground-Truth Alignment]
+  - Embedding 1 -> L1 Distance: 0.645489 | Cosine Similarity: 0.611104
+  - Embedding 2 -> L1 Distance: 0.645489 | Cosine Similarity: 0.589059
+
+[2. Proximity to True Average Mixture (c)]
+  - Predicted 1 to c -> L1 Distance: 0.261306 | Cosine Similarity: 0.911737
+  - Baseline GT 1 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.716313
+  - Predicted 2 to c -> L1 Distance: 0.261306 | Cosine Similarity: 0.892136
+  - Baseline GT 2 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.693106
+
+[3. Predicted Outputs Inter-Relationship / Spread]
+  - Inter-Predicted (p1 vs p2) -> L1: 0.522612 | Cosine Similarity: 0.647997
+  - Inter-Ground-Truth (z1 vs z2) -> L1: 1.125759 | Cosine Similarity: -0.002203
+
+
+--- Evaluation Results: ITERATIVE ---
+Run Name: diffae_sorted_pc3
+Sorted via PC Component Index: 3
+----------------------------------------
+[1. Prediction to Ground-Truth Alignment]
+  - Embedding 1 -> L1 Distance: 0.664863 | Cosine Similarity: 0.595761
+  - Embedding 2 -> L1 Distance: 0.664863 | Cosine Similarity: 0.565643
+
+[2. Proximity to True Average Mixture (c)]
+  - Predicted 1 to c -> L1 Distance: 0.316074 | Cosine Similarity: 0.899897
+  - Baseline GT 1 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.716313
+  - Predicted 2 to c -> L1 Distance: 0.316074 | Cosine Similarity: 0.851601
+  - Baseline GT 2 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.693106
+
+[3. Predicted Outputs Inter-Relationship / Spread]
+  - Inter-Predicted (p1 vs p2) -> L1: 0.632149 | Cosine Similarity: 0.559396
+  - Inter-Ground-Truth (z1 vs z2) -> L1: 1.125759 | Cosine Similarity: -0.002203
+

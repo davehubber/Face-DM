@@ -256,7 +256,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, num
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
     
-    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, pc_weights, pc_idx, epoch_size=1_000_000), batch_size=32_768, shuffle=True, num_workers=8)
+    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, pc_weights, pc_idx, epoch_size=1_000_000), batch_size=16_384, shuffle=True, num_workers=8)
     val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs, pc_weights, pc_idx), batch_size=1000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
@@ -266,7 +266,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, num
     early_stopper = EarlyStopping(patience=patience, min_delta=1e-5)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "sorted_by_pc": pc_idx + 1
+        "learning_rate": 1e-4, "batch_size": 16_384, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "sorted_by_pc": pc_idx + 1
     })
 
     best_val_loss = float("inf")
@@ -443,7 +443,7 @@ if __name__ == "__main__":
     # ----------------------------------------------------
     # CONFIGURATION SWITCH FOR PRINCIPAL COMPONENTS
     # ----------------------------------------------------
-    TARGET_PC_IDX = 0  # 0 = PC1, 1 = PC2, 2 = PC3
+    TARGET_PC_IDX = 2  # 0 = PC1, 1 = PC2, 2 = PC3
     RUN_NAME = f"diffae_sorted_pc{TARGET_PC_IDX + 1}"
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, pc_idx=TARGET_PC_IDX, num_timesteps=300, epochs=150, patience=20)

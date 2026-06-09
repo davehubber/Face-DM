@@ -1,0 +1,17 @@
+--- Evaluation Results: ITERATIVE ---
+Run Name: diffae_sorted_pc2
+Sorted via PC Component Index: 2
+----------------------------------------
+[1. Prediction to Ground-Truth Alignment]
+  - Embedding 1 -> L1 Distance: 0.644219 | Cosine Similarity: 0.605665
+  - Embedding 2 -> L1 Distance: 0.644219 | Cosine Similarity: 0.607416
+
+[2. Proximity to True Average Mixture (c)]
+  - Predicted 1 to c -> L1 Distance: 0.316239 | Cosine Similarity: 0.889407
+  - Baseline GT 1 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.697402
+  - Predicted 2 to c -> L1 Distance: 0.316239 | Cosine Similarity: 0.851822
+  - Baseline GT 2 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.712017
+
+[3. Predicted Outputs Inter-Relationship / Spread]
+  - Inter-Predicted (p1 vs p2) -> L1: 0.632478 | Cosine Similarity: 0.534743
+  - Inter-Ground-Truth (z1 vs z2) -> L1: 1.125759 | Cosine Similarity: -0.002203
