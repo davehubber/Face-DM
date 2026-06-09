@@ -2,10 +2,10 @@
 #
 #SBATCH --partition=gpu_min12gb_ext        # Partition where the job will be run. Check with "$ sinfo".
 #SBATCH --qos=gpu_min12gb_ext              # QoS level. Must match the partition name. External users must add the suffix "_ext". Check with "$sacctmgr show qos".
-#SBATCH --job-name=analyze_pca        # Job name
+#SBATCH --job-name=diffae_sorted_pc1        # Job name
 #SBATCH --output=slurm_%x.%j.out           # File containing STDOUT output
 #SBATCH --error=slurm_%x.%j.err            # File containing STDERR output. If ommited, use STDOUT.
 
 # Commands / scripts to run (e.g., python3 train.py)
 
-python -u analyze_pca.py
+python train_latent_diffae.py

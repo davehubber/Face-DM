@@ -13,11 +13,14 @@ import csv
 # 1. Dataset & Data Loading
 # ==========================================
 class ColdDiffAEDemorphTrainDataset(Dataset):
-    """Generates random on-the-fly training pairs and strictly enforces magnitude ordering."""
-    def __init__(self, embeddings: np.ndarray, epoch_size: int = 1_000_000):
+    """Generates random on-the-fly training pairs and strictly enforces PC-score ordering."""
+    def __init__(self, embeddings: np.ndarray, pc_weights: np.ndarray, pc_idx: int = 0, epoch_size: int = 1_000_000):
         self.embeddings = embeddings
         self.epoch_size = epoch_size
         self.num_samples = len(embeddings)
+        
+        # Precompute PC scores for the entire training split to keep __getitem__ ultra-fast
+        self.scores = np.dot(embeddings, pc_weights[pc_idx])
 
     def __len__(self):
         return self.epoch_size
@@ -30,16 +33,20 @@ class ColdDiffAEDemorphTrainDataset(Dataset):
         z1 = self.embeddings[idx1]
         z2 = self.embeddings[idx2]
         
-        # Enforce ordering: z1 must always be the embedding with the bigger magnitude
-        if np.linalg.norm(z1) < np.linalg.norm(z2):
+        score1 = self.scores[idx1]
+        score2 = self.scores[idx2]
+        
+        # Enforce ordering: z1 must always be the embedding with the LARGER PC score
+        if score1 < score2:
             z1, z2 = z2, z1
             
         return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
 
 class ColdDiffAEDemorphTestPairsDataset(Dataset):
-    """Loads pre-paired evaluation arrays and strictly enforces magnitude ordering."""
-    def __init__(self, paired_embeddings: np.ndarray):
+    """Loads pre-paired evaluation arrays and strictly enforces PC-score ordering."""
+    def __init__(self, paired_embeddings: np.ndarray, pc_weights: np.ndarray, pc_idx: int = 0):
         self.pairs = paired_embeddings
+        self.v = pc_weights[pc_idx]
 
     def __len__(self):
         return len(self.pairs)
@@ -48,8 +55,12 @@ class ColdDiffAEDemorphTestPairsDataset(Dataset):
         z1 = self.pairs[idx, 0]
         z2 = self.pairs[idx, 1]
         
-        # Enforce ordering: z1 must always be the embedding with the bigger magnitude
-        if np.linalg.norm(z1) < np.linalg.norm(z2):
+        # Compute PC scores for this specific evaluation pair on the fly
+        score1 = np.dot(z1, self.v)
+        score2 = np.dot(z2, self.v)
+        
+        # Enforce ordering: z1 must always be the embedding with the LARGER PC score
+        if score1 < score2:
             z1, z2 = z2, z1
             
         return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
@@ -170,7 +181,6 @@ class DeterministicColdDemorph(nn.Module):
         
         pred_z1_raw, pred_z2_raw = pred.chunk(2, dim=-1)
         
-        # Static, ordered L1 Loss mapping (PIT and Spread Loss removed completely)
         loss_z1 = F.l1_loss(pred_z1_raw, z1, reduction='none').mean(dim=-1)
         loss_z2 = F.l1_loss(pred_z2_raw, z2, reduction='none').mean(dim=-1)
         
@@ -188,10 +198,7 @@ class DeterministicColdDemorph(nn.Module):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
             pred_raw = self.model(x_t, t_batch)
             
-            # Unpack directly—Head 1 is statically bound to our target z1 path
             pred_z1, _ = pred_raw.chunk(2, dim=-1)
-            
-            # Mathematically extract z2 to keep the variance-preserving path exact
             pred_z2 = self.SQRT_2 * c - pred_z1
             
             t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
@@ -229,7 +236,7 @@ class EarlyStopping:
 # ==========================================
 # 5. Training & Validation Mechanics
 # ==========================================
-def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 300, epochs: int = 150, patience: int = 20):
+def train_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, num_timesteps: int = 300, epochs: int = 150, patience: int = 20):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
     ckpt_dir = exp_dir / "checkpoints"
@@ -240,12 +247,17 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
         with open(metrics_path, "w", newline="") as f:
             csv.writer(f).writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_Last_T_Loss", "Val_TACOs_Reconstruct_L1"])
             
+    # Load PCA Weight Matrix to handle score projections
+    pca_path = Path("/nas-ctm01/homes/dacordeiro/Face-DM/pca_analysis/pca_components_v.npy")
+    if not pca_path.exists():
+        raise FileNotFoundError(f"PCA matrices missing at {pca_path}. Run analyze_pca.py first!")
+    pc_weights = np.load(pca_path).astype(np.float32)
+
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
     
-    # Training Batch Size configured to 16,384
-    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=32_768, shuffle=True, num_workers=8)
-    val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
+    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, pc_weights, pc_idx, epoch_size=1_000_000), batch_size=32_768, shuffle=True, num_workers=8)
+    val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs, pc_weights, pc_idx), batch_size=1000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
@@ -254,7 +266,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     early_stopper = EarlyStopping(patience=patience, min_delta=1e-5)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience
+        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "sorted_by_pc": pc_idx + 1
     })
 
     best_val_loss = float("inf")
@@ -334,7 +346,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
         )
 
         if early_stopper(avg_val_cheap_loss):
-            print(f"\n[EARLY STOPPING TRIGGERED] Validation profile plateaued for {patience} epochs. Terminating run.")
+            print(f"\n[EARLY STOPPING TRIGGERED] Validation profile plateaued. Terminating run.")
             break
 
     wandb.finish()
@@ -342,14 +354,17 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
 # ==========================================
 # 6. Evaluation Script
 # ==========================================
-def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 300, mode: str = 'iterative'):
+def evaluate_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, num_timesteps: int = 300, mode: str = 'iterative'):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
     ckpt_path = exp_dir / "checkpoints" / "best.pt"
     out_file_path = exp_dir / f"eval_{mode}.txt"
     
+    pca_path = Path("/nas-ctm01/homes/dacordeiro/Face-DM/pca_analysis/pca_components_v.npy")
+    pc_weights = np.load(pca_path).astype(np.float32)
+
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
-    test_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
+    test_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs, pc_weights, pc_idx), batch_size=1000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
@@ -375,7 +390,6 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
                 pred_z1 = pred_raw_1
                 pred_z2 = SQRT_2 * batch_c_vp - pred_z1
 
-            # --- Permutation-Invariant Alignment Logic Retained for Evaluation ---
             dist_a = F.l1_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
             dist_b = F.l1_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
             mask_a = (dist_a <= dist_b).unsqueeze(-1)
@@ -383,13 +397,11 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
             aligned_pred_z1 = torch.where(mask_a, pred_z1, batch_z2)
             aligned_pred_z2 = torch.where(mask_a, pred_z2, batch_z1)
 
-            # 1. Predictions vs Ground-Truth Alignment
             l1_gt_1 = F.l1_loss(aligned_pred_z1, batch_z1).item()
             l1_gt_2 = F.l1_loss(aligned_pred_z2, batch_z2).item()
             cos_gt_1 = F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1).mean().item()
             cos_gt_2 = F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1).mean().item()
 
-            # 2. Alignment to True Average Mixture (c_true) Metrics
             l1_pred1_to_c = F.l1_loss(aligned_pred_z1, batch_c_true).item()
             l1_pred2_to_c = F.l1_loss(aligned_pred_z2, batch_c_true).item()
             cos_pred1_to_c = F.cosine_similarity(aligned_pred_z1, batch_c_true, dim=-1).mean().item()
@@ -400,7 +412,6 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
             ref_cos_z1_to_c = F.cosine_similarity(batch_z1, batch_c_true, dim=-1).mean().item()
             ref_cos_z2_to_c = F.cosine_similarity(batch_z2, batch_c_true, dim=-1).mean().item()
 
-            # 3. Inter-relationship Spread Metrics (p1 vs p2)
             l1_inter_pred = F.l1_loss(aligned_pred_z1, aligned_pred_z2).item()
             cos_inter_pred = F.cosine_similarity(aligned_pred_z1, aligned_pred_z2, dim=-1).mean().item()
             
@@ -408,7 +419,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
             ref_cos_inter_gt = F.cosine_similarity(batch_z1, batch_z2, dim=-1).mean().item()
 
     results_text = (
-        f"--- Evaluation Results: {mode.upper()} ---\nRun Name: {run_name}\n----------------------------------------\n"
+        f"--- Evaluation Results: {mode.upper()} ---\nRun Name: {run_name}\nSorted via PC Component Index: {pc_idx + 1}\n----------------------------------------\n"
         f"[1. Prediction to Ground-Truth Alignment]\n"
         f"  - Embedding 1 -> L1 Distance: {l1_gt_1:.6f} | Cosine Similarity: {cos_gt_1:.6f}\n"
         f"  - Embedding 2 -> L1 Distance: {l1_gt_2:.6f} | Cosine Similarity: {cos_gt_2:.6f}\n\n"
@@ -428,8 +439,13 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    RUN_NAME = "diffae_bigMag"
     
-    train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='iterative')
+    # ----------------------------------------------------
+    # CONFIGURATION SWITCH FOR PRINCIPAL COMPONENTS
+    # ----------------------------------------------------
+    TARGET_PC_IDX = 0  # 0 = PC1, 1 = PC2, 2 = PC3
+    RUN_NAME = f"diffae_sorted_pc{TARGET_PC_IDX + 1}"
+    
+    train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, pc_idx=TARGET_PC_IDX, num_timesteps=300, epochs=150, patience=20)
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, pc_idx=TARGET_PC_IDX, num_timesteps=300, mode='one_shot')
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, pc_idx=TARGET_PC_IDX, num_timesteps=300, mode='iterative')
