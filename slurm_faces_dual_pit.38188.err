@@ -7,10 +7,6 @@ Traceback (most recent call last):
     launch()
   File "/nas-ctm01/homes/dacordeiro/Face-DM/train.py", line 575, in launch
     eval(args)
-  File "/nas-ctm01/homes/dacordeiro/Face-DM/train.py", line 395, in eval
-    save_images(
-  File "/nas-ctm01/homes/dacordeiro/Face-DM/utils.py", line 44, in save_images
-    Image.fromarray(ndarr).save(path)
-  File "/nas-ctm01/homes/dacordeiro/.conda/envs/test/lib/python3.10/site-packages/PIL/Image.py", line 2585, in save
-    fp = builtins.open(filename, "w+b")
-FileNotFoundError: [Errno 2] No such file or directory: 'experiments/faces_dual_pit/samples/eval/eval_grid_50.jpg'
+  File "/nas-ctm01/homes/dacordeiro/Face-DM/train.py", line 419, in eval
+    with open(os.path.join(base_dir, "results", "final_metrics.txt"), "w") as f:
+FileNotFoundError: [Errno 2] No such file or directory: 'experiments/faces_dual_pit/results/final_metrics.txt'
