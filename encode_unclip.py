@@ -67,9 +67,9 @@ def save_split_arrays(out_dir: Path, prefix: str, name: str, arr, train_idx, tes
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--image-root", default="/nas-ctm01/datasets/public/AFHQ/resized/train/wild/")
-    parser.add_argument("--out-dir", required="/nas-ctm01/homes/dacordeiro/Face-DM/stableunclip_embeddings/AFHQ")
+    parser.add_argument("--out-dir", default="/nas-ctm01/homes/dacordeiro/Face-DM/stableunclip_embeddings/AFHQ")
     parser.add_argument("--prefix", default="stableunclip")
-    parser.add_argument("--model-id", default="stabilityai/stable-diffusion-2-1-unclip")
+    parser.add_argument("--model-id", default="sd2-community/stable-diffusion-2-1-unclip")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--test-size", type=int, default=1000)

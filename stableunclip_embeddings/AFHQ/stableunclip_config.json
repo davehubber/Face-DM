@@ -1,0 +1,21 @@
+{
+  "model_id": "sd2-community/stable-diffusion-2-1-unclip",
+  "noise_level": 0,
+  "seed": 42,
+  "test_size": 1000,
+  "clip_l2_shape": [
+    4738,
+    1024
+  ],
+  "clip_norm_shape": [
+    4738,
+    1
+  ],
+  "decoder_embeds_shape": [
+    4738,
+    2048
+  ],
+  "raw_clip_reconstruction": "raw_clip = clip_l2 * clip_norm",
+  "decoder_usage": "Pass decoder_noise*.npy rows as image_embeds to StableUnCLIPImg2ImgPipeline; do not pass clip_l2 directly.",
+  "note": "decoder_noise*.npy already contains the unCLIP image conditioning format with the noise-level embedding appended."
+}
