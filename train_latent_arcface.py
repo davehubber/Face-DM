@@ -121,7 +121,7 @@ class ColdDemorphNet(nn.Module):
         return self.final_linear(h)
 
 # ==========================================
-# 3. Cold Diffusion Process (PIT with Midpoint Reflection Spread)
+# 3. Cold Diffusion Process (Scheduled Trajectory Constraint)
 # ==========================================
 class DeterministicColdDemorph(nn.Module):
     def __init__(self, model, num_timesteps=300):
@@ -143,7 +143,7 @@ class DeterministicColdDemorph(nn.Module):
         t_max = torch.full((b,), self.num_timesteps, device=z1.device).long()
         c = self.degrade(z1, z2, t_max)
         
-        # 2. Degrade at a random intermediate step 't' for standard training
+        # 2. Degrade at a random intermediate step 't'
         t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
         x_t = self.degrade(z1, z2, t)
         
@@ -159,12 +159,17 @@ class DeterministicColdDemorph(nn.Module):
         
         loss_pit = torch.min(loss_A, loss_B).mean()
         
-        # 4. Spread Loss computed via Midpoint Formula Extraction (Matches Sampling Layout)
+        # 4. NEW TIME-VARYING WEIGHT SCHEDULER
+        # Linearly scales loss_spread to 0 as t approaches the target horizon
+        t_scaled = t.float() / self.num_timesteps  # Shape: (b,)
+        
         pred_z2_extracted = self.SQRT_2 * c - pred_z1_raw
         
         dist_gt = F.mse_loss(z1, z2, reduction='none').mean(dim=-1)
         dist_pred = F.mse_loss(pred_z1_raw, pred_z2_extracted, reduction='none').mean(dim=-1)
-        loss_spread = F.mse_loss(dist_pred, dist_gt)
+        
+        # Apply element-wise scaling across the batch matrix
+        loss_spread = (F.mse_loss(dist_pred, dist_gt, reduction='none') * t_scaled).mean()
         
         total_loss = loss_pit + spread_weight * loss_spread
         return total_loss
@@ -252,9 +257,10 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     
     early_stopper = EarlyStopping(patience=patience, min_delta=1e-5)
     
+    # Kept your high-performing spread weight parameter of 0.1
     SPREAD_WEIGHT_VAL = 0.1
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "embedding_type": "ArcFace_Scaled_Sqrt512", "loss_type": "MSE_with_Midpoint_Spread_Reg", "spread_loss_weight": SPREAD_WEIGHT_VAL
+        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "embedding_type": "ArcFace_Scaled_Sqrt512", "loss_type": "MSE_with_Time_Scheduled_Spread_Reg", "spread_loss_weight": SPREAD_WEIGHT_VAL
     })
 
     best_val_loss = float("inf")
@@ -455,7 +461,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
-    RUN_NAME = "arcface_baseline_mse_scaled_spreadLoss0.1_new"
+    RUN_NAME = "arcface_baseline_mse_scaled_scheduledSpread"
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
