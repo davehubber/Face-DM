@@ -121,7 +121,7 @@ class ColdDemorphNet(nn.Module):
         return self.final_linear(h)
 
 # ==========================================
-# 3. Cold Diffusion Process (PIT with Variance Regularization)
+# 3. Cold Diffusion Process (PIT with Midpoint Reflection Spread)
 # ==========================================
 class DeterministicColdDemorph(nn.Module):
     def __init__(self, model, num_timesteps=300):
@@ -134,22 +134,23 @@ class DeterministicColdDemorph(nn.Module):
         gamma = (t / self.num_timesteps).view(-1, 1).float()
         w1 = torch.sqrt(1.0 - 0.5 * gamma)
         w2 = torch.sqrt(0.5 * gamma)
-        return w1 * z1 + w2 * w2 * z2
+        return w1 * z1 + w2 * z2
 
     def compute_loss(self, z1, z2, spread_weight=0.5):
-        """
-        Computes standard PIT L1/MSE boundaries coupled with an 
-        explicit row-wise inter-head variance/distance constraint.
-        """
         b = z1.shape[0]
+        
+        # 1. Compute the constant maximum-timestep midpoint vector 'c' for this pair
+        t_max = torch.full((b,), self.num_timesteps, device=z1.device).long()
+        c = self.degrade(z1, z2, t_max)
+        
+        # 2. Degrade at a random intermediate step 't' for standard training
         t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
-        
         x_t = self.degrade(z1, z2, t)
-        pred = self.model(x_t, t)
         
+        pred = self.model(x_t, t)
         pred_z1_raw, pred_z2_raw = pred.chunk(2, dim=-1)
         
-        # 1. Standard Permutation-Invariant Assignment Loss (Absolute coordinates matching)
+        # 3. Standard Permutation-Invariant Assignment Loss
         loss_A = F.mse_loss(pred_z1_raw, z1, reduction='none').mean(dim=-1) + \
                  F.mse_loss(pred_z2_raw, z2, reduction='none').mean(dim=-1)
                  
@@ -158,12 +159,13 @@ class DeterministicColdDemorph(nn.Module):
         
         loss_pit = torch.min(loss_A, loss_B).mean()
         
-        # 2. Inter-Head Pairwise Spread Regularization (Combats regression-to-the-mean collapse)
+        # 4. Spread Loss computed via Midpoint Formula Extraction (Matches Sampling Layout)
+        pred_z2_extracted = self.SQRT_2 * c - pred_z1_raw
+        
         dist_gt = F.mse_loss(z1, z2, reduction='none').mean(dim=-1)
-        dist_pred = F.mse_loss(pred_z1_raw, pred_z2_raw, reduction='none').mean(dim=-1)
+        dist_pred = F.mse_loss(pred_z1_raw, pred_z2_extracted, reduction='none').mean(dim=-1)
         loss_spread = F.mse_loss(dist_pred, dist_gt)
         
-        # Combined objective optimization path
         total_loss = loss_pit + spread_weight * loss_spread
         return total_loss
 
@@ -241,7 +243,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
     
-    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=16_384, shuffle=True, num_workers=8)
+    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=32_768, shuffle=True, num_workers=8)
     val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
@@ -250,9 +252,9 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     
     early_stopper = EarlyStopping(patience=patience, min_delta=1e-5)
     
-    SPREAD_WEIGHT_VAL = 0.5
+    SPREAD_WEIGHT_VAL = 0.1
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 16_384, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "embedding_type": "ArcFace_Scaled_Sqrt512", "loss_type": "MSE_with_Pairwise_Spread_Reg", "spread_loss_weight": SPREAD_WEIGHT_VAL
+        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "embedding_type": "ArcFace_Scaled_Sqrt512", "loss_type": "MSE_with_Midpoint_Spread_Reg", "spread_loss_weight": SPREAD_WEIGHT_VAL
     })
 
     best_val_loss = float("inf")
@@ -452,8 +454,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
         f.write(results_text)
 
 if __name__ == "__main__":
-    BASE_PATH = "/nas-ctm01/homes/dacordeiro/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
-    RUN_NAME = "arcface_baseline_mse_scaled_sprealLoss0.5"
+    BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
+    RUN_NAME = "arcface_baseline_mse_scaled_spreadLoss0.1_new"
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
