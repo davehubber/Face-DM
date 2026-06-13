@@ -11,7 +11,7 @@ def generate_comparison_grid(img_path, output_path="reconstruction_grid.jpg"):
         return
 
     # Stable unCLIP 2.1 is naturally used at 768 resolution
-    original_img = original_img.resize((768, 768), Image.Resampling.LANCZOS)
+    # original_img = original_img.resize((768, 768), Image.Resampling.LANCZOS)
 
     # 2. Load the actual Stable unCLIP img2img pipeline
     print("A carregar o modelo Stable unCLIP 2.1 img2img...")
@@ -50,13 +50,14 @@ def generate_comparison_grid(img_path, output_path="reconstruction_grid.jpg"):
         width=768
     ).images[0]
 
-    # 5. Create comparison grid
+    reconstructed_vis = reconstructed_img.resize((64, 64), Image.Resampling.LANCZOS)
+
     grid_width = original_img.width * 2
     grid_height = original_img.height
 
     grid = Image.new("RGB", (grid_width, grid_height))
     grid.paste(original_img, (0, 0))
-    grid.paste(reconstructed_img, (original_img.width, 0))
+    grid.paste(reconstructed_vis, (original_img.width, 0))
 
     grid.save(output_path)
     print(f"Sucesso! Grelha de comparação guardada em: {output_path}")
