@@ -1,0 +1,21 @@
+--- Evaluation Results: ITERATIVE ---
+Run Name: arcface_baseline_mse
+----------------------------------------
+[1. Prediction to Ground-Truth Alignment]
+  - Embedding 1 -> MSE Distance: 0.000854 | Cosine Similarity: 0.753914
+  - Embedding 2 -> MSE Distance: 0.000854 | Cosine Similarity: 0.753750
+
+[2. Proximity to True Average Mixture (c)]
+  - Predicted 1 to c -> MSE Distance: 0.000139 | Cosine Similarity: 0.943509
+  - Baseline GT 1 to c -> MSE Distance: 0.000907 | Cosine Similarity: 0.731004
+  - Predicted 2 to c -> MSE Distance: 0.000139 | Cosine Similarity: 0.943340
+  - Baseline GT 2 to c -> MSE Distance: 0.000907 | Cosine Similarity: 0.731004
+
+[3. Predicted Outputs Inter-Relationship / Spread]
+  - Inter-Predicted (p1 vs p2) -> MSE: 0.000558 | Cosine Similarity: 0.783570
+  - Inter-Ground-Truth (z1 vs z2) -> MSE: 0.003629 | Cosine Similarity: 0.070986
+
+[4. Success Rate of Reversal (%S)]
+  - Embedding 1 -> %S1: 0.30%
+  - Embedding 2 -> %S2: 0.20%
+  - Combined Total -> %S: 0.25%

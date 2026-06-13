@@ -12,43 +12,61 @@ import csv
 # ==========================================
 # 1. Dataset & Data Loading
 # ==========================================
-class ColdArcFaceDemorphDataset(Dataset):
-    """
-    Dynamically generates pairs of distinct ArcFace embeddings. 
-    Operates purely in L2 normalized space without arbitrary scaling.
-    """
-    def __init__(self, embeddings: np.ndarray, epoch_size: int = 1000000, deterministic: bool = False):
+class ColdDiffAEDemorphTrainDataset(Dataset):
+    """Generates random on-the-fly training pairs from the training matrix."""
+    def __init__(self, embeddings: np.ndarray, epoch_size: int = 1_000_000):
         self.embeddings = embeddings
         self.epoch_size = epoch_size
-        self.deterministic = deterministic
         self.num_samples = len(embeddings)
-        
-        if self.deterministic:
-            np.random.seed(42)
-            pairs = set()
-            while len(pairs) < epoch_size:
-                idx1 = np.random.randint(0, self.num_samples)
-                idx2 = np.random.randint(0, self.num_samples)
-                if idx1 != idx2:
-                    pairs.add((idx1, idx2))
-            self.pairs = np.array(list(pairs))
 
     def __len__(self):
         return self.epoch_size
 
     def __getitem__(self, idx):
-        if self.deterministic:
-            idx1, idx2 = self.pairs[idx]
-        else:
-            idx1 = np.random.randint(0, self.num_samples)
-            idx2 = np.random.randint(0, self.num_samples)
-            while idx1 == idx2:
-                idx2 = np.random.randint(0, self.num_samples)
+        idx1 = np.random.randint(0, self.num_samples)
+        offset = np.random.randint(1, self.num_samples)
+        idx2 = (idx1 + offset) % self.num_samples
+            
+        return (torch.tensor(self.embeddings[idx1], dtype=torch.float32), 
+                torch.tensor(self.embeddings[idx2], dtype=torch.float32))
 
-        z1 = self.embeddings[idx1]
-        z2 = self.embeddings[idx2]
+class ColdDiffAEDemorphTestPairsDataset(Dataset):
+    """Loads pre-paired evaluation arrays directly from disk."""
+    def __init__(self, paired_embeddings: np.ndarray):
+        self.pairs = paired_embeddings
 
+    def __len__(self):
+        return len(self.pairs)
+
+    def __getitem__(self, idx):
+        z1 = self.pairs[idx, 0]
+        z2 = self.pairs[idx, 1]
         return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
+
+def load_split_and_normalize(base_path_str: str, split: str) -> np.ndarray:
+    """Loads ArcFace split files and scales them by the square root of 512."""
+    base_path = Path(base_path_str).resolve()
+    parent = base_path.parent
+    stem = base_path.stem.replace("_train", "").replace("_test_pairs", "")
+    
+    if split == "train":
+        split_path = parent / f"{stem}_train.npy"
+    elif split == "test":
+        split_path = parent / f"{stem}_test_pairs.npy"
+    else:
+        raise ValueError(f"Unknown split type requested: {split}")
+        
+    if not split_path.exists():
+        raise FileNotFoundError(f"Split file missing at: {split_path}")
+        
+    data = np.load(split_path).astype(np.float32)
+    
+    # ----------------------------------------------------
+    # NEW SCALE UPDATE: Scale unit vectors by sqrt(512)
+    # ----------------------------------------------------
+    data = data * math.sqrt(512)
+    
+    return data
 
 # ==========================================
 # 2. Network Architecture
@@ -78,8 +96,7 @@ class AdaLNBlock(nn.Module):
     def forward(self, x, cond):
         h = self.linear(x)
         scale, shift = self.cond_proj(cond).chunk(2, dim=-1)
-        h = self.norm(h) * (1 + scale) + shift
-        return self.silu(h)
+        return self.silu(self.norm(h) * (1 + scale) + shift)
 
 class ColdDemorphNet(nn.Module):
     def __init__(self, x_dim=512, hidden_dim=2048, num_layers=10, time_emb_dim=512):
@@ -91,154 +108,119 @@ class ColdDemorphNet(nn.Module):
             nn.Linear(time_emb_dim * 2, time_emb_dim)
         )
         
-        cond_dim = time_emb_dim
         self.blocks = nn.ModuleList()
-        self.blocks.append(AdaLNBlock(x_dim, hidden_dim, cond_dim))
-        
+        self.blocks.append(AdaLNBlock(x_dim, hidden_dim, time_emb_dim))
         for _ in range(num_layers - 1):
-            self.blocks.append(AdaLNBlock(hidden_dim + x_dim, hidden_dim, cond_dim))
+            self.blocks.append(AdaLNBlock(hidden_dim + x_dim, hidden_dim, time_emb_dim))
             
-        self.final_linear = nn.Linear(hidden_dim, x_dim)
+        self.final_linear = nn.Linear(hidden_dim, x_dim * 2)
 
     def forward(self, x, t):
-        cond = self.time_mlp(t)
+        t_emb = self.time_mlp(t)
         h = x
         for i, block in enumerate(self.blocks):
             if i == 0:
-                h = block(h, cond)
+                h = block(h, t_emb)
             else:
-                h = block(torch.cat([h, x], dim=-1), cond)
+                h = block(torch.cat([h, x], dim=-1), t_emb)
         return self.final_linear(h)
 
 # ==========================================
-# 3. Cold Demorph Diffusion Process
+# 3. Cold Diffusion Process (Dual-Target PIT Baseline via MSE)
 # ==========================================
 class DeterministicColdDemorph(nn.Module):
-    def __init__(self, model, num_timesteps=20):
+    def __init__(self, model, num_timesteps=300):
         super().__init__()
         self.model = model
         self.num_timesteps = num_timesteps
+        self.SQRT_2 = math.sqrt(2.0)
 
     def degrade(self, z1, z2, t):
-        """
-        Forward degradation: RESTORED TO UNIFORM LINEAR SCHEDULE.
-        Training operates exactly as it was originally designed.
-        """
-        scale_factor = math.sqrt(512)
-        zm = F.normalize(z1 + z2, p=2, dim=-1) * scale_factor
-        
-        alpha = 1.0 - (t / self.num_timesteps).view(-1, 1).float()
-        return alpha * z1 + (1.0 - alpha) * zm
+        gamma = (t / self.num_timesteps).view(-1, 1).float()
+        w1 = torch.sqrt(1.0 - 0.5 * gamma)
+        w2 = torch.sqrt(0.5 * gamma)
+        return w1 * z1 + w2 * z2
 
     def compute_loss(self, z1, z2):
         b = z1.shape[0]
         t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
         
         x_t = self.degrade(z1, z2, t)
-        pred_z1 = self.model(x_t, t)
+        pred = self.model(x_t, t)
         
-        # Reconstruct twin via hypersphere mirror geometry
-        scale_factor = math.sqrt(512)
-        c = F.normalize(z1 + z2, p=2, dim=-1) * scale_factor
-        kappa = 2.0 * torch.sum(c * pred_z1, dim=-1, keepdim=True) / 512.0
-        pred_z2 = kappa * c - pred_z1
+        pred_z1_raw, pred_z2_raw = pred.chunk(2, dim=-1)
         
-        # Project everything into raw L2 space for angular optimization
-        p1_raw = F.normalize(pred_z1, p=2, dim=-1)
-        p2_raw = F.normalize(pred_z2, p=2, dim=-1)
-        z1_raw = F.normalize(z1, p=2, dim=-1)
-        z2_raw = F.normalize(z2, p=2, dim=-1)
+        loss_A = F.mse_loss(pred_z1_raw, z1, reduction='none').mean(dim=-1) + \
+                 F.mse_loss(pred_z2_raw, z2, reduction='none').mean(dim=-1)
+                 
+        loss_B = F.mse_loss(pred_z1_raw, z2, reduction='none').mean(dim=-1) + \
+                 F.mse_loss(pred_z2_raw, z1, reduction='none').mean(dim=-1)
         
-        # 1. Permutation Invariant Target Loss
-        cos_to_z1 = F.cosine_similarity(p1_raw, z1_raw, dim=-1)
-        cos_to_z2 = F.cosine_similarity(p1_raw, z2_raw, dim=-1)
-        loss_target = 1.0 - torch.max(cos_to_z1, cos_to_z2).mean()
-        
-        # 2. Explicit Inter-Prediction Orthogonality Loss
-        cos_real_baseline = F.cosine_similarity(z1_raw, z2_raw, dim=-1)
-        cos_predicted_inter = F.cosine_similarity(p1_raw, p2_raw, dim=-1)
-        loss_ortho = F.mse_loss(cos_predicted_inter, cos_real_baseline)
-        
-        return loss_target + 0.5 * loss_ortho
+        loss = torch.min(loss_A, loss_B)
+        return loss.mean()
 
     @torch.no_grad()
     def tacos_sample_loop(self, c):
-        """
-        Permutation-Aware TACOs sampling with a custom inference trajectory.
-        Takes large jumps early on, and switches to 1-by-1 fine-tuning near t=0.
-        """
         device = c.device
         b = c.shape[0]
-        
-        # Dynamically build the sub-sampled inference sequence
-        # For T=20, this generates exactly: [20, 15, 11, 8, 6, 4, 3, 2, 1]
-        sampled_ticks = []
-        t_curr = self.num_timesteps
-        step = 5
-        while t_curr > 0:
-            sampled_ticks.append(t_curr)
-            if t_curr <= 5:
-                step = 1
-            elif t_curr <= 8:
-                step = 2
-            elif t_curr <= 12:
-                step = 3
-            elif t_curr <= 16:
-                step = 4
-            t_curr -= step
-
+        timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
         x_t = c.clone()
         
-        for i, t in enumerate(tqdm(sampled_ticks, desc='TACOs Sub-Sampling', leave=False)):
+        prev_pred_z1 = None
+        for t in tqdm(timesteps, desc='TACOs Sampling', leave=False):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
+            pred_raw = self.model(x_t, t_batch)
+            pred_raw_1, pred_raw_2 = pred_raw.chunk(2, dim=-1)
             
-            # 1. Predict one clean embedding component
-            pred_z = self.model(x_t, t_batch)
+            if prev_pred_z1 is None:
+                pred_z1 = pred_raw_1
+            else:
+                dist_1 = F.mse_loss(pred_raw_1, prev_pred_z1, reduction='none').mean(dim=-1)
+                dist_2 = F.mse_loss(pred_raw_2, prev_pred_z1, reduction='none').mean(dim=-1)
+                
+                swap_mask = dist_2 < dist_1
+                pred_z1 = torch.where(swap_mask.unsqueeze(-1), pred_raw_2, pred_raw_1)
             
-            # 2. Recover the exact complementary component from the hypersphere geometry
-            kappa = 2.0 * torch.sum(c * pred_z, dim=-1, keepdim=True) / 512.0
-            comp_z = kappa * c - pred_z
+            pred_z2 = self.SQRT_2 * c - pred_z1
+            prev_pred_z1 = pred_z1
             
-            # 3. Formulate the two possible branch orientations
-            opt1_z1, opt1_z2 = pred_z, comp_z
-            opt2_z1, opt2_z2 = comp_z, pred_z
+            t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
+            deg_t = self.degrade(pred_z1, pred_z2, t_batch)
+            deg_t_prev = self.degrade(pred_z1, pred_z2, t_prev_batch)
             
-            # 4. Determine which trajectory matches current x_t using Cosine Similarity
-            deg_t_opt1 = self.degrade(opt1_z1, opt1_z2, t_batch)
-            deg_t_opt2 = self.degrade(opt2_z1, opt2_z2, t_batch)
-            
-            cos_opt1 = F.cosine_similarity(deg_t_opt1, x_t, dim=-1)
-            cos_opt2 = F.cosine_similarity(deg_t_opt2, x_t, dim=-1)
-            
-            is_opt1 = (cos_opt1 >= cos_opt2).unsqueeze(-1)
-            
-            z1_est = torch.where(is_opt1, opt1_z1, opt2_z1)
-            z2_est = torch.where(is_opt1, opt1_z2, opt2_z2)
-            
-            # Look up the next step in our sequence. If we are on the final element, next is 0.
-            t_prev = sampled_ticks[i+1] if (i + 1) < len(sampled_ticks) else 0
-            t_prev_batch = torch.full((b,), t_prev, device=device, dtype=torch.long)
-            
-            # 5. Get trajectory updates
-            deg_t = self.degrade(z1_est, z2_est, t_batch)
-            deg_t_prev = self.degrade(z1_est, z2_est, t_prev_batch)
-            
-            # 6. TACOs adjustment step bridging custom intervals
             x_t = x_t - deg_t + deg_t_prev
             
-        # Extract both final un-morphed outputs cleanly
         final_z1 = x_t
-        kappa_final = 2.0 * torch.sum(c * final_z1, dim=-1, keepdim=True) / 512.0
-        final_z2 = kappa_final * c - final_z1
-        
+        final_z2 = self.SQRT_2 * c - final_z1
         return final_z1, final_z2
 
 # ==========================================
-# 4. Evaluation & Training Loop
+# 4. Early Stopping Tracker Engine
 # ==========================================
-def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int = 20):
+class EarlyStopping:
+    def __init__(self, patience: int = 15, min_delta: float = 1e-5):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = float('inf')
+        self.early_stop = False
+
+    def __call__(self, val_loss: float) -> bool:
+        if val_loss < (self.best_loss - self.min_delta):
+            self.best_loss = val_loss
+            self.counter = 0  
+        else:
+            self.counter += 1
+            print(f" EarlyStopping Counter: {self.counter} out of {self.patience}")
+            if self.counter >= self.patience:
+                self.early_stop = True
+        return self.early_stop
+
+# ==========================================
+# 5. Training & Validation Mechanics
+# ==========================================
+def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 300, epochs: int = 150, patience: int = 20):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
     exp_dir = Path("experiments") / run_name
     ckpt_dir = exp_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -246,290 +228,224 @@ def train_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int 
     
     if not metrics_path.exists():
         with open(metrics_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_TACOs_Reconstruct_Raw_Cos"])
+            csv.writer(f).writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_Cheap_Cos_Similarity", "Val_TACOs_Reconstruct_MSE"])
             
-    print("Loading ArcFace embeddings...")
-    arcface_path = Path(arcface_path_str).resolve()
-    scale_factor = np.sqrt(512)
-    arcface_embs = (np.load(arcface_path).astype(np.float32)) * scale_factor
-
-    split_idx = int(len(arcface_embs) * 0.9)
-    train_embs, val_embs = arcface_embs[:split_idx], arcface_embs[split_idx:]
+    train_embs = load_split_and_normalize(diffae_path_str, "train")
+    test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
     
-    train_dataset = ColdArcFaceDemorphDataset(train_embs, epoch_size=1_000_000, deterministic=False)
-    val_dataset = ColdArcFaceDemorphDataset(val_embs, epoch_size=10_000, deterministic=True)
-    
-    train_loader = DataLoader(train_dataset, batch_size=16_384, shuffle=True, num_workers=8)
-    val_loader = DataLoader(val_dataset, batch_size=2_048, shuffle=False, num_workers=4)
+    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=32_768, shuffle=True, num_workers=8)
+    val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
 
-    net = ColdDemorphNet(x_dim=512, hidden_dim=2048, num_layers=10).to(device)
+    net = ColdDemorphNet().to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
-    optimizer = torch.optim.AdamW(net.parameters(), lr=3e-4, weight_decay=0.01)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
+    
+    early_stopper = EarlyStopping(patience=patience, min_delta=1e-5)
     
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 3e-4,
-        "batch_size": 16_384,
-        "num_layers": 10,
-        "hidden_dim": 2048,
-        "num_timesteps": num_timesteps,
-        "latent_space": "ArcFace",
-        "mixture": "Angular PIT Loss + Orthogonality Penalty Constraint",
-        "scheduler": "Linear Training + Sub-sampled Custom Trajectory Inference",
-        "scaled_by_sqrt_512": True
+        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "embedding_type": "ArcFace_Scaled_Sqrt512", "loss_type": "MSE"
     })
 
-    epochs = 50 
     best_val_loss = float("inf")
+    SQRT_05 = math.sqrt(0.5)
     
     for epoch in range(epochs):
         net.train()
         train_loss = 0.0
-        
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]")
-        for batch_z1, batch_z2 in pbar:
+        for batch_z1, batch_z2 in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-            
             optimizer.zero_grad()
-            loss = diffusion.compute_loss(z1=batch_z1, z2=batch_z2)
+            loss = diffusion.compute_loss(batch_z1, batch_z2)
             loss.backward()
             optimizer.step()
-            
             train_loss += loss.item()
-            pbar.set_postfix({"Loss": loss.item()})
             
         avg_train_loss = train_loss / len(train_loader)
         
-        # Validation Loop (Cheap Metric)
         net.eval()
         val_cheap_loss = 0.0
-        val_tacos_cos = None
+        val_cheap_cos = 0.0
+        val_tacos_loss = None
         
         with torch.no_grad():
-            for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val Cheap]"):
+            for batch_z1, batch_z2 in val_loader:
                 batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-                loss_cheap = diffusion.compute_loss(z1=batch_z1, z2=batch_z2)
-                val_cheap_loss += loss_cheap.item()
                 
-        avg_val_cheap_loss = val_cheap_loss / len(val_loader)
+                b = batch_z1.shape[0]
+                t = torch.randint(1, diffusion.num_timesteps + 1, (b,), device=batch_z1.device).long()
+                x_t = diffusion.degrade(batch_z1, batch_z2, t)
+                pred = net(x_t, t)
+                pred_z1_raw, pred_z2_raw = pred.chunk(2, dim=-1)
+                
+                loss_path_A = F.mse_loss(pred_z1_raw, batch_z1, reduction='none').mean(dim=-1) + \
+                              F.mse_loss(pred_z2_raw, batch_z2, reduction='none').mean(dim=-1)
+                
+                loss_path_B = F.mse_loss(pred_z1_raw, batch_z2, reduction='none').mean(dim=-1) + \
+                              F.mse_loss(pred_z2_raw, batch_z1, reduction='none').mean(dim=-1)
+                
+                val_cheap_loss += torch.min(loss_path_A, loss_path_B).mean().item()
+                
+                mask_a = (loss_path_A <= loss_path_B).unsqueeze(-1)
+                aligned_pred_z1 = torch.where(mask_a, pred_z1_raw, pred_z2_raw)
+                aligned_pred_z2 = torch.where(mask_a, pred_z2_raw, pred_z1_raw)
+                
+                cos_1 = F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1)
+                cos_2 = F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1)
+                val_cheap_cos += 0.5 * (cos_1 + cos_2).mean().item()
 
-        # Validation Loop (Expensive TACOs Metric)
-        if (epoch + 1) % 5 == 0 or (epoch + 1) == epochs:
-            val_tacos_cos_total = 0.0
-            
+        avg_val_cheap_loss = val_cheap_loss / len(val_loader)
+        avg_val_cheap_cos = val_cheap_cos / len(val_loader)
+
+        if (epoch + 1) % 25 == 0 or (epoch + 1) == epochs:
+            val_tacos_loss_total = 0.0
             with torch.no_grad():
-                for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val TACOs]"):
+                for batch_z1, batch_z2 in val_loader:
                     batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-                    batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1) * scale_factor
+                    batch_c_vp = SQRT_05 * batch_z1 + SQRT_05 * batch_z2
+                    pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp)
                     
-                    pred_z1, _ = diffusion.tacos_sample_loop(batch_c)
-                    
-                    pred_z1_raw = F.normalize(pred_z1, p=2, dim=-1)
-                    true_z1_raw = F.normalize(batch_z1, p=2, dim=-1)
-                    true_z2_raw = F.normalize(batch_z2, p=2, dim=-1)
-                    
-                    cos_z1 = F.cosine_similarity(pred_z1_raw, true_z1_raw, dim=-1)
-                    cos_z2 = F.cosine_similarity(pred_z1_raw, true_z2_raw, dim=-1)
-                    val_tacos_cos_total += torch.max(cos_z1, cos_z2).mean().item()
-                    
-            val_tacos_cos = val_tacos_cos_total / len(val_loader)
+                    dist_a = F.mse_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
+                    dist_b = F.mse_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
+                    val_tacos_loss_total += torch.min(dist_a, dist_b).mean().item()
+            val_tacos_loss = val_tacos_loss_total / len(val_loader)
             
         log_dict = {
-            "epoch": epoch + 1,
-            "train_loss": avg_train_loss,
-            "val_cheap_loss": avg_val_cheap_loss
+            "epoch": epoch + 1, 
+            "train_loss": avg_train_loss, 
+            "val_cheap_loss": avg_val_cheap_loss,
+            "val_cheap_cosine_similarity": avg_val_cheap_cos
         }
-        if val_tacos_cos is not None:
-            log_dict["val_tacos_reconstruct_cos"] = val_tacos_cos
-            
+        if val_tacos_loss is not None: log_dict["val_tacos_reconstruct_raw_mse"] = val_tacos_loss
         wandb.log(log_dict)
         
         with open(metrics_path, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([
+            csv.writer(f).writerow([
                 epoch + 1, 
                 f"{avg_train_loss:.6f}", 
                 f"{avg_val_cheap_loss:.6f}", 
-                f"{val_tacos_cos:.6f}" if val_tacos_cos is not None else "N/A"
+                f"{avg_val_cheap_cos:.6f}",
+                f"{val_tacos_loss:.6f}" if val_tacos_loss is not None else "N/A"
             ])
             
-        checkpoint_data = {
-            'epoch': epoch + 1,
-            'model_state_dict': net.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'train_loss': avg_train_loss,
-            'val_cheap_loss': avg_val_cheap_loss,
-        }
-        
+        checkpoint_data = {'epoch': epoch + 1, 'model_state_dict': net.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}
         torch.save(checkpoint_data, ckpt_dir / "last.pt")
         
         if avg_val_cheap_loss < best_val_loss:
             best_val_loss = avg_val_cheap_loss
             torch.save(checkpoint_data, ckpt_dir / "best.pt")
-            print(f"--> Saved new best checkpoint based on Cheap Val to {ckpt_dir / 'best.pt'}")
             
-        print(f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} | Val Cheap Loss: {avg_val_cheap_loss:.4f}", end="")
-        if val_tacos_cos is not None:
-            print(f" | Val TACOs Cos: {val_tacos_cos:.4f}")
-        else:
-            print()
+        print(
+            f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} | "
+            f"Val Cheap Loss: {avg_val_cheap_loss:.4f} | Val Cheap Cosine Sim: {avg_val_cheap_cos:.4f}" + 
+            (f" | Val TACOs MSE: {val_tacos_loss:.4f}" if val_tacos_loss is not None else "")
+        )
+        
+        if early_stopper(avg_val_cheap_loss):
+            print(f"\n[EARLY STOPPING TRIGGERED] Validation profile plateaued for {patience} epochs. Terminating run.")
+            break
 
     wandb.finish()
 
-
-def evaluate_cold_demorph(arcface_path_str: str, run_name: str, num_timesteps: int = 20, mode: str = 'iterative'):
-    assert mode in ['iterative', 'one_shot'], "Mode must be 'iterative' or 'one_shot'"
+# ==========================================
+# 6. Evaluation Script
+# ==========================================
+def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 300, mode: str = 'iterative'):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
     exp_dir = Path("experiments") / run_name
     ckpt_path = exp_dir / "checkpoints" / "best.pt"
-    
-    if not ckpt_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found at {ckpt_path}")
-        
     out_file_path = exp_dir / f"eval_{mode}.txt"
     
-    print(f"Loading ArcFace embeddings for {mode} evaluation...")
-    scale_factor = math.sqrt(512)
-    arcface_embs = (np.load(Path(arcface_path_str).resolve()).astype(np.float32)) * scale_factor
-    split_idx = int(len(arcface_embs) * 0.9)
-    val_embs = arcface_embs[split_idx:]
-    
-    val_dataset = ColdArcFaceDemorphDataset(val_embs, epoch_size=10_000, deterministic=True)
-    val_loader = DataLoader(val_dataset, batch_size=2_048, shuffle=False, num_workers=4)
+    test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
+    test_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
 
-    net = ColdDemorphNet(x_dim=512, hidden_dim=2048, num_layers=10).to(device)
+    net = ColdDemorphNet().to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
-    
-    print(f"Loading weights from {ckpt_path}...")
-    checkpoint = torch.load(ckpt_path, map_location=device)
-    net.load_state_dict(checkpoint['model_state_dict'])
+    net.load_state_dict(torch.load(ckpt_path, map_location=device)['model_state_dict'])
     net.eval()
 
-    # Metrics accumulators
-    metrics = {
-        "l1_scaled_z1": 0.0, "l1_scaled_z2": 0.0,
-        "l1_raw_z1": 0.0, "l1_raw_z2": 0.0,
-        "cos_z1": 0.0, "cos_z2": 0.0,
-        "cos_real_z1_z2": 0.0,
-        "cos_inter_pred": 0.0
-    }
-    num_batches = 0
+    SQRT_05 = math.sqrt(0.5)
+    SQRT_2 = math.sqrt(2.0)
 
     with torch.no_grad():
-        for batch_z1, batch_z2 in tqdm(val_loader, desc=f"Evaluating ({mode})"):
+        for batch_z1, batch_z2 in test_loader:
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-            batch_c = F.normalize(batch_z1 + batch_z2, p=2, dim=-1) * scale_factor
-            b = batch_z1.shape[0]
             
-            # --- 1. Generation of Both Components ---
+            batch_c_vp = SQRT_05 * batch_z1 + SQRT_05 * batch_z2 
+            batch_c_true = 0.5 * (batch_z1 + batch_z2)           
+            
             if mode == 'iterative':
-                pred_z1_scaled, pred_z2_scaled = diffusion.tacos_sample_loop(batch_c)
-            else: # one_shot
-                t_batch = torch.full((b,), num_timesteps, device=device, dtype=torch.long)
-                pred_z1_scaled = net(batch_c, t_batch)
-                kappa = 2.0 * torch.sum(batch_c * pred_z1_scaled, dim=-1, keepdim=True) / 512.0
-                pred_z2_scaled = kappa * batch_c - pred_z1_scaled
+                pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp)
+            else:
+                pred = net(batch_c_vp, torch.full((batch_z1.shape[0],), num_timesteps, device=device).long())
+                pred_raw_1, _ = pred.chunk(2, dim=-1)
+                
+                pred_z1 = pred_raw_1
+                pred_z2 = SQRT_2 * batch_c_vp - pred_z1
 
-            # --- 2. Raw Space Conversion (L2 Normalized Hypersphere) ---
-            p1_raw = F.normalize(pred_z1_scaled, p=2, dim=-1)
-            p2_raw = F.normalize(pred_z2_scaled, p=2, dim=-1)
-            true_z1_raw = F.normalize(batch_z1, p=2, dim=-1)
-            true_z2_raw = F.normalize(batch_z2, p=2, dim=-1)
+            dist_a = F.mse_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
+            dist_b = F.mse_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
+            mask_a = (dist_a <= dist_b).unsqueeze(-1)
             
-            # --- 3. Dynamic Permutation Alignment via Cosine Similarity ---
-            cos_p1_z1 = F.cosine_similarity(p1_raw, true_z1_raw, dim=-1)
-            cos_p1_z2 = F.cosine_similarity(p1_raw, true_z2_raw, dim=-1)
-            
-            is_p1_to_z1 = (cos_p1_z1 >= cos_p1_z2).unsqueeze(-1)
-            
-            z1_pred_scaled = torch.where(is_p1_to_z1, pred_z1_scaled, pred_z2_scaled)
-            z2_pred_scaled = torch.where(is_p1_to_z1, pred_z2_scaled, pred_z1_scaled)
-            
-            z1_pred_raw = torch.where(is_p1_to_z1, p1_raw, p2_raw)
-            z2_pred_raw = torch.where(is_p1_to_z1, p2_raw, p1_raw)
+            aligned_pred_z1 = torch.where(mask_a, pred_z1, pred_z2)
+            aligned_pred_z2 = torch.where(mask_a, pred_z2, pred_z1)
 
-            # --- 4. Compute Metrics ---
-            m_l1_scaled_z1 = F.l1_loss(z1_pred_scaled, batch_z1, reduction='none').mean(dim=-1).mean()
-            m_l1_raw_z1 = F.l1_loss(z1_pred_raw, true_z1_raw, reduction='none').mean(dim=-1).mean()
-            m_cos_z1 = F.cosine_similarity(z1_pred_raw, true_z1_raw, dim=-1).mean()
-            
-            m_l1_scaled_z2 = F.l1_loss(z2_pred_scaled, batch_z2, reduction='none').mean(dim=-1).mean()
-            m_l1_raw_z2 = F.l1_loss(z2_pred_raw, true_z2_raw, reduction='none').mean(dim=-1).mean()
-            m_cos_z2 = F.cosine_similarity(z2_pred_raw, true_z2_raw, dim=-1).mean()
-            
-            m_cos_real = F.cosine_similarity(true_z1_raw, true_z2_raw, dim=-1).mean()
-            m_cos_inter = F.cosine_similarity(p1_raw, p2_raw, dim=-1).mean()
-            
-            # Accumulate
-            metrics["l1_scaled_z1"] += m_l1_scaled_z1.item()
-            metrics["l1_scaled_z2"] += m_l1_scaled_z2.item()
-            metrics["l1_raw_z1"] += m_l1_raw_z1.item()
-            metrics["l1_raw_z2"] += m_l1_raw_z2.item()
-            metrics["cos_z1"] += m_cos_z1.item()
-            metrics["cos_z2"] += m_cos_z2.item()
-            metrics["cos_real_z1_z2"] += m_cos_real.item()
-            metrics["cos_inter_pred"] += m_cos_inter.item()
-            
-            num_batches += 1
+            mse_gt_1 = F.mse_loss(aligned_pred_z1, batch_z1).item()
+            mse_gt_2 = F.mse_loss(aligned_pred_z2, batch_z2).item()
+            cos_gt_1 = F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1).mean().item()
+            cos_gt_2 = F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1).mean().item()
 
-    for k in metrics:
-        metrics[k] /= num_batches
+            mse_pred1_to_c = F.mse_loss(aligned_pred_z1, batch_c_true).item()
+            mse_pred2_to_c = F.mse_loss(aligned_pred_z2, batch_c_true).item()
+            cos_pred1_to_c = F.cosine_similarity(aligned_pred_z1, batch_c_true, dim=-1).mean().item()
+            cos_pred2_to_c = F.cosine_similarity(aligned_pred_z2, batch_c_true, dim=-1).mean().item()
+            
+            ref_mse_z1_to_c = F.mse_loss(batch_z1, batch_c_true).item()
+            ref_mse_z2_to_c = F.mse_loss(batch_z2, batch_c_true).item()
+            ref_cos_z1_to_c = F.cosine_similarity(batch_z1, batch_c_true, dim=-1).mean().item()
+            ref_cos_z2_to_c = F.cosine_similarity(batch_z2, batch_c_true, dim=-1).mean().item()
+
+            mse_inter_pred = F.mse_loss(aligned_pred_z1, aligned_pred_z2).item()
+            cos_inter_pred = F.cosine_similarity(aligned_pred_z1, aligned_pred_z2, dim=-1).mean().item()
+            
+            ref_mse_inter_gt = F.mse_loss(batch_z1, batch_z2).item()
+            ref_cos_inter_gt = F.cosine_similarity(batch_z1, batch_z2, dim=-1).mean().item()
+
+            cos_p1_gt = F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1)
+            cos_p2_gt = F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1)
+            cos_p1_c = F.cosine_similarity(aligned_pred_z1, batch_c_true, dim=-1)
+            cos_p2_c = F.cosine_similarity(aligned_pred_z2, batch_c_true, dim=-1)
+
+            pct_S1 = (cos_p1_gt > cos_p1_c).float().mean().item() * 100
+            pct_S2 = (cos_p2_gt > cos_p2_c).float().mean().item() * 100
+            pct_S_comb = 0.5 * (pct_S1 + pct_S2)
 
     results_text = (
-        f"==================================================\n"
-        f"DIFFAE/ARCFACE DEMORPH EVALUATION REPORT ({mode.upper()})\n"
-        f"==================================================\n"
-        f"Run Name:         {run_name}\n"
-        f"Validation Pairs: 10,000\n"
-        f"Target Space:     ArcFace 512-D (L2-Normalized Base)\n"
-        f"--------------------------------------------------\n\n"
-        f"1. GROUND TRUTH Z1 RECONSTRUCTION\n"
-        f"--------------------------------------------------\n"
-        f"  - L1 Distance (Scaled space): {metrics['l1_scaled_z1']:.6f}\n"
-        f"  - L1 Distance (Raw ArcFace):  {metrics['l1_raw_z1']:.6f}\n"
-        f"  - Cosine Similarity vs Z1:    {metrics['cos_z1']:.6f}\n\n"
-        f"2. GROUND TRUTH Z2 RECONSTRUCTION\n"
-        f"--------------------------------------------------\n"
-        f"  - L1 Distance (Scaled space): {metrics['l1_scaled_z2']:.6f}\n"
-        f"  - L1 Distance (Raw ArcFace):  {metrics['l1_raw_z2']:.6f}\n"
-        f"  - Cosine Similarity vs Z2:    {metrics['cos_z2']:.6f}\n\n"
-        f"3. GEOMETRIC ALIGNMENT & ORTHOGONALITY COMPARISON\n"
-        f"--------------------------------------------------\n"
-        f"  - Baseline Cosine Sim (True Z1 vs True Z2):  {metrics['cos_real_z1_z2']:.6f}\n"
-        f"  - Generated Cosine Sim (Pred_Z1 vs Pred_Z2): {metrics['cos_inter_pred']:.6f}\n\n"
-        f"  Interpretation:\n"
-        f"  The Baseline metric proves how uncorrelated the target parents naturally\n"
-        f"  are (expecting ~0.0673 based on global dataset tests). For a perfect\n"
-        f"  separation, the Generated Cosine Similarity should converge closely to\n"
-        f"  or match that exact baseline window.\n"
-        f"==================================================\n"
+        f"--- Evaluation Results: {mode.upper()} ---\nRun Name: {run_name}\n----------------------------------------\n"
+        f"[1. Prediction to Ground-Truth Alignment]\n"
+        f"  - Embedding 1 -> MSE Distance: {mse_gt_1:.6f} | Cosine Similarity: {cos_gt_1:.6f}\n"
+        f"  - Embedding 2 -> MSE Distance: {mse_gt_2:.6f} | Cosine Similarity: {cos_gt_2:.6f}\n\n"
+        f"[2. Proximity to True Average Mixture (c)]\n"
+        f"  - Predicted 1 to c -> MSE Distance: {mse_pred1_to_c:.6f} | Cosine Similarity: {cos_pred1_to_c:.6f}\n"
+        f"  - Baseline GT 1 to c -> MSE Distance: {ref_mse_z1_to_c:.6f} | Cosine Similarity: {ref_cos_z1_to_c:.6f}\n"
+        f"  - Predicted 2 to c -> MSE Distance: {mse_pred2_to_c:.6f} | Cosine Similarity: {cos_pred2_to_c:.6f}\n"
+        f"  - Baseline GT 2 to c -> MSE Distance: {ref_mse_z2_to_c:.6f} | Cosine Similarity: {ref_cos_z2_to_c:.6f}\n\n"
+        f"[3. Predicted Outputs Inter-Relationship / Spread]\n"
+        f"  - Inter-Predicted (p1 vs p2) -> MSE: {mse_inter_pred:.6f} | Cosine Similarity: {cos_inter_pred:.6f}\n"
+        f"  - Inter-Ground-Truth (z1 vs z2) -> MSE: {ref_mse_inter_gt:.6f} | Cosine Similarity: {ref_cos_inter_gt:.6f}\n\n"
+        f"[4. Success Rate of Reversal (%S)]\n"
+        f"  - Embedding 1 -> %S1: {pct_S1:.2f}%\n"
+        f"  - Embedding 2 -> %S2: {pct_S2:.2f}%\n"
+        f"  - Combined Total -> %S: {pct_S_comb:.2f}%\n"
     )
     
     print("\n" + results_text)
-    with open(out_file_path, "w") as f:
+    with open(out_file_path, "w") as f: 
         f.write(results_text)
-        
-    print(f"Saved evaluation results to {out_file_path}")
-
 
 if __name__ == "__main__":
-    #train_cold_demorph(
-    #    arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-    #    run_name="ortho_loss_run_20ts",
-    #    num_timesteps=20,
-    #)
-
-    evaluate_cold_demorph(
-        arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="angular_ortho_loss_run_20ts",
-        num_timesteps=20,
-        mode='one_shot'
-    )
+    BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
+    RUN_NAME = "arcface_baseline_mse_scaled"
     
-    evaluate_cold_demorph(
-        arcface_path_str="/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy",
-        run_name="angular_ortho_loss_run_20ts",
-        num_timesteps=20,
-        mode='iterative'
-    )
+    train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='iterative')
