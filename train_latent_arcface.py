@@ -60,8 +60,6 @@ def load_split_and_normalize(base_path_str: str, split: str) -> np.ndarray:
         raise FileNotFoundError(f"Split file missing at: {split_path}")
         
     data = np.load(split_path).astype(np.float32)
-    
-    # Scale unit vectors by sqrt(512)
     data = data * math.sqrt(512)
     return data
 
@@ -110,7 +108,6 @@ class ColdDemorphNet(nn.Module):
         for _ in range(num_layers - 1):
             self.blocks.append(AdaLNBlock(hidden_dim + x_dim, hidden_dim, time_emb_dim))
             
-        # Retained original output architecture shape: x_dim * 2 (1024)
         self.final_linear = nn.Linear(hidden_dim, x_dim * 2)
 
     def forward(self, x, t):
@@ -124,36 +121,26 @@ class ColdDemorphNet(nn.Module):
         return self.final_linear(h)
 
 # ==========================================
-# 3. Cold Diffusion Process (Slerp Trajectories)
+# 3. Cold Diffusion Process (PIT with Variance Regularization)
 # ==========================================
 class DeterministicColdDemorph(nn.Module):
     def __init__(self, model, num_timesteps=300):
         super().__init__()
         self.model = model
         self.num_timesteps = num_timesteps
+        self.SQRT_2 = math.sqrt(2.0)
 
     def degrade(self, z1, z2, t):
-        """Vectorized Spherical Linear Interpolation (Slerp) stopping at midpoint (alpha=0.5)."""
         gamma = (t / self.num_timesteps).view(-1, 1).float()
-        alpha = 0.5 * gamma  
-        
-        z1_norm = F.normalize(z1, dim=-1)
-        z2_norm = F.normalize(z2, dim=-1)
-        
-        dot = (z1_norm * z2_norm).sum(dim=-1, keepdim=True)
-        dot = torch.clamp(dot, -1.0 + 1e-7, 1.0 - 1e-7)
-        
-        theta = torch.acos(dot)
-        sin_theta = torch.sin(theta)
-        
-        cond = sin_theta > 1e-5
-        w1 = torch.where(cond, torch.sin((1.0 - alpha) * theta) / sin_theta, 1.0 - alpha)
-        w2 = torch.where(cond, torch.sin(alpha * theta) / sin_theta, alpha)
-        
-        return w1 * z1 + w2 * z2
+        w1 = torch.sqrt(1.0 - 0.5 * gamma)
+        w2 = torch.sqrt(0.5 * gamma)
+        return w1 * z1 + w2 * w2 * z2
 
-    def compute_loss(self, z1, z2):
-        """Trains both network heads using permutation-invariant MSE matching."""
+    def compute_loss(self, z1, z2, spread_weight=0.5):
+        """
+        Computes standard PIT L1/MSE boundaries coupled with an 
+        explicit row-wise inter-head variance/distance constraint.
+        """
         b = z1.shape[0]
         t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
         
@@ -162,18 +149,26 @@ class DeterministicColdDemorph(nn.Module):
         
         pred_z1_raw, pred_z2_raw = pred.chunk(2, dim=-1)
         
+        # 1. Standard Permutation-Invariant Assignment Loss (Absolute coordinates matching)
         loss_A = F.mse_loss(pred_z1_raw, z1, reduction='none').mean(dim=-1) + \
                  F.mse_loss(pred_z2_raw, z2, reduction='none').mean(dim=-1)
                  
         loss_B = F.mse_loss(pred_z1_raw, z2, reduction='none').mean(dim=-1) + \
                  F.mse_loss(pred_z2_raw, z1, reduction='none').mean(dim=-1)
         
-        loss = torch.min(loss_A, loss_B)
-        return loss.mean()
+        loss_pit = torch.min(loss_A, loss_B).mean()
+        
+        # 2. Inter-Head Pairwise Spread Regularization (Combats regression-to-the-mean collapse)
+        dist_gt = F.mse_loss(z1, z2, reduction='none').mean(dim=-1)
+        dist_pred = F.mse_loss(pred_z1_raw, pred_z2_raw, reduction='none').mean(dim=-1)
+        loss_spread = F.mse_loss(dist_pred, dist_gt)
+        
+        # Combined objective optimization path
+        total_loss = loss_pit + spread_weight * loss_spread
+        return total_loss
 
     @torch.no_grad()
     def tacos_sample_loop(self, c):
-        """Refines a single continuous trajectory embedding and mathematically extracts its twin."""
         device = c.device
         b = c.shape[0]
         timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
@@ -185,7 +180,6 @@ class DeterministicColdDemorph(nn.Module):
             pred_raw = self.model(x_t, t_batch)
             pred_raw_1, pred_raw_2 = pred_raw.chunk(2, dim=-1)
             
-            # Dynamic PIT Alignment Tracking: Find the head closest to our refined path
             if prev_pred_z1 is None:
                 pred_z1 = pred_raw_1
             else:
@@ -195,10 +189,7 @@ class DeterministicColdDemorph(nn.Module):
                 swap_mask = dist_2 < dist_1
                 pred_z1 = torch.where(swap_mask.unsqueeze(-1), pred_raw_2, pred_raw_1)
             
-            # Spherical Reflection Formula: Extract the twin embedding mathematically from the refined head
-            dot_product = torch.sum(pred_z1 * c, dim=-1, keepdim=True)
-            pred_z2 = 2.0 * (dot_product / 512.0) * c - pred_z1
-            
+            pred_z2 = self.SQRT_2 * c - pred_z1
             prev_pred_z1 = pred_z1
             
             t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
@@ -207,7 +198,9 @@ class DeterministicColdDemorph(nn.Module):
             
             x_t = x_t - deg_t + deg_t_prev
             
-        return pred_z1, pred_z2
+        final_z1 = x_t
+        final_z2 = self.SQRT_2 * c - final_z1
+        return final_z1, final_z2
 
 # ==========================================
 # 4. Early Stopping Tracker Engine
@@ -248,7 +241,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
     
-    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=32_768, shuffle=True, num_workers=8)
+    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=16_384, shuffle=True, num_workers=8)
     val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
@@ -257,11 +250,13 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     
     early_stopper = EarlyStopping(patience=patience, min_delta=1e-5)
     
+    SPREAD_WEIGHT_VAL = 0.5
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "embedding_type": "ArcFace_Scaled_Sqrt512_Slerp_DualHeadPIT_ReflectiveSampling", "loss_type": "MSE"
+        "learning_rate": 1e-4, "batch_size": 16_384, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "embedding_type": "ArcFace_Scaled_Sqrt512", "loss_type": "MSE_with_Pairwise_Spread_Reg", "spread_loss_weight": SPREAD_WEIGHT_VAL
     })
 
     best_val_loss = float("inf")
+    SQRT_05 = math.sqrt(0.5)
     
     for epoch in range(epochs):
         net.train()
@@ -269,7 +264,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
         for batch_z1, batch_z2 in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
             optimizer.zero_grad()
-            loss = diffusion.compute_loss(batch_z1, batch_z2)
+            loss = diffusion.compute_loss(batch_z1, batch_z2, spread_weight=SPREAD_WEIGHT_VAL)
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
@@ -315,7 +310,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
             with torch.no_grad():
                 for batch_z1, batch_z2 in val_loader:
                     batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-                    batch_c_vp = diffusion.degrade(batch_z1, batch_z2, torch.full((batch_z1.shape[0],), diffusion.num_timesteps, device=device).long())
+                    batch_c_vp = SQRT_05 * batch_z1 + SQRT_05 * batch_z2
                     pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp)
                     
                     dist_a = F.mse_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
@@ -377,11 +372,14 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
     net.load_state_dict(torch.load(ckpt_path, map_location=device)['model_state_dict'])
     net.eval()
 
+    SQRT_05 = math.sqrt(0.5)
+    SQRT_2 = math.sqrt(2.0)
+
     with torch.no_grad():
         for batch_z1, batch_z2 in test_loader:
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
             
-            batch_c_vp = diffusion.degrade(batch_z1, batch_z2, torch.full((batch_z1.shape[0],), num_timesteps, device=device).long())
+            batch_c_vp = SQRT_05 * batch_z1 + SQRT_05 * batch_z2 
             batch_c_true = 0.5 * (batch_z1 + batch_z2)           
             
             if mode == 'iterative':
@@ -390,12 +388,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
                 pred = net(batch_c_vp, torch.full((batch_z1.shape[0],), num_timesteps, device=device).long())
                 pred_raw_1, _ = pred.chunk(2, dim=-1)
                 
-                # Single head isolated for target prediction mapping
                 pred_z1 = pred_raw_1
-                
-                # Extract twin vector reflection matrix on one-shot context
-                dot_product = torch.sum(pred_z1 * batch_c_vp, dim=-1, keepdim=True)
-                pred_z2 = 2.0 * (dot_product / 512.0) * batch_c_vp - pred_z1
+                pred_z2 = SQRT_2 * batch_c_vp - pred_z1
 
             dist_a = F.mse_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
             dist_b = F.mse_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
@@ -458,8 +452,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
         f.write(results_text)
 
 if __name__ == "__main__":
-    BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
-    RUN_NAME = "arcface_baseline_mse_scaled_slerp"
+    BASE_PATH = "/nas-ctm01/homes/dacordeiro/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
+    RUN_NAME = "arcface_baseline_mse_scaled_sprealLoss0.5"
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
