@@ -54,3 +54,186 @@ Epoch 44 | Train Loss: 0.1025 | Val Cheap Loss: 0.1004 | Val Cheap Cosine Sim: 0
  EarlyStopping Counter: 1 out of 20
 Epoch 45 | Train Loss: 0.1024 | Val Cheap Loss: 0.0999 | Val Cheap Cosine Sim: 0.9746
 Epoch 46 | Train Loss: 0.1021 | Val Cheap Loss: 0.0987 | Val Cheap Cosine Sim: 0.9749
+Epoch 47 | Train Loss: 0.1019 | Val Cheap Loss: 0.0995 | Val Cheap Cosine Sim: 0.9747
+ EarlyStopping Counter: 1 out of 20
+Epoch 48 | Train Loss: 0.1012 | Val Cheap Loss: 0.0987 | Val Cheap Cosine Sim: 0.9749
+ EarlyStopping Counter: 2 out of 20
+Epoch 49 | Train Loss: 0.1009 | Val Cheap Loss: 0.0983 | Val Cheap Cosine Sim: 0.9751
+Epoch 50 | Train Loss: 0.1005 | Val Cheap Loss: 0.0986 | Val Cheap Cosine Sim: 0.9750 | Val TACOs MSE: 0.1270
+ EarlyStopping Counter: 1 out of 20
+Epoch 51 | Train Loss: 0.1002 | Val Cheap Loss: 0.0981 | Val Cheap Cosine Sim: 0.9751
+Epoch 52 | Train Loss: 0.0997 | Val Cheap Loss: 0.0975 | Val Cheap Cosine Sim: 0.9752
+Epoch 53 | Train Loss: 0.0993 | Val Cheap Loss: 0.0981 | Val Cheap Cosine Sim: 0.9751
+ EarlyStopping Counter: 1 out of 20
+Epoch 54 | Train Loss: 0.0987 | Val Cheap Loss: 0.0972 | Val Cheap Cosine Sim: 0.9753
+Epoch 55 | Train Loss: 0.0984 | Val Cheap Loss: 0.0965 | Val Cheap Cosine Sim: 0.9755
+Epoch 56 | Train Loss: 0.0979 | Val Cheap Loss: 0.0963 | Val Cheap Cosine Sim: 0.9755
+Epoch 57 | Train Loss: 0.0976 | Val Cheap Loss: 0.0958 | Val Cheap Cosine Sim: 0.9757
+Epoch 58 | Train Loss: 0.0969 | Val Cheap Loss: 0.0949 | Val Cheap Cosine Sim: 0.9759
+Epoch 59 | Train Loss: 0.0965 | Val Cheap Loss: 0.0961 | Val Cheap Cosine Sim: 0.9756
+ EarlyStopping Counter: 1 out of 20
+Epoch 60 | Train Loss: 0.0962 | Val Cheap Loss: 0.0947 | Val Cheap Cosine Sim: 0.9760
+Epoch 61 | Train Loss: 0.0958 | Val Cheap Loss: 0.0948 | Val Cheap Cosine Sim: 0.9759
+ EarlyStopping Counter: 1 out of 20
+Epoch 62 | Train Loss: 0.0951 | Val Cheap Loss: 0.0945 | Val Cheap Cosine Sim: 0.9761
+Epoch 63 | Train Loss: 0.0949 | Val Cheap Loss: 0.0940 | Val Cheap Cosine Sim: 0.9761
+Epoch 64 | Train Loss: 0.0944 | Val Cheap Loss: 0.0945 | Val Cheap Cosine Sim: 0.9760
+ EarlyStopping Counter: 1 out of 20
+Epoch 65 | Train Loss: 0.0939 | Val Cheap Loss: 0.0941 | Val Cheap Cosine Sim: 0.9761
+ EarlyStopping Counter: 2 out of 20
+Epoch 66 | Train Loss: 0.0938 | Val Cheap Loss: 0.0934 | Val Cheap Cosine Sim: 0.9763
+Epoch 67 | Train Loss: 0.0931 | Val Cheap Loss: 0.0935 | Val Cheap Cosine Sim: 0.9763
+ EarlyStopping Counter: 1 out of 20
+Epoch 68 | Train Loss: 0.0930 | Val Cheap Loss: 0.0926 | Val Cheap Cosine Sim: 0.9765
+Epoch 69 | Train Loss: 0.0924 | Val Cheap Loss: 0.0934 | Val Cheap Cosine Sim: 0.9763
+ EarlyStopping Counter: 1 out of 20
+Epoch 70 | Train Loss: 0.0920 | Val Cheap Loss: 0.0926 | Val Cheap Cosine Sim: 0.9765
+Epoch 71 | Train Loss: 0.0920 | Val Cheap Loss: 0.0932 | Val Cheap Cosine Sim: 0.9763
+ EarlyStopping Counter: 1 out of 20
+Epoch 72 | Train Loss: 0.0913 | Val Cheap Loss: 0.0927 | Val Cheap Cosine Sim: 0.9765
+ EarlyStopping Counter: 2 out of 20
+Epoch 73 | Train Loss: 0.0910 | Val Cheap Loss: 0.0926 | Val Cheap Cosine Sim: 0.9765
+ EarlyStopping Counter: 3 out of 20
+Epoch 74 | Train Loss: 0.0909 | Val Cheap Loss: 0.0922 | Val Cheap Cosine Sim: 0.9766
+Epoch 75 | Train Loss: 0.0903 | Val Cheap Loss: 0.0933 | Val Cheap Cosine Sim: 0.9764 | Val TACOs MSE: 0.1464
+ EarlyStopping Counter: 1 out of 20
+Epoch 76 | Train Loss: 0.0902 | Val Cheap Loss: 0.0928 | Val Cheap Cosine Sim: 0.9764
+ EarlyStopping Counter: 2 out of 20
+Epoch 77 | Train Loss: 0.0896 | Val Cheap Loss: 0.0918 | Val Cheap Cosine Sim: 0.9767
+Epoch 78 | Train Loss: 0.0895 | Val Cheap Loss: 0.0919 | Val Cheap Cosine Sim: 0.9767
+ EarlyStopping Counter: 1 out of 20
+Epoch 79 | Train Loss: 0.0891 | Val Cheap Loss: 0.0918 | Val Cheap Cosine Sim: 0.9767
+ EarlyStopping Counter: 2 out of 20
+Epoch 80 | Train Loss: 0.0889 | Val Cheap Loss: 0.0925 | Val Cheap Cosine Sim: 0.9765
+ EarlyStopping Counter: 3 out of 20
+Epoch 81 | Train Loss: 0.0887 | Val Cheap Loss: 0.0915 | Val Cheap Cosine Sim: 0.9768
+Epoch 82 | Train Loss: 0.0881 | Val Cheap Loss: 0.0930 | Val Cheap Cosine Sim: 0.9764
+ EarlyStopping Counter: 1 out of 20
+Epoch 83 | Train Loss: 0.0880 | Val Cheap Loss: 0.0920 | Val Cheap Cosine Sim: 0.9766
+ EarlyStopping Counter: 2 out of 20
+Epoch 84 | Train Loss: 0.0878 | Val Cheap Loss: 0.0912 | Val Cheap Cosine Sim: 0.9769
+Epoch 85 | Train Loss: 0.0875 | Val Cheap Loss: 0.0924 | Val Cheap Cosine Sim: 0.9765
+ EarlyStopping Counter: 1 out of 20
+Epoch 86 | Train Loss: 0.0872 | Val Cheap Loss: 0.0919 | Val Cheap Cosine Sim: 0.9767
+ EarlyStopping Counter: 2 out of 20
+Epoch 87 | Train Loss: 0.0868 | Val Cheap Loss: 0.0918 | Val Cheap Cosine Sim: 0.9767
+ EarlyStopping Counter: 3 out of 20
+Epoch 88 | Train Loss: 0.0867 | Val Cheap Loss: 0.0919 | Val Cheap Cosine Sim: 0.9767
+ EarlyStopping Counter: 4 out of 20
+Epoch 89 | Train Loss: 0.0864 | Val Cheap Loss: 0.0927 | Val Cheap Cosine Sim: 0.9765
+ EarlyStopping Counter: 5 out of 20
+Epoch 90 | Train Loss: 0.0863 | Val Cheap Loss: 0.0914 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 6 out of 20
+Epoch 91 | Train Loss: 0.0859 | Val Cheap Loss: 0.0912 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 7 out of 20
+Epoch 92 | Train Loss: 0.0858 | Val Cheap Loss: 0.0921 | Val Cheap Cosine Sim: 0.9766
+ EarlyStopping Counter: 8 out of 20
+Epoch 93 | Train Loss: 0.0855 | Val Cheap Loss: 0.0913 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 9 out of 20
+Epoch 94 | Train Loss: 0.0851 | Val Cheap Loss: 0.0920 | Val Cheap Cosine Sim: 0.9766
+ EarlyStopping Counter: 10 out of 20
+Epoch 95 | Train Loss: 0.0853 | Val Cheap Loss: 0.0914 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 11 out of 20
+Epoch 96 | Train Loss: 0.0848 | Val Cheap Loss: 0.0916 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 12 out of 20
+Epoch 97 | Train Loss: 0.0845 | Val Cheap Loss: 0.0915 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 13 out of 20
+Epoch 98 | Train Loss: 0.0845 | Val Cheap Loss: 0.0924 | Val Cheap Cosine Sim: 0.9765
+ EarlyStopping Counter: 14 out of 20
+Epoch 99 | Train Loss: 0.0842 | Val Cheap Loss: 0.0917 | Val Cheap Cosine Sim: 0.9767
+ EarlyStopping Counter: 15 out of 20
+Epoch 100 | Train Loss: 0.0839 | Val Cheap Loss: 0.0927 | Val Cheap Cosine Sim: 0.9765 | Val TACOs MSE: 0.1541
+ EarlyStopping Counter: 16 out of 20
+Epoch 101 | Train Loss: 0.0836 | Val Cheap Loss: 0.0926 | Val Cheap Cosine Sim: 0.9765
+ EarlyStopping Counter: 17 out of 20
+Epoch 102 | Train Loss: 0.0834 | Val Cheap Loss: 0.0916 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 18 out of 20
+Epoch 103 | Train Loss: 0.0836 | Val Cheap Loss: 0.0905 | Val Cheap Cosine Sim: 0.9770
+Epoch 104 | Train Loss: 0.0831 | Val Cheap Loss: 0.0916 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 1 out of 20
+Epoch 105 | Train Loss: 0.0829 | Val Cheap Loss: 0.0917 | Val Cheap Cosine Sim: 0.9767
+ EarlyStopping Counter: 2 out of 20
+Epoch 106 | Train Loss: 0.0828 | Val Cheap Loss: 0.0909 | Val Cheap Cosine Sim: 0.9769
+ EarlyStopping Counter: 3 out of 20
+Epoch 107 | Train Loss: 0.0825 | Val Cheap Loss: 0.0913 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 4 out of 20
+Epoch 108 | Train Loss: 0.0824 | Val Cheap Loss: 0.0919 | Val Cheap Cosine Sim: 0.9767
+ EarlyStopping Counter: 5 out of 20
+Epoch 109 | Train Loss: 0.0820 | Val Cheap Loss: 0.0920 | Val Cheap Cosine Sim: 0.9767
+ EarlyStopping Counter: 6 out of 20
+Epoch 110 | Train Loss: 0.0821 | Val Cheap Loss: 0.0911 | Val Cheap Cosine Sim: 0.9769
+ EarlyStopping Counter: 7 out of 20
+Epoch 111 | Train Loss: 0.0817 | Val Cheap Loss: 0.0917 | Val Cheap Cosine Sim: 0.9767
+ EarlyStopping Counter: 8 out of 20
+Epoch 112 | Train Loss: 0.0816 | Val Cheap Loss: 0.0913 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 9 out of 20
+Epoch 113 | Train Loss: 0.0813 | Val Cheap Loss: 0.0928 | Val Cheap Cosine Sim: 0.9764
+ EarlyStopping Counter: 10 out of 20
+Epoch 114 | Train Loss: 0.0814 | Val Cheap Loss: 0.0929 | Val Cheap Cosine Sim: 0.9764
+ EarlyStopping Counter: 11 out of 20
+Epoch 115 | Train Loss: 0.0811 | Val Cheap Loss: 0.0925 | Val Cheap Cosine Sim: 0.9765
+ EarlyStopping Counter: 12 out of 20
+Epoch 116 | Train Loss: 0.0807 | Val Cheap Loss: 0.0928 | Val Cheap Cosine Sim: 0.9765
+ EarlyStopping Counter: 13 out of 20
+Epoch 117 | Train Loss: 0.0807 | Val Cheap Loss: 0.0910 | Val Cheap Cosine Sim: 0.9769
+ EarlyStopping Counter: 14 out of 20
+Epoch 118 | Train Loss: 0.0806 | Val Cheap Loss: 0.0914 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 15 out of 20
+Epoch 119 | Train Loss: 0.0805 | Val Cheap Loss: 0.0918 | Val Cheap Cosine Sim: 0.9767
+ EarlyStopping Counter: 16 out of 20
+Epoch 120 | Train Loss: 0.0800 | Val Cheap Loss: 0.0922 | Val Cheap Cosine Sim: 0.9766
+ EarlyStopping Counter: 17 out of 20
+Epoch 121 | Train Loss: 0.0801 | Val Cheap Loss: 0.0914 | Val Cheap Cosine Sim: 0.9768
+ EarlyStopping Counter: 18 out of 20
+Epoch 122 | Train Loss: 0.0799 | Val Cheap Loss: 0.0924 | Val Cheap Cosine Sim: 0.9765
+ EarlyStopping Counter: 19 out of 20
+Epoch 123 | Train Loss: 0.0797 | Val Cheap Loss: 0.0927 | Val Cheap Cosine Sim: 0.9765
+ EarlyStopping Counter: 20 out of 20
+
+[EARLY STOPPING TRIGGERED] Validation profile plateaued for 20 epochs. Terminating run.
+
+--- Evaluation Results: ONE_SHOT ---
+Run Name: diffae_l2
+----------------------------------------
+[1. Prediction to Ground-Truth Alignment]
+  - Embedding 1 -> MSE Distance: 0.042868 | Cosine Similarity: 0.978354
+  - Embedding 2 -> MSE Distance: 0.042868 | Cosine Similarity: 0.978353
+
+[2. Proximity to True Average Mixture (c)]
+  - Predicted 1 to c -> MSE Distance: 0.013582 | Cosine Similarity: 0.992961
+  - Baseline GT 1 to c -> MSE Distance: 0.049144 | Cosine Similarity: 0.975110
+  - Predicted 2 to c -> MSE Distance: 0.013582 | Cosine Similarity: 0.992954
+  - Baseline GT 2 to c -> MSE Distance: 0.049144 | Cosine Similarity: 0.975110
+
+[3. Predicted Outputs Inter-Relationship / Spread]
+  - Inter-Predicted (p1 vs p2) -> MSE: 0.054329 | Cosine Similarity: 0.971958
+  - Inter-Ground-Truth (z1 vs z2) -> MSE: 0.196578 | Cosine Similarity: 0.901711
+
+[4. Success Rate of Reversal (%S)]
+  - Embedding 1 -> %S1: 0.60%
+  - Embedding 2 -> %S2: 0.50%
+  - Combined Total -> %S: 0.55%
+
+
+--- Evaluation Results: ITERATIVE (Stride: 1) ---
+Run Name: diffae_l2
+----------------------------------------
+[1. Prediction to Ground-Truth Alignment]
+  - Embedding 1 -> MSE Distance: 0.072168 | Cosine Similarity: 0.964717
+  - Embedding 2 -> MSE Distance: 0.072168 | Cosine Similarity: 0.964745
+
+[2. Proximity to True Average Mixture (c)]
+  - Predicted 1 to c -> MSE Distance: 0.037002 | Cosine Similarity: 0.982093
+  - Baseline GT 1 to c -> MSE Distance: 0.049144 | Cosine Similarity: 0.975110
+  - Predicted 2 to c -> MSE Distance: 0.037002 | Cosine Similarity: 0.982111
+  - Baseline GT 2 to c -> MSE Distance: 0.049144 | Cosine Similarity: 0.975110
+
+[3. Predicted Outputs Inter-Relationship / Spread]
+  - Inter-Predicted (p1 vs p2) -> MSE: 0.148008 | Cosine Similarity: 0.929304
+  - Inter-Ground-Truth (z1 vs z2) -> MSE: 0.196578 | Cosine Similarity: 0.901711
+
+[4. Success Rate of Reversal (%S)]
+  - Embedding 1 -> %S1: 0.40%
+  - Embedding 2 -> %S2: 0.40%
+  - Combined Total -> %S: 0.40%
+

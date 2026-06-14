@@ -1,0 +1,21 @@
+--- Evaluation Results: ONE_SHOT ---
+Run Name: diffae_l2
+----------------------------------------
+[1. Prediction to Ground-Truth Alignment]
+  - Embedding 1 -> MSE Distance: 0.042868 | Cosine Similarity: 0.978354
+  - Embedding 2 -> MSE Distance: 0.042868 | Cosine Similarity: 0.978353
+
+[2. Proximity to True Average Mixture (c)]
+  - Predicted 1 to c -> MSE Distance: 0.013582 | Cosine Similarity: 0.992961
+  - Baseline GT 1 to c -> MSE Distance: 0.049144 | Cosine Similarity: 0.975110
+  - Predicted 2 to c -> MSE Distance: 0.013582 | Cosine Similarity: 0.992954
+  - Baseline GT 2 to c -> MSE Distance: 0.049144 | Cosine Similarity: 0.975110
+
+[3. Predicted Outputs Inter-Relationship / Spread]
+  - Inter-Predicted (p1 vs p2) -> MSE: 0.054329 | Cosine Similarity: 0.971958
+  - Inter-Ground-Truth (z1 vs z2) -> MSE: 0.196578 | Cosine Similarity: 0.901711
+
+[4. Success Rate of Reversal (%S)]
+  - Embedding 1 -> %S1: 0.60%
+  - Embedding 2 -> %S2: 0.50%
+  - Combined Total -> %S: 0.55%

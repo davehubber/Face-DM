@@ -1,0 +1,21 @@
+=== Mean Pixel Intensity Separation Report ===
+Evaluated Pairs per Dataset: 1000
+
+--- Dataset 1 Summary ---
+Path: /nas-ctm01/datasets/public/Oxford102Flowers/jpg-64x64/
+Average Pair Separation: 28.5230
+Max Separation: 152.0190
+Min Separation: 0.0610
+Standard Deviation: 21.8300
+
+--- Dataset 2 Summary ---
+Path: /nas-ctm01/datasets/public/BIOMETRICS/CELEBA/celebamask-hq-db/CelebA-HQ-img-64x64/
+Average Pair Separation: 35.7086
+Max Separation: 132.7328
+Min Separation: 0.0288
+Standard Deviation: 26.0748
+
+--- Conclusion ---
+The 1000 pairs are more separated by mean pixel intensity in:
+👉 Dataset 2 (/nas-ctm01/datasets/public/BIOMETRICS/CELEBA/celebamask-hq-db/CelebA-HQ-img-64x64/)
+Margin of difference: 7.1856 intensity units (0-255 scale).
