@@ -53,14 +53,13 @@ def image_align(src_file,
     quad = np.stack([c - x - y, c - x + y, c + x + y, c + x - y])
     qsize = np.hypot(*x) * 2
 
-    # Load in-the-wild image.
+    # Load in-the-wild image safely using a context manager to release the file lock
     if not os.path.isfile(src_file):
-        print(
-            '\nCannot find source image. Please run "--wilds" before "--align".'
-        )
+        print(f'\nCannot find source image: {src_file}')
         return
-    img = PIL.Image.open(src_file)
-    img = img.convert('RGB')
+    
+    with PIL.Image.open(src_file) as img_file:
+        img = img_file.convert('RGB')
 
     # Shrink.
     shrink = int(np.floor(qsize / output_size * 0.5))
@@ -76,8 +75,7 @@ def image_align(src_file,
     crop = (int(np.floor(min(quad[:, 0]))), int(np.floor(min(quad[:, 1]))),
             int(np.ceil(max(quad[:, 0]))), int(np.ceil(max(quad[:, 1]))))
     crop = (max(crop[0] - border, 0), max(crop[1] - border, 0),
-            min(crop[2] + border,
-                img.size[0]), min(crop[3] + border, img.size[1]))
+            min(crop[2] + border, img.size[0]), min(crop[3] + border, img.size[1]))
     if crop[2] - crop[0] < img.size[0] or crop[3] - crop[1] < img.size[1]:
         img = img.crop(crop)
         quad -= crop[0:2]
@@ -85,10 +83,8 @@ def image_align(src_file,
     # Pad.
     pad = (int(np.floor(min(quad[:, 0]))), int(np.floor(min(quad[:, 1]))),
            int(np.ceil(max(quad[:, 0]))), int(np.ceil(max(quad[:, 1]))))
-    pad = (max(-pad[0] + border,
-               0), max(-pad[1] + border,
-                       0), max(pad[2] - img.size[0] + border,
-                               0), max(pad[3] - img.size[1] + border, 0))
+    pad = (max(-pad[0] + border, 0), max(-pad[1] + border, 0), 
+           max(pad[2] - img.size[0] + border, 0), max(pad[3] - img.size[1] + border, 0))
     if enable_padding and max(pad) > border - 4:
         pad = np.maximum(pad, int(np.rint(qsize * 0.3)))
         img = np.pad(np.float32(img),
@@ -96,17 +92,12 @@ def image_align(src_file,
         h, w, _ = img.shape
         y, x, _ = np.ogrid[:h, :w, :1]
         mask = np.maximum(
-            1.0 -
-            np.minimum(np.float32(x) / pad[0],
-                       np.float32(w - 1 - x) / pad[2]), 1.0 -
-            np.minimum(np.float32(y) / pad[1],
-                       np.float32(h - 1 - y) / pad[3]))
+            1.0 - np.minimum(np.float32(x) / pad[0], np.float32(w - 1 - x) / pad[2]), 
+            1.0 - np.minimum(np.float32(y) / pad[1], np.float32(h - 1 - y) / pad[3]))
         blur = qsize * 0.02
-        img += (scipy.ndimage.gaussian_filter(img, [blur, blur, 0]) -
-                img) * np.clip(mask * 3.0 + 1.0, 0.0, 1.0)
+        img += (scipy.ndimage.gaussian_filter(img, [blur, blur, 0]) - img) * np.clip(mask * 3.0 + 1.0, 0.0, 1.0)
         img += (np.median(img, axis=(0, 1)) - img) * np.clip(mask, 0.0, 1.0)
-        img = PIL.Image.fromarray(np.uint8(np.clip(np.rint(img), 0, 255)),
-                                  'RGB')
+        img = PIL.Image.fromarray(np.uint8(np.clip(np.rint(img), 0, 255)), 'RGB')
         quad += pad[:2]
 
     # Transform.
@@ -115,17 +106,13 @@ def image_align(src_file,
     if output_size < transform_size:
         img = img.resize((output_size, output_size), PIL.Image.Resampling.LANCZOS)
 
-    # Save aligned image.
-    img.save(dst_file, 'PNG')
+    # Save aligned image back (Format is automatically inferred from dst_file extension)
+    img.save(dst_file)
 
 
 class LandmarksDetector:
     def __init__(self, predictor_model_path):
-        """
-        :param predictor_model_path: path to shape_predictor_68_face_landmarks.dat file
-        """
-        self.detector = dlib.get_frontal_face_detector(
-        )  # cnn_face_detection_model_v1 also can be used
+        self.detector = dlib.get_frontal_face_detector()
         self.shape_predictor = dlib.shape_predictor(predictor_model_path)
 
     def get_landmarks(self, image):
@@ -143,7 +130,7 @@ class LandmarksDetector:
 def unpack_bz2(src_path):
     dst_path = src_path[:-4]
     if os.path.exists(dst_path):
-        print('cached')
+        print('Predictor model cached.')
         return dst_path
     data = bz2.BZ2File(src_path).read()
     with open(dst_path, 'wb') as fp:
@@ -151,20 +138,8 @@ def unpack_bz2(src_path):
     return dst_path
 
 
-def work_landmark(raw_img_path, img_name, face_landmarks, aligned_images_dir): # <-- Added parameter here
-    face_img_name = '%s.png' % (os.path.splitext(img_name), )
-    aligned_face_path = os.path.join(aligned_images_dir, face_img_name) # <-- Updated to use parameter
-    if os.path.exists(aligned_face_path):
-        return
-    image_align(raw_img_path,
-                aligned_face_path,
-                face_landmarks,
-                output_size=256)
-
-
 def get_file(src, tgt):
     if os.path.exists(tgt):
-        print('cached')
         return tgt
     tgt_dir = os.path.dirname(tgt)
     if not os.path.exists(tgt_dir):
@@ -173,49 +148,53 @@ def get_file(src, tgt):
     open(tgt, 'wb').write(file.content)
     return tgt
 
-def process_single_image(img_name, raw_images_dir, aligned_images_dir, landmarks_model_path):
-    # Initialize the detector INSIDE the worker process so it doesn't crash across threads
+
+def process_single_image(img_name, images_dir, landmarks_model_path):
     detector = LandmarksDetector(landmarks_model_path)
-    raw_img_path = os.path.join(raw_images_dir, img_name)
+    img_path = os.path.join(images_dir, img_name)
     
     # Run detection and alignment
-    for face_landmarks in detector.get_landmarks(raw_img_path):
-        work_landmark(raw_img_path, img_name, face_landmarks, aligned_images_dir) # <-- Passed it here!
+    for face_landmarks in detector.get_landmarks(img_path):
+        # Overwrite the original image path directly
+        image_align(img_path, img_path, face_landmarks, output_size=256)
+        break  # Break early so multiple faces in one image don't trigger multiple cascading rewrites
+
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("-i", "--input_imgs_path", type=str, default="imgs", help="input images directory path")
-    parser.add_argument("-o", "--output_imgs_path", type=str, default="imgs_align", help="output images directory path")
+    parser.add_argument("-f", "--folder", type=str, default="FRLL/smiling_front/", help="Path to the folder containing images to align in-place")
     args = parser.parse_args()
 
     landmarks_model_path = unpack_bz2(
         get_file('http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2', 'temp/shape_predictor_68_face_landmarks.dat.bz2')
     )
 
-    RAW_IMAGES_DIR = args.input_imgs_path
-    ALIGNED_IMAGES_DIR = args.output_imgs_path
+    IMAGES_DIR = args.folder
 
-    if not osp.exists(ALIGNED_IMAGES_DIR): 
-        os.makedirs(ALIGNED_IMAGES_DIR)
+    if not osp.exists(IMAGES_DIR): 
+        print(f"Error: The directory '{IMAGES_DIR}' does not exist.")
+        exit(1)
 
-    # Filter for valid images (to prevent the C++ crash we fixed earlier!)
     valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
-    files = [f for f in os.listdir(RAW_IMAGES_DIR) if f.lower().endswith(valid_extensions)]
+    files = [f for f in os.listdir(IMAGES_DIR) if f.lower().endswith(valid_extensions)]
     
-    print(f'Total img files: {len(files)}')
+    print(f'Total image files found: {len(files)}')
 
-    # Use ProcessPoolExecutor to use all available CPU cores
+    # Use ProcessPoolExecutor to handle processing in parallel
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        # Map the worker function to all files
-        futures = {executor.submit(process_single_image, img_name, RAW_IMAGES_DIR, ALIGNED_IMAGES_DIR, landmarks_model_path): img_name for img_name in files}
+        futures = {
+            executor.submit(process_single_image, img_name, IMAGES_DIR, landmarks_model_path): img_name 
+            for img_name in files
+        }
         
         with tqdm(total=len(files)) as progress:
             for future in concurrent.futures.as_completed(futures):
                 try:
-                    future.result() # This will raise any exceptions caught in the worker
+                    future.result()
                 except Exception as e:
-                    print(f"Error processing image: {e}")
+                    img_failed = futures[future]
+                    print(f"\nError processing {img_failed}: {e}")
                 finally:
                     progress.update(1)
 
-    print(f"Output aligned images at: {ALIGNED_IMAGES_DIR}")
+    print(f"All images inside '{IMAGES_DIR}' have been successfully aligned in place.")
