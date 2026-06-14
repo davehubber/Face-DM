@@ -235,7 +235,6 @@ def verify_and_decode_grid(out_dir: Path, output_grid_name="comparacao_unclip_fl
 
         with torch.no_grad():
             decoded_img = pipe(
-                image=input_768,
                 image_embeds=emb_tensor,
                 prompt="",
                 noise_level=0,
