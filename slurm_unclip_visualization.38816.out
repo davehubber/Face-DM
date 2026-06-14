@@ -1,9 +1,0 @@
-Loading saved test embeddings, norms, and metadata...
-Loading Stable unCLIP pipeline...
-Decoding row 1/5: 46730.png
-Decoding row 2/5: 48393.png
-Decoding row 3/5: 41416.png
-Decoding row 4/5: 34506.png
-Decoding row 5/5: 43725.png
-
-Success! Comparison grid saved to: /nas-ctm01/homes/dacordeiro/Face-DM/unclip_embeddings/comparacao_unclip_flat_batched.jpg

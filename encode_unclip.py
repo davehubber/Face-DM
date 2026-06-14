@@ -13,8 +13,8 @@ from diffusers import StableUnCLIPImg2ImgPipeline
 # ==========================================
 # CONFIGURATION & PARAMETERS
 # ==========================================
-IMAGE_ROOT = Path("/nas-ctm01/datasets/public/ffhq256/")
-OUT_DIR = Path("/nas-ctm01/homes/dacordeiro/Face-DM/unclip_embeddings/")
+IMAGE_ROOT = Path("/nas-ctm01/datasets/public/Oxford102Flowers/jpg/")
+OUT_DIR = Path("/nas-ctm01/homes/dacordeiro/Face-DM/unclip_embeddings_flowers/")
 LIMIT = None         # Set to an integer for testing/debugging
 BATCH_SIZE = 64      # Adjust based on your GPU VRAM (64 is usually safe for 16GB+ cards)
 NUM_WORKERS = 4      # Number of CPU workers parallelizing image I/O and resizing
