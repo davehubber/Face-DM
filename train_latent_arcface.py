@@ -160,8 +160,8 @@ class DeterministicColdDemorph(nn.Module):
         loss_pit = torch.min(loss_A, loss_B).mean()
         
         # 4. NEW TIME-VARYING WEIGHT SCHEDULER
-        # Linearly scales loss_spread to 0 as t approaches the target horizon
-        t_scaled = t.float() / self.num_timesteps  # Shape: (b,)
+        # Quadratically scales loss_spread to 0 as t approaches the target horizon
+        t_scaled = 1.0 - (t.float() / self.num_timesteps) #t_scaled = (t.float() / self.num_timesteps) ** 2  # Shape: (b,)
         
         pred_z2_extracted = self.SQRT_2 * c - pred_z1_raw
         
@@ -461,7 +461,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
-    RUN_NAME = "arcface_baseline_mse_scaled_scheduledSpread"
+    RUN_NAME = "arcface_baseline_mse_scaled_scheduledSpreadInv"
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')

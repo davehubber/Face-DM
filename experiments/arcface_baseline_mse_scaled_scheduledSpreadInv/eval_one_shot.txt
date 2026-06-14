@@ -1,0 +1,21 @@
+--- Evaluation Results: ONE_SHOT ---
+Run Name: arcface_baseline_mse_scaled_scheduledSpreadInv
+----------------------------------------
+[1. Prediction to Ground-Truth Alignment]
+  - Embedding 1 -> MSE Distance: 0.314285 | Cosine Similarity: 0.828175
+  - Embedding 2 -> MSE Distance: 0.314285 | Cosine Similarity: 0.828168
+
+[2. Proximity to True Average Mixture (c)]
+  - Predicted 1 to c -> MSE Distance: 0.202655 | Cosine Similarity: 0.854540
+  - Baseline GT 1 to c -> MSE Distance: 0.464507 | Cosine Similarity: 0.731004
+  - Predicted 2 to c -> MSE Distance: 0.202655 | Cosine Similarity: 0.854138
+  - Baseline GT 2 to c -> MSE Distance: 0.464507 | Cosine Similarity: 0.731004
+
+[3. Predicted Outputs Inter-Relationship / Spread]
+  - Inter-Predicted (p1 vs p2) -> MSE: 0.810621 | Cosine Similarity: 0.467160
+  - Inter-Ground-Truth (z1 vs z2) -> MSE: 1.858027 | Cosine Similarity: 0.070986
+
+[4. Success Rate of Reversal (%S)]
+  - Embedding 1 -> %S1: 47.00%
+  - Embedding 2 -> %S2: 46.60%
+  - Combined Total -> %S: 46.80%
