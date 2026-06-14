@@ -1,0 +1,18 @@
+Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]
+Loading model from: /nas-ctm01/homes/dacordeiro/.conda/envs/test/lib/python3.10/site-packages/lpips/weights/v0.1/alex.pth
+Loaded 1000 valid morph-to-source evaluation pairs.
+🚀 Starting iterative extraction on real morph datasets...
+
+--- Iterative Real Morphing Evaluation Metrics (faces_dual_iso) ---
+Total Evaluated Morph Pairs: 1000
+Identity Assignment Swap Rate: 29.00%
+SSIM Bright Component: 0.2056
+SSIM Dark Component: 0.1393
+PSNR Bright Component: 10.7835
+PSNR Dark Component: 7.4192
+LPIPS Bright Component: 0.3984
+LPIPS Dark Component: 0.4358
+Separation Success Rate Bright (%S): 71.10%
+Separation Success Rate Dark (%S): 29.50%
+
+✅ Morphing evaluation outputs completely saved to: experiments/faces_dual_iso/morphing_eval

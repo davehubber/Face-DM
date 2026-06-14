@@ -1,0 +1,11 @@
+--- Iterative Real Morphing Evaluation Metrics (faces_dual_iso) ---
+Total Evaluated Morph Pairs: 1000
+Identity Assignment Swap Rate: 29.00%
+SSIM Bright Component: 0.2056
+SSIM Dark Component: 0.1393
+PSNR Bright Component: 10.7835
+PSNR Dark Component: 7.4192
+LPIPS Bright Component: 0.3984
+LPIPS Dark Component: 0.4358
+Separation Success Rate Bright (%S): 71.10%
+Separation Success Rate Dark (%S): 29.50%
