@@ -1,0 +1,9 @@
+Epoch 1 | Train Loss: 1.0910 | Val Cheap Loss: 0.8098 | Val Cheap Cosine Sim: 0.7707
+Epoch 2 | Train Loss: 0.6740 | Val Cheap Loss: 0.5522 | Val Cheap Cosine Sim: 0.8504
+Epoch 3 | Train Loss: 0.4874 | Val Cheap Loss: 0.4342 | Val Cheap Cosine Sim: 0.8845
+Epoch 4 | Train Loss: 0.3989 | Val Cheap Loss: 0.3711 | Val Cheap Cosine Sim: 0.9021
+Epoch 5 | Train Loss: 0.3516 | Val Cheap Loss: 0.3302 | Val Cheap Cosine Sim: 0.9134
+Epoch 6 | Train Loss: 0.3182 | Val Cheap Loss: 0.3082 | Val Cheap Cosine Sim: 0.9194
+Epoch 7 | Train Loss: 0.2960 | Val Cheap Loss: 0.2839 | Val Cheap Cosine Sim: 0.9260
+Epoch 8 | Train Loss: 0.2725 | Val Cheap Loss: 0.2606 | Val Cheap Cosine Sim: 0.9322
+Epoch 9 | Train Loss: 0.2590 | Val Cheap Loss: 0.2578 | Val Cheap Cosine Sim: 0.9329
