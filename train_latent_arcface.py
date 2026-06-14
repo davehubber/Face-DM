@@ -159,13 +159,17 @@ class DeterministicColdDemorph(nn.Module):
         
         loss_pit = torch.min(loss_A, loss_B).mean()
         
+        # 4. Conditional Spread Regularization (Applied ONLY at maximum degradation)
         pred_z2_extracted = self.SQRT_2 * c - pred_z1_raw
         
         dist_gt = F.mse_loss(z1, z2, reduction='none').mean(dim=-1)
         dist_pred = F.mse_loss(pred_z1_raw, pred_z2_extracted, reduction='none').mean(dim=-1)
         
-        # Apply element-wise scaling across the batch matrix
-        loss_spread = F.mse_loss(dist_pred, dist_gt, reduction='none').mean()
+        # Create a boolean mask tracking which items in the batch match the final horizon step
+        mask = (t == self.num_timesteps).float()
+        
+        # Average the spread loss exclusively over samples where maximum degradation occurred
+        loss_spread = (F.mse_loss(dist_pred, dist_gt, reduction='none') * mask).sum() / (mask.sum() + 1e-8)
         
         total_loss = loss_pit + spread_weight * loss_spread
         return total_loss
@@ -174,7 +178,6 @@ class DeterministicColdDemorph(nn.Module):
     def tacos_sample_loop(self, c, stride=1):
         device = c.device
         b = c.shape[0]
-        # Step backward through the trajectory using the specified stride
         timesteps = torch.arange(self.num_timesteps, 0, -stride, device=device).long()
         x_t = c.clone()
         
@@ -196,7 +199,6 @@ class DeterministicColdDemorph(nn.Module):
             pred_z2 = self.SQRT_2 * c - pred_z1
             prev_pred_z1 = pred_z1
             
-            # Determine the exact timestep destination we are jumping down to
             t_next = max(0, int(t.item() - stride))
             t_next_batch = torch.full((b,), t_next, device=device, dtype=torch.long)
             
@@ -257,7 +259,6 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     
     early_stopper = EarlyStopping(patience=patience, min_delta=1e-5)
     
-    # Kept your high-performing spread weight parameter of 0.1
     SPREAD_WEIGHT_VAL = 0.1
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
         "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "embedding_type": "ArcFace_Scaled_Sqrt512", "loss_type": "MSE_with_Time_Scheduled_Spread_Reg", "spread_loss_weight": SPREAD_WEIGHT_VAL
@@ -319,7 +320,6 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
                 for batch_z1, batch_z2 in val_loader:
                     batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
                     batch_c_vp = SQRT_05 * batch_z1 + SQRT_05 * batch_z2
-                    # Validation sampling keeps standard stride=1 sequence
                     pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp, stride=1)
                     
                     dist_a = F.mse_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
@@ -371,7 +371,6 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
     
-    # Save strided run results dynamically so they don't overwrite each other
     if mode == 'iterative':
         out_file_path = exp_dir / f"eval_{mode}_stride{stride}.txt"
     else:
@@ -469,13 +468,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
-    RUN_NAME = "arcface_baseline_mse_scaled_spreadLoss0.1_new"
+    RUN_NAME = "arcface_baseline_mse_scaled_spreadLossLast"
     
-    # Train using the standard trajectory config
-    #train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
-    
-    # Evaluate configurations
-    #evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
-    
-    # Example: Run strided sampling sequence jumping 5 timesteps backward at a time (e.g., 300 -> 295 -> 290...)
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='iterative', stride=150)
+    train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='iterative', stride=1)
