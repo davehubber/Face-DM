@@ -1,0 +1,56 @@
+Epoch 1 | Train Loss: 0.6262 | Val Cheap Loss: 0.2045 | Val Cheap Cosine Sim: 0.9481
+Epoch 2 | Train Loss: 0.1974 | Val Cheap Loss: 0.1912 | Val Cheap Cosine Sim: 0.9510
+Epoch 3 | Train Loss: 0.1905 | Val Cheap Loss: 0.1860 | Val Cheap Cosine Sim: 0.9524
+Epoch 4 | Train Loss: 0.1822 | Val Cheap Loss: 0.1742 | Val Cheap Cosine Sim: 0.9555
+Epoch 5 | Train Loss: 0.1677 | Val Cheap Loss: 0.1584 | Val Cheap Cosine Sim: 0.9596
+Epoch 6 | Train Loss: 0.1537 | Val Cheap Loss: 0.1457 | Val Cheap Cosine Sim: 0.9629
+Epoch 7 | Train Loss: 0.1427 | Val Cheap Loss: 0.1363 | Val Cheap Cosine Sim: 0.9653
+Epoch 8 | Train Loss: 0.1357 | Val Cheap Loss: 0.1306 | Val Cheap Cosine Sim: 0.9668
+Epoch 9 | Train Loss: 0.1285 | Val Cheap Loss: 0.1251 | Val Cheap Cosine Sim: 0.9682
+Epoch 10 | Train Loss: 0.1259 | Val Cheap Loss: 0.1211 | Val Cheap Cosine Sim: 0.9692
+Epoch 11 | Train Loss: 0.1207 | Val Cheap Loss: 0.1170 | Val Cheap Cosine Sim: 0.9703
+Epoch 12 | Train Loss: 0.1187 | Val Cheap Loss: 0.1147 | Val Cheap Cosine Sim: 0.9708
+Epoch 13 | Train Loss: 0.1162 | Val Cheap Loss: 0.1130 | Val Cheap Cosine Sim: 0.9713
+Epoch 14 | Train Loss: 0.1148 | Val Cheap Loss: 0.1116 | Val Cheap Cosine Sim: 0.9716
+Epoch 15 | Train Loss: 0.1134 | Val Cheap Loss: 0.1102 | Val Cheap Cosine Sim: 0.9720
+Epoch 16 | Train Loss: 0.1123 | Val Cheap Loss: 0.1100 | Val Cheap Cosine Sim: 0.9722
+Epoch 17 | Train Loss: 0.1108 | Val Cheap Loss: 0.1074 | Val Cheap Cosine Sim: 0.9727
+Epoch 18 | Train Loss: 0.1102 | Val Cheap Loss: 0.1073 | Val Cheap Cosine Sim: 0.9727
+Epoch 19 | Train Loss: 0.1092 | Val Cheap Loss: 0.1063 | Val Cheap Cosine Sim: 0.9730
+Epoch 20 | Train Loss: 0.1088 | Val Cheap Loss: 0.1057 | Val Cheap Cosine Sim: 0.9732
+Epoch 21 | Train Loss: 0.1083 | Val Cheap Loss: 0.1047 | Val Cheap Cosine Sim: 0.9734
+Epoch 22 | Train Loss: 0.1079 | Val Cheap Loss: 0.1044 | Val Cheap Cosine Sim: 0.9735
+Epoch 23 | Train Loss: 0.1074 | Val Cheap Loss: 0.1040 | Val Cheap Cosine Sim: 0.9736
+Epoch 24 | Train Loss: 0.1071 | Val Cheap Loss: 0.1046 | Val Cheap Cosine Sim: 0.9734
+ EarlyStopping Counter: 1 out of 20
+Epoch 25 | Train Loss: 0.1065 | Val Cheap Loss: 0.1041 | Val Cheap Cosine Sim: 0.9736 | Val TACOs MSE: 0.1190
+ EarlyStopping Counter: 2 out of 20
+Epoch 26 | Train Loss: 0.1064 | Val Cheap Loss: 0.1046 | Val Cheap Cosine Sim: 0.9734
+ EarlyStopping Counter: 3 out of 20
+Epoch 27 | Train Loss: 0.1057 | Val Cheap Loss: 0.1028 | Val Cheap Cosine Sim: 0.9739
+Epoch 28 | Train Loss: 0.1057 | Val Cheap Loss: 0.1024 | Val Cheap Cosine Sim: 0.9740
+Epoch 29 | Train Loss: 0.1053 | Val Cheap Loss: 0.1022 | Val Cheap Cosine Sim: 0.9740
+Epoch 30 | Train Loss: 0.1051 | Val Cheap Loss: 0.1027 | Val Cheap Cosine Sim: 0.9739
+ EarlyStopping Counter: 1 out of 20
+Epoch 31 | Train Loss: 0.1049 | Val Cheap Loss: 0.1022 | Val Cheap Cosine Sim: 0.9740
+Epoch 32 | Train Loss: 0.1046 | Val Cheap Loss: 0.1019 | Val Cheap Cosine Sim: 0.9741
+Epoch 33 | Train Loss: 0.1046 | Val Cheap Loss: 0.1029 | Val Cheap Cosine Sim: 0.9739
+ EarlyStopping Counter: 1 out of 20
+Epoch 34 | Train Loss: 0.1041 | Val Cheap Loss: 0.1018 | Val Cheap Cosine Sim: 0.9741
+Epoch 35 | Train Loss: 0.1041 | Val Cheap Loss: 0.1015 | Val Cheap Cosine Sim: 0.9742
+Epoch 36 | Train Loss: 0.1040 | Val Cheap Loss: 0.1014 | Val Cheap Cosine Sim: 0.9742
+Epoch 37 | Train Loss: 0.1037 | Val Cheap Loss: 0.1018 | Val Cheap Cosine Sim: 0.9741
+ EarlyStopping Counter: 1 out of 20
+Epoch 38 | Train Loss: 0.1035 | Val Cheap Loss: 0.1016 | Val Cheap Cosine Sim: 0.9742
+ EarlyStopping Counter: 2 out of 20
+Epoch 39 | Train Loss: 0.1034 | Val Cheap Loss: 0.1009 | Val Cheap Cosine Sim: 0.9744
+Epoch 40 | Train Loss: 0.1032 | Val Cheap Loss: 0.1014 | Val Cheap Cosine Sim: 0.9742
+ EarlyStopping Counter: 1 out of 20
+Epoch 41 | Train Loss: 0.1031 | Val Cheap Loss: 0.1008 | Val Cheap Cosine Sim: 0.9744
+Epoch 42 | Train Loss: 0.1030 | Val Cheap Loss: 0.1015 | Val Cheap Cosine Sim: 0.9743
+ EarlyStopping Counter: 1 out of 20
+Epoch 43 | Train Loss: 0.1027 | Val Cheap Loss: 0.1003 | Val Cheap Cosine Sim: 0.9745
+Epoch 44 | Train Loss: 0.1025 | Val Cheap Loss: 0.1004 | Val Cheap Cosine Sim: 0.9745
+ EarlyStopping Counter: 1 out of 20
+Epoch 45 | Train Loss: 0.1024 | Val Cheap Loss: 0.0999 | Val Cheap Cosine Sim: 0.9746
+Epoch 46 | Train Loss: 0.1021 | Val Cheap Loss: 0.0987 | Val Cheap Cosine Sim: 0.9749

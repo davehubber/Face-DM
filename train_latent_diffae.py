@@ -44,12 +44,10 @@ class ColdDiffAEDemorphTestPairsDataset(Dataset):
         return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
 
 def load_split_and_normalize(base_path_str: str, split: str) -> np.ndarray:
+    """Loads DiffAE split files, applies L2 normalization, and scales by sqrt(dim)."""
     base_path = Path(base_path_str).resolve()
     parent = base_path.parent
     stem = base_path.stem.replace("_train", "").replace("_test_pairs", "")
-    
-    mean_path = parent / f"{stem}_train_mean.npy"
-    std_path = parent / f"{stem}_train_std.npy"
     
     if split == "train":
         split_path = parent / f"{stem}_train.npy"
@@ -63,17 +61,13 @@ def load_split_and_normalize(base_path_str: str, split: str) -> np.ndarray:
         
     data = np.load(split_path).astype(np.float32)
     
-    if mean_path.exists() and std_path.exists():
-        mean = np.load(mean_path).astype(np.float32)
-        std = np.load(std_path).astype(np.float32)
-        
-        if split == "test":
-            mean = mean[np.newaxis, :]
-            std = std[np.newaxis, :]
-            
-        data = (data - mean) / std
-    else:
-        raise FileNotFoundError(f"Normalization statistics missing at {mean_path} or {std_path}")
+    # 1. Perform explicit L2 normalization across the embedding dimension axis
+    norms = np.linalg.norm(data, axis=-1, keepdims=True)
+    data = data / (norms + 1e-12)
+    
+    # 2. Dynamically scale by the square root of dimensionality 
+    dim = data.shape[-1]
+    data = data * math.sqrt(dim)
     return data
 
 # ==========================================
@@ -134,7 +128,7 @@ class ColdDemorphNet(nn.Module):
         return self.final_linear(h)
 
 # ==========================================
-# 3. Cold Diffusion Process (Dual-Target PIT)
+# 3. Cold Diffusion Process (Scheduled Trajectory Constraint)
 # ==========================================
 class DeterministicColdDemorph(nn.Module):
     def __init__(self, model, num_timesteps=300):
@@ -149,41 +143,50 @@ class DeterministicColdDemorph(nn.Module):
         w2 = torch.sqrt(0.5 * gamma)
         return w1 * z1 + w2 * z2
 
-    def compute_loss(self, z1, z2, cos_weight=0.2):
+    def compute_loss(self, z1, z2, spread_weight=0.5):
         b = z1.shape[0]
+        
+        # 1. Compute the constant maximum-timestep midpoint vector 'c' for this pair
+        t_max = torch.full((b,), self.num_timesteps, device=z1.device).long()
+        c = self.degrade(z1, z2, t_max)
+        
+        # 2. Degrade at a random intermediate step 't'
         t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
-        
         x_t = self.degrade(z1, z2, t)
-        pred = self.model(x_t, t)
         
+        pred = self.model(x_t, t)
         pred_z1_raw, pred_z2_raw = pred.chunk(2, dim=-1)
         
-        # Branch A Path Execution
-        loss_L1_A = F.l1_loss(pred_z1_raw, z1, reduction='none').mean(dim=-1) + \
-                    F.l1_loss(pred_z2_raw, z2, reduction='none').mean(dim=-1)
-        loss_cos_A = (1.0 - F.cosine_similarity(pred_z1_raw, z1, dim=-1)) + \
-                     (1.0 - F.cosine_similarity(pred_z2_raw, z2, dim=-1))
-        total_loss_A = loss_L1_A + cos_weight * loss_cos_A
+        # 3. Standard Permutation-Invariant Assignment Loss (PIT)
+        loss_A = F.mse_loss(pred_z1_raw, z1, reduction='none').mean(dim=-1) + \
+                 F.mse_loss(pred_z2_raw, z2, reduction='none').mean(dim=-1)
+                 
+        loss_B = F.mse_loss(pred_z1_raw, z2, reduction='none').mean(dim=-1) + \
+                 F.mse_loss(pred_z2_raw, z1, reduction='none').mean(dim=-1)
         
-        # Branch B Path Execution
-        loss_L1_B = F.l1_loss(pred_z1_raw, z2, reduction='none').mean(dim=-1) + \
-                    F.l1_loss(pred_z2_raw, z1, reduction='none').mean(dim=-1)
-        loss_cos_B = (1.0 - F.cosine_similarity(pred_z1_raw, z2, dim=-1)) + \
-                     (1.0 - F.cosine_similarity(pred_z2_raw, z1, dim=-1))
-        total_loss_B = loss_L1_B + cos_weight * loss_cos_B
+        loss_pit = torch.min(loss_A, loss_B).mean()
         
-        loss = torch.min(total_loss_A, total_loss_B)
-        return loss.mean()
+        pred_z2_extracted = self.SQRT_2 * c - pred_z1_raw
+        
+        dist_gt = F.mse_loss(z1, z2, reduction='none').mean(dim=-1)
+        dist_pred = F.mse_loss(pred_z1_raw, pred_z2_extracted, reduction='none').mean(dim=-1)
+        
+        # Apply element-wise scaling across the batch matrix
+        loss_spread = F.mse_loss(dist_pred, dist_gt, reduction='none').mean()
+        
+        total_loss = loss_pit + spread_weight * loss_spread
+
+        return total_loss
 
     @torch.no_grad()
-    def tacos_sample_loop(self, c):
+    def tacos_sample_loop(self, c, stride=1):
         device = c.device
         b = c.shape[0]
-        timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
+        timesteps = torch.arange(self.num_timesteps, 0, -stride, device=device).long()
         x_t = c.clone()
         
         prev_pred_z1 = None
-        for t in tqdm(timesteps, desc='TACOs Sampling', leave=False):
+        for t in tqdm(timesteps, desc=f'TACOs Sampling (Stride {stride})', leave=False):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
             pred_raw = self.model(x_t, t_batch)
             pred_raw_1, pred_raw_2 = pred_raw.chunk(2, dim=-1)
@@ -191,8 +194,8 @@ class DeterministicColdDemorph(nn.Module):
             if prev_pred_z1 is None:
                 pred_z1 = pred_raw_1
             else:
-                dist_1 = F.l1_loss(pred_raw_1, prev_pred_z1, reduction='none').mean(dim=-1)
-                dist_2 = F.l1_loss(pred_raw_2, prev_pred_z1, reduction='none').mean(dim=-1)
+                dist_1 = F.mse_loss(pred_raw_1, prev_pred_z1, reduction='none').mean(dim=-1)
+                dist_2 = F.mse_loss(pred_raw_2, prev_pred_z1, reduction='none').mean(dim=-1)
                 
                 swap_mask = dist_2 < dist_1
                 pred_z1 = torch.where(swap_mask.unsqueeze(-1), pred_raw_2, pred_raw_1)
@@ -200,11 +203,13 @@ class DeterministicColdDemorph(nn.Module):
             pred_z2 = self.SQRT_2 * c - pred_z1
             prev_pred_z1 = pred_z1
             
-            t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
-            deg_t = self.degrade(pred_z1, pred_z2, t_batch)
-            deg_t_prev = self.degrade(pred_z1, pred_z2, t_prev_batch)
+            t_next = max(0, int(t.item() - stride))
+            t_next_batch = torch.full((b,), t_next, device=device, dtype=torch.long)
             
-            x_t = x_t - deg_t + deg_t_prev
+            deg_t = self.degrade(pred_z1, pred_z2, t_batch)
+            deg_t_next = self.degrade(pred_z1, pred_z2, t_next_batch)
+            
+            x_t = x_t - deg_t + deg_t_next
             
         final_z1 = x_t
         final_z2 = self.SQRT_2 * c - final_z1
@@ -244,23 +249,25 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
     
     if not metrics_path.exists():
         with open(metrics_path, "w", newline="") as f:
-            csv.writer(f).writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_TACOs_Reconstruct_L1"])
+            csv.writer(f).writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_Cheap_Cos_Similarity", "Val_TACOs_Reconstruct_MSE"])
             
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
     
-    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=16_384, shuffle=True, num_workers=8)
+    embedding_dim = train_embs.shape[-1]
+    
+    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=32_768, shuffle=True, num_workers=8)
     val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
 
-    net = ColdDemorphNet().to(device)
+    net = ColdDemorphNet(x_dim=embedding_dim, time_emb_dim=embedding_dim).to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
     
     early_stopper = EarlyStopping(patience=patience, min_delta=1e-5)
     
-    COS_WEIGHT_VAL = 0.2
+    SPREAD_WEIGHT_VAL = 0.1
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 16_384, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "cosine_loss_weight": COS_WEIGHT_VAL, "early_stop_patience": patience
+        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "embedding_type": "DiffAE_L2_Normalized_Scaled", "loss_type": "MSE_MaxTimestep_Spread_Reg", "spread_loss_weight": SPREAD_WEIGHT_VAL
     })
 
     best_val_loss = float("inf")
@@ -272,7 +279,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
         for batch_z1, batch_z2 in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]"):
             batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
             optimizer.zero_grad()
-            loss = diffusion.compute_loss(batch_z1, batch_z2, cos_weight=COS_WEIGHT_VAL)
+            loss = diffusion.compute_loss(batch_z1, batch_z2, spread_weight=SPREAD_WEIGHT_VAL)
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
@@ -281,13 +288,37 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
         
         net.eval()
         val_cheap_loss = 0.0
+        val_cheap_cos = 0.0
         val_tacos_loss = None
         
         with torch.no_grad():
             for batch_z1, batch_z2 in val_loader:
                 batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
-                val_cheap_loss += diffusion.compute_loss(batch_z1, batch_z2, cos_weight=COS_WEIGHT_VAL).item()
+                
+                b = batch_z1.shape[0]
+                t = torch.randint(1, diffusion.num_timesteps + 1, (b,), device=batch_z1.device).long()
+                x_t = diffusion.degrade(batch_z1, batch_z2, t)
+                pred = net(x_t, t)
+                pred_z1_raw, pred_z2_raw = pred.chunk(2, dim=-1)
+                
+                loss_path_A = F.mse_loss(pred_z1_raw, batch_z1, reduction='none').mean(dim=-1) + \
+                              F.mse_loss(pred_z2_raw, batch_z2, reduction='none').mean(dim=-1)
+                
+                loss_path_B = F.mse_loss(pred_z1_raw, batch_z2, reduction='none').mean(dim=-1) + \
+                              F.mse_loss(pred_z2_raw, batch_z1, reduction='none').mean(dim=-1)
+                
+                val_cheap_loss += torch.min(loss_path_A, loss_path_B).mean().item()
+                
+                mask_a = (loss_path_A <= loss_path_B).unsqueeze(-1)
+                aligned_pred_z1 = torch.where(mask_a, pred_z1_raw, pred_z2_raw)
+                aligned_pred_z2 = torch.where(mask_a, pred_z2_raw, pred_z1_raw)
+                
+                cos_1 = F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1)
+                cos_2 = F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1)
+                val_cheap_cos += 0.5 * (cos_1 + cos_2).mean().item()
+
         avg_val_cheap_loss = val_cheap_loss / len(val_loader)
+        avg_val_cheap_cos = val_cheap_cos / len(val_loader)
 
         if (epoch + 1) % 25 == 0 or (epoch + 1) == epochs:
             val_tacos_loss_total = 0.0
@@ -295,19 +326,30 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
                 for batch_z1, batch_z2 in val_loader:
                     batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
                     batch_c_vp = SQRT_05 * batch_z1 + SQRT_05 * batch_z2
-                    pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp)
+                    pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp, stride=1)
                     
-                    dist_a = F.l1_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
-                    dist_b = F.l1_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
+                    dist_a = F.mse_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
+                    dist_b = F.mse_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
                     val_tacos_loss_total += torch.min(dist_a, dist_b).mean().item()
             val_tacos_loss = val_tacos_loss_total / len(val_loader)
             
-        log_dict = {"epoch": epoch + 1, "train_loss": avg_train_loss, "val_cheap_loss": avg_val_cheap_loss}
-        if val_tacos_loss is not None: log_dict["val_tacos_reconstruct_l1"] = val_tacos_loss
+        log_dict = {
+            "epoch": epoch + 1, 
+            "train_loss": avg_train_loss, 
+            "val_cheap_loss": avg_val_cheap_loss,
+            "val_cheap_cosine_similarity": avg_val_cheap_cos
+        }
+        if val_tacos_loss is not None: log_dict["val_tacos_reconstruct_raw_mse"] = val_tacos_loss
         wandb.log(log_dict)
         
         with open(metrics_path, "a", newline="") as f:
-            csv.writer(f).writerow([epoch + 1, f"{avg_train_loss:.6f}", f"{avg_val_cheap_loss:.6f}", f"{val_tacos_loss:.6f}" if val_tacos_loss is not None else "N/A"])
+            csv.writer(f).writerow([
+                epoch + 1, 
+                f"{avg_train_loss:.6f}", 
+                f"{avg_val_cheap_loss:.6f}", 
+                f"{avg_val_cheap_cos:.6f}",
+                f"{val_tacos_loss:.6f}" if val_tacos_loss is not None else "N/A"
+            ])
             
         checkpoint_data = {'epoch': epoch + 1, 'model_state_dict': net.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}
         torch.save(checkpoint_data, ckpt_dir / "last.pt")
@@ -316,9 +358,12 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
             best_val_loss = avg_val_cheap_loss
             torch.save(checkpoint_data, ckpt_dir / "best.pt")
             
-        print(f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} | Val Cheap Loss: {avg_val_cheap_loss:.4f}" + (f" | Val TACOs L1: {val_tacos_loss:.4f}" if val_tacos_loss is not None else ""))
+        print(
+            f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f} | "
+            f"Val Cheap Loss: {avg_val_cheap_loss:.4f} | Val Cheap Cosine Sim: {avg_val_cheap_cos:.4f}" + 
+            (f" | Val TACOs MSE: {val_tacos_loss:.4f}" if val_tacos_loss is not None else "")
+        )
         
-        # Early stopping verification logic check
         if early_stopper(avg_val_cheap_loss):
             print(f"\n[EARLY STOPPING TRIGGERED] Validation profile plateaued for {patience} epochs. Terminating run.")
             break
@@ -328,16 +373,22 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
 # ==========================================
 # 6. Evaluation Script
 # ==========================================
-def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 300, mode: str = 'iterative'):
+def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 300, mode: str = 'iterative', stride: int = 1):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
+    
+    if mode == 'iterative':
+        out_file_path = exp_dir / f"eval_{mode}_stride{stride}.txt"
+    else:
+        out_file_path = exp_dir / f"eval_{mode}.txt"
+        
     ckpt_path = exp_dir / "checkpoints" / "best.pt"
-    out_file_path = exp_dir / f"eval_{mode}.txt"
     
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
     test_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
 
-    net = ColdDemorphNet().to(device)
+    embedding_dim = test_pairs_embs.shape[-1]
+    net = ColdDemorphNet(x_dim=embedding_dim, time_emb_dim=embedding_dim).to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
     net.load_state_dict(torch.load(ckpt_path, map_location=device)['model_state_dict'])
     net.eval()
@@ -353,7 +404,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
             batch_c_true = 0.5 * (batch_z1 + batch_z2)           
             
             if mode == 'iterative':
-                pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp)
+                pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp, stride=stride)
             else:
                 pred = net(batch_c_vp, torch.full((batch_z1.shape[0],), num_timesteps, device=device).long())
                 pred_raw_1, _ = pred.chunk(2, dim=-1)
@@ -361,47 +412,61 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
                 pred_z1 = pred_raw_1
                 pred_z2 = SQRT_2 * batch_c_vp - pred_z1
 
-            dist_a = F.l1_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
-            dist_b = F.l1_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
+            dist_a = F.mse_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
+            dist_b = F.mse_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
             mask_a = (dist_a <= dist_b).unsqueeze(-1)
             
             aligned_pred_z1 = torch.where(mask_a, pred_z1, pred_z2)
             aligned_pred_z2 = torch.where(mask_a, pred_z2, pred_z1)
 
-            l1_gt_1 = F.l1_loss(aligned_pred_z1, batch_z1).item()
-            l1_gt_2 = F.l1_loss(aligned_pred_z2, batch_z2).item()
+            mse_gt_1 = F.mse_loss(aligned_pred_z1, batch_z1).item()
+            mse_gt_2 = F.mse_loss(aligned_pred_z2, batch_z2).item()
             cos_gt_1 = F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1).mean().item()
             cos_gt_2 = F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1).mean().item()
 
-            l1_pred1_to_c = F.l1_loss(aligned_pred_z1, batch_c_true).item()
-            l1_pred2_to_c = F.l1_loss(aligned_pred_z2, batch_c_true).item()
+            mse_pred1_to_c = F.mse_loss(aligned_pred_z1, batch_c_true).item()
+            mse_pred2_to_c = F.mse_loss(aligned_pred_z2, batch_c_true).item()
             cos_pred1_to_c = F.cosine_similarity(aligned_pred_z1, batch_c_true, dim=-1).mean().item()
             cos_pred2_to_c = F.cosine_similarity(aligned_pred_z2, batch_c_true, dim=-1).mean().item()
             
-            ref_l1_z1_to_c = F.l1_loss(batch_z1, batch_c_true).item()
-            ref_l1_z2_to_c = F.l1_loss(batch_z2, batch_c_true).item()
+            ref_mse_z1_to_c = F.mse_loss(batch_z1, batch_c_true).item()
+            ref_mse_z2_to_c = F.mse_loss(batch_z2, batch_c_true).item()
             ref_cos_z1_to_c = F.cosine_similarity(batch_z1, batch_c_true, dim=-1).mean().item()
             ref_cos_z2_to_c = F.cosine_similarity(batch_z2, batch_c_true, dim=-1).mean().item()
 
-            l1_inter_pred = F.l1_loss(aligned_pred_z1, aligned_pred_z2).item()
+            mse_inter_pred = F.mse_loss(aligned_pred_z1, aligned_pred_z2).item()
             cos_inter_pred = F.cosine_similarity(aligned_pred_z1, aligned_pred_z2, dim=-1).mean().item()
             
-            ref_l1_inter_gt = F.l1_loss(batch_z1, batch_z2).item()
+            ref_mse_inter_gt = F.mse_loss(batch_z1, batch_z2).item()
             ref_cos_inter_gt = F.cosine_similarity(batch_z1, batch_z2, dim=-1).mean().item()
 
+            cos_p1_gt = F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1)
+            cos_p2_gt = F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1)
+            cos_p1_c = F.cosine_similarity(aligned_pred_z1, batch_c_true, dim=-1)
+            cos_p2_c = F.cosine_similarity(aligned_pred_z2, batch_c_true, dim=-1)
+
+            pct_S1 = (cos_p1_gt > cos_p1_c).float().mean().item() * 100
+            pct_S2 = (cos_p2_gt > cos_p2_c).float().mean().item() * 100
+            pct_S_comb = 0.5 * (pct_S1 + pct_S2)
+
+    header_text = f"--- Evaluation Results: {mode.upper()} (Stride: {stride}) ---" if mode == 'iterative' else f"--- Evaluation Results: {mode.upper()} ---"
     results_text = (
-        f"--- Evaluation Results: {mode.upper()} ---\nRun Name: {run_name}\n----------------------------------------\n"
+        f"{header_text}\nRun Name: {run_name}\n----------------------------------------\n"
         f"[1. Prediction to Ground-Truth Alignment]\n"
-        f"  - Embedding 1 -> L1 Distance: {l1_gt_1:.6f} | Cosine Similarity: {cos_gt_1:.6f}\n"
-        f"  - Embedding 2 -> L1 Distance: {l1_gt_2:.6f} | Cosine Similarity: {cos_gt_2:.6f}\n\n"
+        f"  - Embedding 1 -> MSE Distance: {mse_gt_1:.6f} | Cosine Similarity: {cos_gt_1:.6f}\n"
+        f"  - Embedding 2 -> MSE Distance: {mse_gt_2:.6f} | Cosine Similarity: {cos_gt_2:.6f}\n\n"
         f"[2. Proximity to True Average Mixture (c)]\n"
-        f"  - Predicted 1 to c -> L1 Distance: {l1_pred1_to_c:.6f} | Cosine Similarity: {cos_pred1_to_c:.6f}\n"
-        f"  - Baseline GT 1 to c -> L1 Distance: {ref_l1_z1_to_c:.6f} | Cosine Similarity: {ref_cos_z1_to_c:.6f}\n"
-        f"  - Predicted 2 to c -> L1 Distance: {l1_pred2_to_c:.6f} | Cosine Similarity: {cos_pred2_to_c:.6f}\n"
-        f"  - Baseline GT 2 to c -> L1 Distance: {ref_l1_z2_to_c:.6f} | Cosine Similarity: {ref_cos_z2_to_c:.6f}\n\n"
+        f"  - Predicted 1 to c -> MSE Distance: {mse_pred1_to_c:.6f} | Cosine Similarity: {cos_pred1_to_c:.6f}\n"
+        f"  - Baseline GT 1 to c -> MSE Distance: {ref_mse_z1_to_c:.6f} | Cosine Similarity: {ref_cos_z1_to_c:.6f}\n"
+        f"  - Predicted 2 to c -> MSE Distance: {mse_pred2_to_c:.6f} | Cosine Similarity: {cos_pred2_to_c:.6f}\n"
+        f"  - Baseline GT 2 to c -> MSE Distance: {ref_mse_z2_to_c:.6f} | Cosine Similarity: {ref_cos_z2_to_c:.6f}\n\n"
         f"[3. Predicted Outputs Inter-Relationship / Spread]\n"
-        f"  - Inter-Predicted (p1 vs p2) -> L1: {l1_inter_pred:.6f} | Cosine Similarity: {cos_inter_pred:.6f}\n"
-        f"  - Inter-Ground-Truth (z1 vs z2) -> L1: {ref_l1_inter_gt:.6f} | Cosine Similarity: {ref_cos_inter_gt:.6f}\n"
+        f"  - Inter-Predicted (p1 vs p2) -> MSE: {mse_inter_pred:.6f} | Cosine Similarity: {cos_inter_pred:.6f}\n"
+        f"  - Inter-Ground-Truth (z1 vs z2) -> MSE: {ref_mse_inter_gt:.6f} | Cosine Similarity: {ref_cos_inter_gt:.6f}\n\n"
+        f"[4. Success Rate of Reversal (%S)]\n"
+        f"  - Embedding 1 -> %S1: {pct_S1:.2f}%\n"
+        f"  - Embedding 2 -> %S2: {pct_S2:.2f}%\n"
+        f"  - Combined Total -> %S: {pct_S_comb:.2f}%\n"
     )
     
     print("\n" + results_text)
@@ -410,8 +475,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    RUN_NAME = "diffae_baseline_with_cosine"
+    RUN_NAME = "diffae_l2"
     
     train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
     evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='iterative')
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='iterative', stride=1)

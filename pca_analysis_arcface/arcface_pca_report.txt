@@ -1,0 +1,13 @@
+==================================================
+         ARCFACE EMBEDDINGS PCA ANALYSIS REPORT   
+==================================================
+
+Training split sample count: 69000
+ArcFace embedding dimensionality: 512
+
+--- Variance Explained by Top 3 Principal Components ---
+  * Principal Component 1: 3.4971%
+  * Principal Component 2: 2.1602%
+  * Principal Component 3: 1.8874%
+
+Total cumulative variance explained by top 3 PCs: 7.5446%
