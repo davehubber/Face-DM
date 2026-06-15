@@ -1,0 +1,17 @@
+Loaded training z_sem embeddings: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_train.npy
+Shape: (69000, 512)
+Loaded training metadata: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_train_metadata.csv
+Processed 1024/69000Processed 2048/69000Processed 3072/69000Processed 4096/69000Processed 5120/69000Processed 6144/69000Processed 7168/69000Processed 8192/69000Processed 9216/69000Processed 10240/69000Processed 11264/69000Processed 12288/69000Processed 13312/69000Processed 14336/69000Processed 15360/69000Processed 16384/69000Processed 17408/69000Processed 18432/69000Processed 19456/69000Processed 20480/69000Processed 21504/69000Processed 22528/69000Processed 23552/69000Processed 24576/69000Processed 25600/69000Processed 26624/69000Processed 27648/69000Processed 28672/69000Processed 29696/69000Processed 30720/69000Processed 31744/69000Processed 32768/69000Processed 33792/69000Processed 34816/69000Processed 35840/69000Processed 36864/69000Processed 37888/69000Processed 38912/69000Processed 39936/69000Processed 40960/69000Processed 41984/69000Processed 43008/69000Processed 44032/69000Processed 45056/69000Processed 46080/69000Processed 47104/69000Processed 48128/69000Processed 49152/69000Processed 50176/69000Processed 51200/69000Processed 52224/69000Processed 53248/69000Processed 54272/69000Processed 55296/69000Processed 56320/69000Processed 57344/69000Processed 58368/69000Processed 59392/69000Processed 60416/69000Processed 61440/69000Processed 62464/69000Processed 63488/69000Processed 64512/69000Processed 65536/69000Processed 66560/69000Processed 67584/69000Processed 68608/69000Processed 69000/69000
+Computed Smiling probabilities for 69000 embeddings.
+
+Saved:
+  Aligned probabilities .npy: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_train_probs/train_smiling_probabilities.npy
+  Aligned probabilities + indices .npz: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_train_probs/train_smiling_probabilities_with_indices.npz
+  Aligned CSV: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_train_probs/train_smiling_probabilities.csv
+  Sorted CSV: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_train_probs/train_smiling_probabilities_sorted_desc.csv
+  Summary JSON: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_train_probs/train_smiling_probabilities_summary.json
+
+Important:
+  train_smiling_probabilities.npy is aligned with ffhq256_diffae_zsem_train.npy.
+  That means probability[i] corresponds to zsem_train[i].
+  The CSV also stores row_index_in_train_npy, original embedding_index, filename, and image_path.

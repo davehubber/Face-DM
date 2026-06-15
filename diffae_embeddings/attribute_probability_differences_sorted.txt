@@ -1,0 +1,64 @@
+DiffAE 40-attribute classifier probability-difference analysis
+================================================================================
+
+z_sem pairs file: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_test_pairs.npy
+classifier checkpoint: /nas-ctm01/homes/dacordeiro/Face-DM/ffhq256_autoenc_cls/last.ckpt
+number of test pairs: 1000
+z_sem pair shape: (1000, 2, 512)
+
+Criterion used for sorting:
+  mean_abs_probability_difference = mean(abs(P(attribute|A) - P(attribute|B))) over all test pairs
+
+Sorted attributes, descending by mean absolute probability difference
+--------------------------------------------------------------------------------
+Rank  Attr_ID  Attribute                  MeanAbsDiff   MedianAbsDiff   MaxAbsDiff   StdAbsDiff
+--------------------------------------------------------------------------------
+   1       31  Smiling                       0.461700        0.424906     0.998366     0.360484
+   2       20  Male                          0.456446        0.400826     0.997370     0.361486
+   3       21  Mouth_Slightly_Open           0.453853        0.413870     0.995130     0.350047
+   4       19  High_Cheekbones               0.402446        0.372006     0.978180     0.289663
+   5       36  Wearing_Lipstick              0.374596        0.327901     0.996599     0.295980
+   6       15  Eyeglasses                    0.351919        0.130294     0.998504     0.380160
+   7       39  Young                         0.347850        0.304839     0.969436     0.249026
+   8        8  Black_Hair                    0.324396        0.237983     0.973218     0.289543
+   9       24  No_Beard                      0.316660        0.185495     0.992396     0.317440
+  10        7  Big_Nose                      0.312538        0.280869     0.939512     0.213622
+  11        3  Bags_Under_Eyes               0.306210        0.261572     0.930536     0.222147
+  12        2  Attractive                    0.303502        0.260247     0.897274     0.208924
+  13        5  Bangs                         0.292276        0.172907     0.979013     0.299638
+  14       18  Heavy_Makeup                  0.284605        0.187210     0.995517     0.273570
+  15       33  Wavy_Hair                     0.282632        0.228263     0.951176     0.216233
+  16       13  Chubby                        0.278945        0.224490     0.926253     0.223275
+  17       23  Narrow_Eyes                   0.274165        0.236785     0.839855     0.205422
+  18        9  Blond_Hair                    0.266253        0.155906     0.991355     0.271714
+  19       12  Bushy_Eyebrows                0.260061        0.183674     0.956448     0.240222
+  20       28  Receding_Hairline             0.257729        0.188996     0.900076     0.223539
+  21       14  Double_Chin                   0.257592        0.193337     0.933859     0.221039
+  22        1  Arched_Eyebrows               0.252512        0.206930     0.880473     0.193181
+  23       35  Wearing_Hat                   0.245903        0.098957     0.997025     0.308117
+  24        0  5_o_Clock_Shadow              0.243698        0.164587     0.917920     0.216262
+  25       38  Wearing_Necktie               0.241201        0.165564     0.951513     0.226434
+  26       11  Brown_Hair                    0.240474        0.200791     0.854813     0.186777
+  27       17  Gray_Hair                     0.230250        0.119037     0.974041     0.254659
+  28       32  Straight_Hair                 0.226782        0.199199     0.846856     0.169620
+  29       22  Mustache                      0.219637        0.135998     0.914632     0.221861
+  30       26  Pale_Skin                     0.218558        0.130445     0.967817     0.231004
+  31       30  Sideburns                     0.218210        0.091444     0.980112     0.271190
+  32       34  Wearing_Earrings              0.218043        0.157234     0.927914     0.191396
+  33       16  Goatee                        0.207195        0.099005     0.961118     0.241885
+  34       25  Oval_Face                     0.196741        0.167419     0.729055     0.142514
+  35        6  Big_Lips                      0.167979        0.141364     0.621164     0.128504
+  36       29  Rosy_Cheeks                   0.157723        0.091700     0.898191     0.173592
+  37        4  Bald                          0.157468        0.058928     0.981672     0.215186
+  38       27  Pointy_Nose                   0.153071        0.126906     0.715647     0.117460
+  39       37  Wearing_Necklace              0.151708        0.124183     0.571683     0.114404
+  40       10  Blurry                        0.087097        0.046147     0.682621     0.115510
+
+
+Most different attribute overall:
+  Rank: 1
+  Attribute ID: 31
+  Attribute: Smiling
+  Mean absolute probability difference: 0.461700
+  Median absolute probability difference: 0.424906
+  Maximum absolute probability difference in a pair: 0.998366
