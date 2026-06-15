@@ -1,0 +1,35 @@
+{
+  "pair_index": 0,
+  "threshold": 0.5,
+  "T": 250,
+  "scores": [
+    {
+      "side": "A",
+      "Young_probability": 0.9568182229995728,
+      "Young_percentage": 95.68182229995728,
+      "Young_prediction": true,
+      "Smiling_probability": 0.9927540421485901,
+      "Smiling_percentage": 99.27540421485901,
+      "Smiling_prediction": true
+    },
+    {
+      "side": "B",
+      "Young_probability": 0.5455683469772339,
+      "Young_percentage": 54.55683469772339,
+      "Young_prediction": true,
+      "Smiling_probability": 0.9982625842094421,
+      "Smiling_percentage": 99.82625842094421,
+      "Smiling_prediction": true
+    }
+  ],
+  "metadata": {
+    "pair_index": "0",
+    "embedding_index_A": "46730",
+    "image_path_A": "/nas-ctm01/datasets/public/ffhq256/46730.png",
+    "filename_A": "46730.png",
+    "embedding_index_B": "27576",
+    "image_path_B": "/nas-ctm01/datasets/public/ffhq256/27576.png",
+    "filename_B": "27576.png"
+  },
+  "grid_path": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/pair0_young_smiling_grid.png"
+}
