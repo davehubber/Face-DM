@@ -339,7 +339,7 @@ def train_cold_demorph(
 
     train_loader = DataLoader(
         ColdDiffAEDemorphTrainDataset(train_embs, smiling_train_scores, epoch_size=1_000_000),
-        batch_size=16_384,
+        batch_size=32_768,
         shuffle=True,
         num_workers=8,
     )
@@ -363,7 +363,7 @@ def train_cold_demorph(
         dir=str(exp_dir),
         config={
             "learning_rate": 1e-4,
-            "batch_size": 16_384,
+            "batch_size": 32_768,
             "num_layers": 10,
             "hidden_dim": 2048,
             "num_timesteps": num_timesteps,
