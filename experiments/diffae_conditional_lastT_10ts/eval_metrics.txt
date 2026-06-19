@@ -1,0 +1,7 @@
+--- CONDITIONAL EVALUATION (EXTERNAL CONDITION ONLY AT FIRST REVERSE STEP) ---
+Condition A -> Recover B L1 Distance : 0.703339
+Condition A -> Recover B Cosine Sim  : 0.522960
+Condition B -> Recover A L1 Distance : 0.676397
+Condition B -> Recover A Cosine Sim  : 0.565901
+Mean Conditional L1 Distance         : 0.689868
+Mean Conditional Cosine Sim          : 0.544430
