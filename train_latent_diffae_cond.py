@@ -349,15 +349,14 @@ def evaluate_conditional_demorph(data_dir: str, run_name: str, num_timesteps: in
     eval_bf = (eval_bf - global_mean) / global_std
     eval_morphs = (eval_morphs - global_mean) / global_std
 
-    # For evaluation, we want stable deterministic results, so we do not flip conditions here.
-    # We will build a manual loader that strictly tests M|A -> B
     records = []
     with open(root / "eval_morph_metadata_1000.csv", 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
             idx_m = int(row['embedding_index'])
-            idx_a = int(row['source_idx_A_in_eval_bf'])
-            idx_b = int(row['source_idx_B_in_eval_bf'])
+            # FIXED: Column names updated to match the new encoding pipeline
+            idx_a = int(row['source_idx_A_in_train_bf'])
+            idx_b = int(row['source_idx_B_in_train_bf'])
             if idx_a >= 0 and idx_b >= 0:
                 records.append((idx_m, idx_a, idx_b))
 
@@ -372,7 +371,7 @@ def evaluate_conditional_demorph(data_dir: str, run_name: str, num_timesteps: in
     with torch.no_grad():
         # Iterate manually to compute exact metrics
         batch_size = 500
-        for i in range(0, len(records), batch_size):
+        for i in tqdm(range(0, len(records), batch_size), desc="Evaluating"):
             batch_records = records[i:i+batch_size]
             
             b_M = torch.tensor(np.array([eval_morphs[r[0]] for r in batch_records]), device=device)
@@ -385,8 +384,8 @@ def evaluate_conditional_demorph(data_dir: str, run_name: str, num_timesteps: in
             total_l1 += F.l1_loss(pred_B, b_tgt_B, reduction="sum").item()
             total_cos += F.cosine_similarity(pred_B, b_tgt_B, dim=-1).sum().item()
 
-    avg_l1 = total_l1 / (len(records) * 512)
-    avg_cos = total_cos / len(records)
+    avg_l1 = total_l1 / (len(records) * 512) if len(records) > 0 else float('inf')
+    avg_cos = total_cos / len(records) if len(records) > 0 else 0.0
 
     results = (
         f"--- CONDITIONAL EVALUATION ---\n"
@@ -402,5 +401,5 @@ if __name__ == "__main__":
     DATA_DIR = "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings"
     RUN_NAME = "diffae_conditional_baseline"
 
-    train_conditional_demorph(data_dir=DATA_DIR, run_name=RUN_NAME)
+    # train_conditional_demorph(data_dir=DATA_DIR, run_name=RUN_NAME)
     evaluate_conditional_demorph(data_dir=DATA_DIR, run_name=RUN_NAME)

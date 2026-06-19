@@ -1,0 +1,23 @@
+{
+  "zsem_test_pairs_path": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_test_pairs.npy",
+  "classifier_ckpt": "/nas-ctm01/homes/dacordeiro/Face-DM/ffhq256_autoenc_cls/last.ckpt",
+  "metadata_path": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem_test_pairs_metadata.csv",
+  "side_used": "A",
+  "num_embeddings": 1000,
+  "z_dim": 512,
+  "attribute": "Smiling",
+  "attribute_index": 31,
+  "threshold": 0.5,
+  "mean_probability": 0.5155282616615295,
+  "std_probability": 0.41255971789360046,
+  "min_probability": 0.0003419872955419123,
+  "max_probability": 0.999846339225769,
+  "num_predicted_smiling": 524,
+  "num_predicted_not_smiling": 476,
+  "outputs": {
+    "aligned_npy": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_test_probs/test_side_A_smiling_probabilities.npy",
+    "aligned_npz_with_indices": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_test_probs/test_side_A_smiling_probabilities_with_indices.npz",
+    "aligned_csv": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_test_probs/test_side_A_smiling_probabilities.csv",
+    "sorted_csv_desc": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_test_probs/test_side_A_smiling_probabilities_sorted_desc.csv"
+  }
+}

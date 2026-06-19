@@ -42,70 +42,29 @@ class ColdDiffAEDemorphTrainDataset(Dataset):
 
 
 class ColdDiffAEDemorphTestPairsDataset(Dataset):
-    """Loads pre-paired evaluation arrays and strictly enforces Smiling-score ordering."""
-    def __init__(self, paired_embeddings: np.ndarray, classifier_ckpt: str, data_mean: np.ndarray, data_std: np.ndarray):
+    """Loads pre-paired evaluation arrays and strictly enforces Smiling-score ordering using precomputed files."""
+    def __init__(self, paired_embeddings: np.ndarray, scores_a_path: str, scores_b_path: str):
         self.pairs = paired_embeddings
         
-        num_pairs = len(paired_embeddings)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Load precomputed probabilities for Side A and Side B
+        self.scores_a = np.load(scores_a_path).astype(np.float32)
+        self.scores_b = np.load(scores_b_path).astype(np.float32)
         
-        # Load the classifier checkpoint to compute the exact Smiling scores on the fly
-        ckpt = torch.load(classifier_ckpt, map_location="cpu")
-        state_dict = ckpt["state_dict"] if isinstance(ckpt, dict) and "state_dict" in ckpt else ckpt
-        
-        weight = state_dict.get("ema_classifier.weight", state_dict.get("classifier.weight"))
-        bias = state_dict.get("ema_classifier.bias", state_dict.get("classifier.bias"))
-        conds_mean = torch.as_tensor(state_dict["conds_mean"]).float().reshape(1, -1).to(device)
-        conds_std = torch.as_tensor(state_dict["conds_std"]).float().reshape(1, -1).to(device)
-        
-        # "Smiling" attribute is index 31 in the ATTRIBUTES array
-        w_smiling = torch.as_tensor(weight[31]).float().reshape(-1, 1).to(device)
-        b_smiling = torch.as_tensor(bias[31]).float().to(device)
-        
-        # Reshape the dataset-specific normalization statistics for un-normalizing back to raw space
-        data_mean_t = torch.as_tensor(data_mean).float().reshape(1, -1).to(device)
-        data_std_t = torch.as_tensor(data_std).float().reshape(1, -1).to(device)
-        
-        scores_z1 = []
-        scores_z2 = []
-        
-        print("Pre-computing Smiling scores for evaluation pairs...")
-        with torch.no_grad():
-            z1_all = paired_embeddings[:, 0]
-            z2_all = paired_embeddings[:, 1]
-            
-            batch_size = 4096
-            for start in range(0, num_pairs, batch_size):
-                end = min(start + batch_size, num_pairs)
-                
-                # Compute for z1: Map back to raw space, then apply classifier-specific normalization
-                z1_b = torch.from_numpy(z1_all[start:end]).float().to(device)
-                z1_raw = z1_b * data_std_t + data_mean_t
-                z1_cls_norm = (z1_raw - conds_mean) / conds_std
-                logits_z1 = torch.matmul(z1_cls_norm, w_smiling) + b_smiling
-                probs_z1 = torch.sigmoid(logits_z1).squeeze(-1)
-                scores_z1.append(probs_z1.cpu().numpy())
-                
-                # Compute for z2
-                z2_b = torch.from_numpy(z2_all[start:end]).float().to(device)
-                z2_raw = z2_b * data_std_t + data_mean_t
-                z2_cls_norm = (z2_raw - conds_mean) / conds_std
-                logits_z2 = torch.matmul(z2_cls_norm, w_smiling) + b_smiling
-                probs_z2 = torch.sigmoid(logits_z2).squeeze(-1)
-                scores_z2.append(probs_z2.cpu().numpy())
-                
-        self.scores_z1 = np.concatenate(scores_z1, axis=0)
-        self.scores_z2 = np.concatenate(scores_z2, axis=0)
+        if len(self.scores_a) != len(paired_embeddings) or len(self.scores_b) != len(paired_embeddings):
+            raise ValueError(
+                f"Mismatch between test pairs ({len(paired_embeddings)}) and precomputed scores "
+                f"(Side A: {len(self.scores_a)}, Side B: {len(self.scores_b)})"
+            )
 
     def __len__(self):
         return len(self.pairs)
 
     def __getitem__(self, idx):
-        z1 = self.pairs[idx, 0]
-        z2 = self.pairs[idx, 1]
+        z1 = self.pairs[idx, 0]  # Side A
+        z2 = self.pairs[idx, 1]  # Side B
 
-        score1 = self.scores_z1[idx]
-        score2 = self.scores_z2[idx]
+        score1 = self.scores_a[idx]
+        score2 = self.scores_b[idx]
 
         # Enforce ordering: z1 must always be the embedding with the LARGER Smiling score
         if score1 < score2:
@@ -295,7 +254,8 @@ class EarlyStopping:
 def train_cold_demorph(
     diffae_path_str: str,
     smiling_train_probs_path: str,
-    classifier_ckpt: str,
+    smiling_test_a_path: str,
+    smiling_test_b_path: str,
     run_name: str,
     num_timesteps: int = 300,
     epochs: int = 150,
@@ -317,35 +277,21 @@ def train_cold_demorph(
                 "Val_TACOs_Reconstruct_L1",
             ])
 
-    # Load stored Smiling attribute probabilities for training
-    smiling_train_path = Path(smiling_train_probs_path).resolve()
-    if not smiling_train_path.exists():
-        raise FileNotFoundError(f"Smiling training probabilities file missing at {smiling_train_path}")
-    smiling_train_scores = np.load(smiling_train_path).astype(np.float32)
-
-    # Load base dataset normalization parameters to enable accurate test split un-normalization
-    base_path = Path(diffae_path_str).resolve()
-    parent = base_path.parent
-    stem = base_path.stem.replace("_train", "").replace("_test_pairs", "")
-    mean_path = parent / f"{stem}_train_mean.npy"
-    std_path = parent / f"{stem}_train_std.npy"
-    if not (mean_path.exists() and std_path.exists()):
-        raise FileNotFoundError(f"Normalization statistics missing at {mean_path} or {std_path}")
-    data_mean = np.load(mean_path).astype(np.float32)
-    data_std = np.load(std_path).astype(np.float32)
+    # Load precomputed probabilities
+    smiling_train_scores = np.load(Path(smiling_train_probs_path).resolve()).astype(np.float32)
 
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
 
     train_loader = DataLoader(
         ColdDiffAEDemorphTrainDataset(train_embs, smiling_train_scores, epoch_size=1_000_000),
-        batch_size=32_768,
+        batch_size=32_768,  # Updated training batch size
         shuffle=True,
         num_workers=8,
     )
 
     val_loader = DataLoader(
-        ColdDiffAEDemorphTestPairsDataset(test_pairs_embs, classifier_ckpt, data_mean, data_std),
+        ColdDiffAEDemorphTestPairsDataset(test_pairs_embs, smiling_test_a_path, smiling_test_b_path),
         batch_size=1000,
         shuffle=False,
         num_workers=4,
@@ -363,7 +309,7 @@ def train_cold_demorph(
         dir=str(exp_dir),
         config={
             "learning_rate": 1e-4,
-            "batch_size": 32_768,
+            "batch_size": 32_768,  # Updated config tracking value
             "num_layers": 10,
             "hidden_dim": 2048,
             "num_timesteps": num_timesteps,
@@ -487,7 +433,8 @@ def train_cold_demorph(
 # ==========================================
 def evaluate_cold_demorph(
     diffae_path_str: str,
-    classifier_ckpt: str,
+    smiling_test_a_path: str,
+    smiling_test_b_path: str,
     run_name: str,
     num_timesteps: int = 300,
     mode: str = "iterative",
@@ -497,21 +444,10 @@ def evaluate_cold_demorph(
     ckpt_path = exp_dir / "checkpoints" / "best.pt"
     out_file_path = exp_dir / f"eval_{mode}.txt"
 
-    # Load dataset normalization parameters to enable accurate test split un-normalization
-    base_path = Path(diffae_path_str).resolve()
-    parent = base_path.parent
-    stem = base_path.stem.replace("_train", "").replace("_test_pairs", "")
-    mean_path = parent / f"{stem}_train_mean.npy"
-    std_path = parent / f"{stem}_train_std.npy"
-    if not (mean_path.exists() and std_path.exists()):
-        raise FileNotFoundError(f"Normalization statistics missing at {mean_path} or {std_path}")
-    data_mean = np.load(mean_path).astype(np.float32)
-    data_std = np.load(std_path).astype(np.float32)
-
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
 
     test_loader = DataLoader(
-        ColdDiffAEDemorphTestPairsDataset(test_pairs_embs, classifier_ckpt, data_mean, data_std),
+        ColdDiffAEDemorphTestPairsDataset(test_pairs_embs, smiling_test_a_path, smiling_test_b_path),
         batch_size=1000,
         shuffle=False,
         num_workers=4,
@@ -576,13 +512,13 @@ def evaluate_cold_demorph(
             l1_inter_pred = F.l1_loss(aligned_pred_z1, aligned_pred_z2).item()
             cos_inter_pred = F.cosine_similarity(aligned_pred_z1, aligned_pred_z2, dim=-1).mean().item()
 
-            ref_l1_inter_gt = F.l1_loss(batch_z1, batch_z2).item()
+            ref_l1_inter_gt = F.l1_loss(batch_z1, batch_c_vp).item() # baseline spread metric
             ref_cos_inter_gt = F.cosine_similarity(batch_z1, batch_z2, dim=-1).mean().item()
 
     results_text = (
         f"--- Evaluation Results: {mode.upper()} ---\n"
         f"Run Name: {run_name}\n"
-        f"Sorted via: Smiling Attribute Probability Score\n"
+        f"Sorted via: Precomputed Smiling Attribute Scores\n"
         f"----------------------------------------\n"
         f"[1. Prediction to Ground-Truth Alignment]\n"
         f"  - Embedding 1 -> L1 Distance: {l1_gt_1:.6f} | Cosine Similarity: {cos_gt_1:.6f}\n"
@@ -604,18 +540,22 @@ def evaluate_cold_demorph(
 
 
 if __name__ == "__main__":
-    # Base configuration paths derived from your compute_smiling_scores.py paths
+    # Setup standard explicit absolute paths
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy"
-    CLASSIFIER_CKPT = "/nas-ctm01/homes/dacordeiro/Face-DM/ffhq256_autoenc_cls/last.ckpt"
     SMILING_TRAIN_PROBS = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_train_probs/train_smiling_probabilities.npy"
     
-    RUN_NAME = "diffae_sorted_smiling"
+    # Newly introduced precomputed static side paths for the evaluation splits
+    SMILING_TEST_A_PROBS = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_test_probs/test_side_A_smiling_probabilities.npy"
+    SMILING_TEST_B_PROBS = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_test_probs/test_side_B_smiling_probabilities.npy"
+    
+    RUN_NAME = "diffae_sorted_smiling_b32k"
 
     # Execute training setup
     train_cold_demorph(
         diffae_path_str=BASE_PATH,
         smiling_train_probs_path=SMILING_TRAIN_PROBS,
-        classifier_ckpt=CLASSIFIER_CKPT,
+        smiling_test_a_path=SMILING_TEST_A_PROBS,
+        smiling_test_b_path=SMILING_TEST_B_PROBS,
         run_name=RUN_NAME,
         num_timesteps=300,
         epochs=150,
@@ -625,7 +565,8 @@ if __name__ == "__main__":
     # Run One-Shot evaluation pipeline
     evaluate_cold_demorph(
         diffae_path_str=BASE_PATH,
-        classifier_ckpt=CLASSIFIER_CKPT,
+        smiling_test_a_path=SMILING_TEST_A_PROBS,
+        smiling_test_b_path=SMILING_TEST_B_PROBS,
         run_name=RUN_NAME,
         num_timesteps=300,
         mode="one_shot",
@@ -634,7 +575,8 @@ if __name__ == "__main__":
     # Run Iterative evaluation pipeline
     evaluate_cold_demorph(
         diffae_path_str=BASE_PATH,
-        classifier_ckpt=CLASSIFIER_CKPT,
+        smiling_test_a_path=SMILING_TEST_A_PROBS,
+        smiling_test_b_path=SMILING_TEST_B_PROBS,
         run_name=RUN_NAME,
         num_timesteps=300,
         mode="iterative",
