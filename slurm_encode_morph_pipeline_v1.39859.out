@@ -1,0 +1,27 @@
+
+--- Initializing Model Pipeline ---
+Model params: 160.69 M
+loading pretrain ... ffhq256_autoenc
+step: 1563562
+Model successfully loaded on target device: cuda
+
+--- Processing Bona Fide Dataset ---
+
+--- Discovering and Filtering Morphs ---
+Total morphs found: 15000
+Valid morphs (both sources exist): 15000
+Allocating 14000 to Train, 1000 to Eval.
+
+--- Processing Train Morph Split ---
+
+--- Processing Eval Morph Split (1000 items) ---
+
+==================================================
+ [SUCCESS] PIPELINE PROCESSING COMPLETED
+==================================================
+ -> Train BF Embeddings Shape        : (25000, 512)
+ -> Train Morph Embeddings Shape     : (14000, 512)
+ -> Eval Morph Subset z_sem Shape    : (1000, 512)
+ -> Eval Morph Subset x_T Shape      : (1000, 3, 256, 256)
+==================================================
+

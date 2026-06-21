@@ -141,7 +141,7 @@ def main():
     # Critical Environment and Model Paths
     parser.add_argument("--diffae-root", type=str, default="/nas-ctm01/homes/dacordeiro/diffae/")
     parser.add_argument("--checkpoint", type=str, default="/nas-ctm01/homes/dacordeiro/Face-DM/ffhq256_autoenc/last.ckpt")
-    parser.add_argument("--out-dir", type=str, default="/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings")
+    parser.add_argument("--out-dir", type=str, default="/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v1")
 
     # Dataset Input Folders (We only need the training folders now)
     parser.add_argument("--train-bonafide-root", type=str, default="/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/SMDD/os25k_m_t/", help="Path to bona fide folder")
