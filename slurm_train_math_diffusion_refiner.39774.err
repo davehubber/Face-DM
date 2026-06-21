@@ -1,0 +1,11 @@
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /nas-ctm01/homes/dacordeiro/.netrc.
+wandb: Currently logged in as: davcordeiro03 (davcordeiro03-inesc-tec) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run ed7a5b0s
+wandb: Tracking run with wandb version 0.26.0
+wandb: Run data is saved locally in /nas-ctm01/homes/dacordeiro/Face-DM/wandb/run-20260619_181923-ed7a5b0s
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run math_baseline_unconditioned_10step
+wandb: ⭐️ View project at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM-MathBaseline-Uncond
+wandb: 🚀 View run at https://wandb.ai/davcordeiro03-inesc-tec/Face-DM-MathBaseline-Uncond/runs/ed7a5b0s
+Epoch 1:   0%|          | 0/28 [00:00<?, ?it/s]Epoch 1:   4%|▎         | 1/28 [00:00<00:10,  2.54it/s]Epoch 1:  18%|█▊        | 5/28 [00:00<00:01, 12.16it/s]Epoch 1:  36%|███▌      | 10/28 [00:00<00:00, 21.17it/s]Epoch 1:  54%|█████▎    | 15/28 [00:00<00:00, 28.17it/s]Epoch 1:  71%|███████▏  | 20/28 [00:00<00:00, 32.84it/s]Epoch 1:  89%|████████▉ | 25/28 [00:00<00:00, 36.01it/s]Epoch 1: 100%|██████████| 28/28 [00:01<00:00, 25.65it/s]
+slurmstepd-01.ctm-deep-01: error: *** JOB 39774 ON 01.ctm-deep-01 CANCELLED AT 2026-06-19T18:19:27 ***

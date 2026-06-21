@@ -40,7 +40,7 @@ class ConditionalMorphDataset(Dataset):
         A = self.bf_embs[idx_a]
         B = self.bf_embs[idx_b]
 
-        # Symmetric Training
+        # Symmetric Training (Combinatorial Augmentation)
         if torch.rand(1).item() > 0.5:
             condition, target = A, B
         else:
@@ -53,7 +53,7 @@ class ConditionalMorphDataset(Dataset):
         )
 
 # ==========================================
-# 2. Diffusion Network Architecture
+# 2. UNCONDITIONED Diffusion Network
 # ==========================================
 class SinusoidalPositionEmbeddings(nn.Module):
     def __init__(self, dim):
@@ -89,22 +89,24 @@ class ColdDemorphNet(nn.Module):
             nn.SiLU(),
             nn.Linear(time_emb_dim * 2, time_emb_dim)
         )
-        joint_cond_dim = time_emb_dim + x_dim
+        
+        # The condition dimension is now STRICTLY the time embedding
         self.blocks = nn.ModuleList()
-        self.blocks.append(AdaLNBlock(x_dim, hidden_dim, joint_cond_dim))
+        self.blocks.append(AdaLNBlock(x_dim, hidden_dim, time_emb_dim))
         for _ in range(num_layers - 1):
-            self.blocks.append(AdaLNBlock(hidden_dim + x_dim, hidden_dim, joint_cond_dim))
+            self.blocks.append(AdaLNBlock(hidden_dim + x_dim, hidden_dim, time_emb_dim))
+            
         self.final_linear = nn.Linear(hidden_dim, x_dim)
 
-    def forward(self, x_t, t, v_cond):
+    def forward(self, x_t, t):
+        # We no longer accept v_cond. The network is strictly time-conditioned.
         t_emb = self.time_mlp(t)
-        joint_cond = torch.cat([t_emb, v_cond], dim=-1) # v_cond will be the Morph M
         h = x_t
         for i, block in enumerate(self.blocks):
             if i == 0:
-                h = block(h, joint_cond)
+                h = block(h, t_emb)
             else:
-                h = block(torch.cat([h, x_t], dim=-1), joint_cond)
+                h = block(torch.cat([h, x_t], dim=-1), t_emb)
         return self.final_linear(h)
 
 # ==========================================
@@ -124,12 +126,12 @@ class MathBaselineColdDemorph(nn.Module):
         # 1. Simple Inverse Linear Interpolation to get x_T anchor
         z_coarse = (2.0 * M) - condition
         
-        # 2. Degrade target towards z_coarse (the faulty prediction)
+        # 2. Degrade target towards z_coarse using variance-preserving trajectory
         gamma = (t / self.num_timesteps).view(-1, 1).float()
-        x_t = gamma * z_coarse + (1 - gamma) * target
+        x_t = torch.sqrt(gamma) * z_coarse + torch.sqrt(1 - gamma) * target
         
-        # 3. Predict target using x_t, conditioned on the original Morph M
-        pred_target = self.model(x_t, t, M)
+        # 3. Predict target using x_t, unconditioned (only time)
+        pred_target = self.model(x_t, t)
         
         return F.mse_loss(pred_target, target)
 
@@ -146,15 +148,15 @@ class MathBaselineColdDemorph(nn.Module):
         for t in timesteps:
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
             
-            # Predict clean target using the Morph M as the guiding condition
-            pred_target = self.model(x_t, t_batch, M)
+            # Predict clean target unconditioned
+            pred_target = self.model(x_t, t_batch)
             
-            # Cold diffusion step update along the z_coarse -> target trajectory
+            # Cold diffusion step update using variance-preserving trajectory
             gamma_t = (t_batch / self.num_timesteps).view(-1, 1).float()
             gamma_prev = ((t_batch - 1) / self.num_timesteps).view(-1, 1).float()
             
-            deg_t = gamma_t * z_coarse + (1 - gamma_t) * pred_target
-            deg_t_prev = gamma_prev * z_coarse + (1 - gamma_prev) * pred_target
+            deg_t = torch.sqrt(gamma_t) * z_coarse + torch.sqrt(1 - gamma_t) * pred_target
+            deg_t_prev = torch.sqrt(gamma_prev) * z_coarse + torch.sqrt(1 - gamma_prev) * pred_target
 
             x_t = x_t - deg_t + deg_t_prev
             
@@ -184,7 +186,7 @@ class EarlyStopping:
 # ==========================================
 # 5. Training Loop
 # ==========================================
-def train_math_diffusion(data_dir: str, run_name: str, num_timesteps=10, batch_size=256):
+def train_math_diffusion_unconditioned(data_dir: str, run_name: str, num_timesteps=10, batch_size=256):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
     ckpt_dir = exp_dir / "checkpoints"
@@ -207,14 +209,15 @@ def train_math_diffusion(data_dir: str, run_name: str, num_timesteps=10, batch_s
     eval_morphs = (eval_morphs - global_mean) / global_std
 
     train_loader = DataLoader(ConditionalMorphDataset(train_morphs, train_bf, root / "train_morph_metadata.csv"), batch_size=batch_size, shuffle=True, num_workers=8)
-    val_loader = DataLoader(ConditionalMorphDataset(eval_morphs, eval_bf, root / "eval_morph_metadata.csv"), batch_size=1000, shuffle=False, num_workers=4)
+    # Kept val batch size matched to train batch size for consistency
+    val_loader = DataLoader(ConditionalMorphDataset(eval_morphs, eval_bf, root / "eval_morph_metadata.csv"), batch_size=batch_size, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet(num_layers=10).to(device)
     diffusion = MathBaselineColdDemorph(net, num_timesteps=num_timesteps).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
     early_stopper = EarlyStopping(patience=20)
 
-    wandb.init(project="Face-DM-Conditional", name=run_name, config={"timesteps": num_timesteps})
+    wandb.init(project="Face-DM-MathBaseline-Uncond", name=run_name, config={"timesteps": num_timesteps, "batch_size": batch_size})
     best_val_loss = float("inf")
 
     for epoch in range(150):
@@ -250,7 +253,7 @@ def train_math_diffusion(data_dir: str, run_name: str, num_timesteps=10, batch_s
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            torch.save(net.state_dict(), ckpt_dir / "math_refiner_best.pt")
+            torch.save(net.state_dict(), ckpt_dir / "uncond_math_refiner_best.pt")
 
         if early_stopper(avg_val_loss):
             print("Early stopping triggered.")
@@ -260,4 +263,4 @@ def train_math_diffusion(data_dir: str, run_name: str, num_timesteps=10, batch_s
 
 if __name__ == "__main__":
     DATA_DIR = "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings"
-    train_math_diffusion(DATA_DIR, "math_baseline_10step_refiner")
+    train_math_diffusion_unconditioned(DATA_DIR, "math_baseline_unconditioned_10step_vp")
