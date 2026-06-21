@@ -256,7 +256,6 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int =
                 val_cheap_loss += diffusion.compute_loss(batch_z1, batch_z2).item()
         avg_val_cheap_loss = val_cheap_loss / len(val_loader)
 
-        # Updated logging execution frequency to trigger every 25 epochs
         if (epoch + 1) % 25 == 0 or (epoch + 1) == epochs:
             val_tacos_loss_total = 0.0
             with torch.no_grad():
@@ -355,6 +354,16 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
             ref_l1_inter_gt = F.l1_loss(batch_z1, batch_z2).item()
             ref_cos_inter_gt = F.cosine_similarity(batch_z1, batch_z2, dim=-1).mean().item()
 
+            # 4. Success Rate of Reversal (%S) Metrics
+            cos_p1_gt = F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1)
+            cos_p2_gt = F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1)
+            cos_p1_c = F.cosine_similarity(aligned_pred_z1, batch_c_true, dim=-1)
+            cos_p2_c = F.cosine_similarity(aligned_pred_z2, batch_c_true, dim=-1)
+
+            pct_S1 = (cos_p1_gt > cos_p1_c).float().mean().item() * 100
+            pct_S2 = (cos_p2_gt > cos_p2_c).float().mean().item() * 100
+            pct_S_comb = 0.5 * (pct_S1 + pct_S2)
+
     results_text = (
         f"--- Evaluation Results: {mode.upper()} ---\nRun Name: {run_name}\n----------------------------------------\n"
         f"[1. Prediction to Ground-Truth Alignment]\n"
@@ -367,7 +376,11 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: in
         f"  - Baseline GT 2 to c -> L1 Distance: {ref_l1_z2_to_c:.6f} | Cosine Similarity: {ref_cos_z2_to_c:.6f}\n\n"
         f"[3. Predicted Outputs Inter-Relationship / Spread]\n"
         f"  - Inter-Predicted (p1 vs p2) -> L1: {l1_inter_pred:.6f} | Cosine Similarity: {cos_inter_pred:.6f}\n"
-        f"  - Inter-Ground-Truth (z1 vs z2) -> L1: {ref_l1_inter_gt:.6f} | Cosine Similarity: {ref_cos_inter_gt:.6f}\n"
+        f"  - Inter-Ground-Truth (z1 vs z2) -> L1: {ref_l1_inter_gt:.6f} | Cosine Similarity: {ref_cos_inter_gt:.6f}\n\n"
+        f"[4. Success Rate of Reversal (%S)]\n"
+        f"  - Embedding 1 -> %S1: {pct_S1:.2f}%\n"
+        f"  - Embedding 2 -> %S2: {pct_S2:.2f}%\n"
+        f"  - Combined Total -> %S: {pct_S_comb:.2f}%\n"
     )
     
     print("\n" + results_text)
@@ -433,8 +446,6 @@ def evaluate_cold_demorph_informed(diffae_path_str: str, run_name: str, num_time
             pred_z1, pred_z2 = informed_tacos_sample_loop(batch_c_vp, batch_z2)
 
             # --- Permutation-Invariant Alignment Logic ---
-            # (Kept identical to the standard evaluation to ensure a 1:1 metrics comparison, 
-            # though pred_z1 is virtually guaranteed to align with batch_z1 here)
             dist_a = F.l1_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
             dist_b = F.l1_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.l1_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
             mask_a = (dist_a <= dist_b).unsqueeze(-1)
@@ -466,6 +477,16 @@ def evaluate_cold_demorph_informed(diffae_path_str: str, run_name: str, num_time
             ref_l1_inter_gt = F.l1_loss(batch_z1, batch_z2).item()
             ref_cos_inter_gt = F.cosine_similarity(batch_z1, batch_z2, dim=-1).mean().item()
 
+            # 4. Success Rate of Reversal (%S) Metrics
+            cos_p1_gt = F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1)
+            cos_p2_gt = F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1)
+            cos_p1_c = F.cosine_similarity(aligned_pred_z1, batch_c_true, dim=-1)
+            cos_p2_c = F.cosine_similarity(aligned_pred_z2, batch_c_true, dim=-1)
+
+            pct_S1 = (cos_p1_gt > cos_p1_c).float().mean().item() * 100
+            pct_S2 = (cos_p2_gt > cos_p2_c).float().mean().item() * 100
+            pct_S_comb = 0.5 * (pct_S1 + pct_S2)
+
     results_text = (
         f"--- Evaluation Results: INFORMED ---\nRun Name: {run_name}\n----------------------------------------\n"
         f"[1. Prediction to Ground-Truth Alignment]\n"
@@ -478,7 +499,11 @@ def evaluate_cold_demorph_informed(diffae_path_str: str, run_name: str, num_time
         f"  - Baseline GT 2 to c -> L1 Distance: {ref_l1_z2_to_c:.6f} | Cosine Similarity: {ref_cos_z2_to_c:.6f}\n\n"
         f"[3. Predicted Outputs Inter-Relationship / Spread]\n"
         f"  - Inter-Predicted (p1 vs p2) -> L1: {l1_inter_pred:.6f} | Cosine Similarity: {cos_inter_pred:.6f}\n"
-        f"  - Inter-Ground-Truth (z1 vs z2) -> L1: {ref_l1_inter_gt:.6f} | Cosine Similarity: {ref_cos_inter_gt:.6f}\n"
+        f"  - Inter-Ground-Truth (z1 vs z2) -> L1: {ref_l1_inter_gt:.6f} | Cosine Similarity: {ref_cos_inter_gt:.6f}\n\n"
+        f"[4. Success Rate of Reversal (%S)]\n"
+        f"  - Embedding 1 -> %S1: {pct_S1:.2f}%\n"
+        f"  - Embedding 2 -> %S2: {pct_S2:.2f}%\n"
+        f"  - Combined Total -> %S: {pct_S_comb:.2f}%\n"
     )
     
     print("\n" + results_text)
@@ -490,8 +515,8 @@ if __name__ == "__main__":
     RUN_NAME = "diffae_baseline"
     
     # train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150)
-    # evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
-    # evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='iterative')
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='iterative')
     evaluate_cold_demorph_informed(
         diffae_path_str=BASE_PATH, 
         run_name=RUN_NAME, 

@@ -52,6 +52,16 @@ class ConditionalMorphDataset(Dataset):
             torch.tensor(target, dtype=torch.float32)
         )
 
+
+def resolve_existing_path(root: Path, *names: str) -> Path:
+    for name in names:
+        path = root / name
+        if path.exists():
+            return path
+    raise FileNotFoundError(
+        "None of these files were found: " + ", ".join(str(root / name) for name in names)
+    )
+
 # ==========================================
 # 2. UNCONDITIONED Diffusion Network
 # ==========================================
@@ -99,7 +109,6 @@ class ColdDemorphNet(nn.Module):
         self.final_linear = nn.Linear(hidden_dim, x_dim)
 
     def forward(self, x_t, t):
-        # We no longer accept v_cond. The network is strictly time-conditioned.
         t_emb = self.time_mlp(t)
         h = x_t
         for i, block in enumerate(self.blocks):
@@ -209,7 +218,6 @@ def train_math_diffusion_unconditioned(data_dir: str, run_name: str, num_timeste
     eval_morphs = (eval_morphs - global_mean) / global_std
 
     train_loader = DataLoader(ConditionalMorphDataset(train_morphs, train_bf, root / "train_morph_metadata.csv"), batch_size=batch_size, shuffle=True, num_workers=8)
-    # Kept val batch size matched to train batch size for consistency
     val_loader = DataLoader(ConditionalMorphDataset(eval_morphs, eval_bf, root / "eval_morph_metadata.csv"), batch_size=batch_size, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet(num_layers=10).to(device)
@@ -241,7 +249,6 @@ def train_math_diffusion_unconditioned(data_dir: str, run_name: str, num_timeste
                 M, cond, tgt = M.to(device), cond.to(device), tgt.to(device)
                 val_loss += diffusion.compute_loss(M, cond, tgt).item()
                 
-            # Sample first batch to track true quality
             b_M, b_cond, b_tgt = next(iter(val_loader))
             b_M, b_cond, b_tgt = b_M.to(device), b_cond.to(device), b_tgt.to(device)
             pred_tgt = diffusion.sample_loop(b_M, b_cond)
@@ -261,6 +268,119 @@ def train_math_diffusion_unconditioned(data_dir: str, run_name: str, num_timeste
 
     wandb.finish()
 
+# ==========================================
+# 6. Evaluation Script
+# ==========================================
+def evaluate_math_diffusion_unconditioned(data_dir: str, run_name: str, num_timesteps: int = 10, mode: str = 'iterative'):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    exp_dir = Path("experiments") / run_name
+    ckpt_path = exp_dir / "checkpoints" / "uncond_math_refiner_best.pt"
+    out_file_path = exp_dir / f"eval_metrics_{mode}.txt"
+    
+    root = Path(data_dir)
+    train_bf = np.load(root / "train_bonafide_zsem.npy").astype(np.float32)
+    global_mean = train_bf.mean(axis=0, keepdims=True)
+    global_std = train_bf.std(axis=0, keepdims=True) + 1e-8
+
+    eval_bf = np.load(root / "eval_bonafide_zsem.npy").astype(np.float32)
+    eval_morphs = np.load(resolve_existing_path(root, "eval_morph_zsem.npy", "eval_morph_zsem_1000.npy")).astype(np.float32)
+    
+    eval_bf = (eval_bf - global_mean) / global_std
+    eval_morphs = (eval_morphs - global_mean) / global_std
+
+    records = []
+    with open(resolve_existing_path(root, "eval_morph_metadata.csv", "eval_morph_metadata_1000.csv"), 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            idx_m = int(row['embedding_index'])
+            col_a = 'source_idx_A_in_train_bf' if 'source_idx_A_in_train_bf' in row else 'source_idx_A_in_eval_bf'
+            col_b = 'source_idx_B_in_train_bf' if 'source_idx_B_in_train_bf' in row else 'source_idx_B_in_eval_bf'
+            idx_a = int(row[col_a])
+            idx_b = int(row[col_b])
+            if idx_a >= 0 and idx_b >= 0:
+                records.append((idx_m, idx_a, idx_b))
+
+    net = ColdDemorphNet(num_layers=10).to(device)
+    net.load_state_dict(torch.load(ckpt_path, map_location=device))
+    net.eval()
+    diffusion = MathBaselineColdDemorph(net, num_timesteps=num_timesteps).to(device)
+
+    total_l1_a_to_b = 0
+    total_cos_a_to_b = 0
+    total_l1_b_to_a = 0
+    total_cos_b_to_a = 0
+    
+    total_S_a_to_b = 0
+    total_S_b_to_a = 0
+    
+    with torch.no_grad():
+        batch_size = 500
+        for i in tqdm(range(0, len(records), batch_size), desc=f"Evaluating ({mode.upper()})"):
+            batch_records = records[i:i+batch_size]
+            
+            b_M = torch.tensor(np.array([eval_morphs[r[0]] for r in batch_records]), device=device)
+            b_A = torch.tensor(np.array([eval_bf[r[1]] for r in batch_records]), device=device)
+            b_B = torch.tensor(np.array([eval_bf[r[2]] for r in batch_records]), device=device)
+            
+            if mode == 'iterative':
+                pred_B = diffusion.sample_loop(b_M, b_A)
+                pred_A = diffusion.sample_loop(b_M, b_B)
+            else:  # 'one_shot'
+                t_max = torch.full((b_M.shape[0],), num_timesteps, device=device).long()
+                # Unconditioned execution requires structural anchor trajectory initialization
+                z_coarse_B = (2.0 * b_M) - b_A
+                z_coarse_A = (2.0 * b_M) - b_B
+                pred_B = net(z_coarse_B, t_max)
+                pred_A = net(z_coarse_A, t_max)
+            
+            total_l1_a_to_b += F.l1_loss(pred_B, b_B, reduction="sum").item()
+            total_cos_a_to_b += F.cosine_similarity(pred_B, b_B, dim=-1).sum().item()
+            total_l1_b_to_a += F.l1_loss(pred_A, b_A, reduction="sum").item()
+            total_cos_b_to_a += F.cosine_similarity(pred_A, b_A, dim=-1).sum().item()
+
+            # --- Success Rate of Reversal (%S) Metrics ---
+            cos_B_gt = F.cosine_similarity(pred_B, b_B, dim=-1)
+            cos_B_M = F.cosine_similarity(pred_B, b_M, dim=-1)
+            total_S_a_to_b += (cos_B_gt > cos_B_M).float().sum().item()
+
+            cos_A_gt = F.cosine_similarity(pred_A, b_A, dim=-1)
+            cos_A_M = F.cosine_similarity(pred_A, b_M, dim=-1)
+            total_S_b_to_a += (cos_A_gt > cos_A_M).float().sum().item()
+
+    avg_l1_a_to_b = total_l1_a_to_b / (len(records) * 512) if len(records) > 0 else float('inf')
+    avg_cos_a_to_b = total_cos_a_to_b / len(records) if len(records) > 0 else 0.0
+    pct_S_a_to_b = (total_S_a_to_b / len(records)) * 100 if len(records) > 0 else 0.0
+
+    avg_l1_b_to_a = total_l1_b_to_a / (len(records) * 512) if len(records) > 0 else float('inf')
+    avg_cos_b_to_a = total_cos_b_to_a / len(records) if len(records) > 0 else 0.0
+    pct_S_b_to_a = (total_S_b_to_a / len(records)) * 100 if len(records) > 0 else 0.0
+
+    avg_l1 = 0.5 * (avg_l1_a_to_b + avg_l1_b_to_a)
+    avg_cos = 0.5 * (avg_cos_a_to_b + avg_cos_b_to_a)
+    pct_S_comb = 0.5 * (pct_S_a_to_b + pct_S_b_to_a)
+
+    results = (
+        f"--- MATH BASELINE UNCONDITIONED EVALUATION ({mode.upper()}) ---\n"
+        f"Condition A -> Recover B L1 Distance : {avg_l1_a_to_b:.6f}\n"
+        f"Condition A -> Recover B Cosine Sim  : {avg_cos_a_to_b:.6f}\n"
+        f"Condition A -> Recover B %S1         : {pct_S_a_to_b:.2f}%\n"
+        f"Condition B -> Recover A L1 Distance : {avg_l1_b_to_a:.6f}\n"
+        f"Condition B -> Recover A Cosine Sim  : {avg_cos_b_to_a:.6f}\n"
+        f"Condition B -> Recover A %S2         : {pct_S_b_to_a:.2f}%\n"
+        f"Mean Conditional L1 Distance         : {avg_l1:.6f}\n"
+        f"Mean Conditional Cosine Sim          : {avg_cos:.6f}\n"
+        f"Combined Total %S                    : {pct_S_comb:.2f}%\n"
+    )
+    print("\n" + results)
+    with open(out_file_path, "w") as f:
+        f.write(results)
+
+
 if __name__ == "__main__":
-    DATA_DIR = "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings"
-    train_math_diffusion_unconditioned(DATA_DIR, "math_baseline_unconditioned_10step_vp")
+    DATA_DIR = "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v2"
+    RUN_NAME = "math_baseline_10step_refiner"
+    TIMESTEPS = 10
+
+    # train_math_diffusion_unconditioned(DATA_DIR, RUN_NAME, num_timesteps=TIMESTEPS)
+    evaluate_math_diffusion_unconditioned(data_dir=DATA_DIR, run_name=RUN_NAME, num_timesteps=TIMESTEPS, mode='one_shot')
+    evaluate_math_diffusion_unconditioned(data_dir=DATA_DIR, run_name=RUN_NAME, num_timesteps=TIMESTEPS, mode='iterative')

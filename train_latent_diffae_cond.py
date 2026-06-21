@@ -64,7 +64,6 @@ class ConditionalMorphDataset(Dataset):
         )
 
 
-
 def resolve_existing_path(root: Path, *names: str) -> Path:
     for name in names:
         path = root / name
@@ -140,7 +139,6 @@ class AdaLNBlock(nn.Module):
         self.linear = nn.Linear(in_dim, hidden_dim)
         self.norm = nn.LayerNorm(hidden_dim, elementwise_affine=False)
         self.silu = nn.SiLU()
-        # cond_dim is now (time_emb_dim + x_dim). It projects to hidden_dim * 2 (for scale & shift)
         self.cond_proj = nn.Linear(cond_dim, hidden_dim * 2)
 
     def forward(self, x, cond):
@@ -159,7 +157,6 @@ class ColdDemorphNet(nn.Module):
             nn.Linear(time_emb_dim * 2, time_emb_dim)
         )
 
-        # The global joint condition dimension
         joint_cond_dim = time_emb_dim + x_dim
 
         self.blocks = nn.ModuleList()
@@ -167,13 +164,10 @@ class ColdDemorphNet(nn.Module):
         for _ in range(num_layers - 1):
             self.blocks.append(AdaLNBlock(hidden_dim + x_dim, hidden_dim, joint_cond_dim))
 
-        # We now only predict ONE embedding (the target identity)
         self.final_linear = nn.Linear(hidden_dim, x_dim)
 
     def forward(self, x_t, t, v_cond):
         t_emb = self.time_mlp(t)
-        
-        # GLOBAL CONCATENATION: Combine time and reference vector once
         joint_cond = torch.cat([t_emb, v_cond], dim=-1)
         
         h = x_t
@@ -197,11 +191,6 @@ class DeterministicColdDemorph(nn.Module):
         self.final_timestep_prob = final_timestep_prob
 
     def degrade(self, M, target, t):
-        """
-        Interpolates between the clean target (t=0) and the real morphed mixture (t=T).
-        x_T = M
-        x_0 = target
-        """
         gamma = (t / self.num_timesteps).view(-1, 1).float()
         return gamma * M + (1 - gamma) * target
 
@@ -215,11 +204,6 @@ class DeterministicColdDemorph(nn.Module):
         return t
 
     def timestep_condition(self, M, condition, t):
-        """
-        Use the external bona fide condition only at the final timestep, where x_t is still
-        the real morph. For all later reverse steps / lower timesteps, use the mixed
-        embedding M as the conditioning vector.
-        """
         use_external_condition = (t == self.num_timesteps).view(-1, 1)
         return torch.where(use_external_condition, condition, M)
 
@@ -228,10 +212,7 @@ class DeterministicColdDemorph(nn.Module):
         if t is None:
             t = self.sample_training_timesteps(b, M.device)
 
-        # Step 1: Degrade target towards Morph M
         x_t = self.degrade(M, target, t)
-        
-        # Step 2: Use the true condition only at t=T; otherwise condition on the morph itself.
         step_condition = self.timestep_condition(M, condition, t)
         pred_target = self.model(x_t, t, step_condition)
 
@@ -239,29 +220,23 @@ class DeterministicColdDemorph(nn.Module):
 
     @torch.no_grad()
     def sample_loop(self, M, condition):
-        """Iterative denoising where the external condition is used only at the first step."""
         device = M.device
         b = M.shape[0]
         timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
-        
-        # Start at fully degraded state (the Morph)
         x_t = M.clone()
 
         for t in tqdm(timesteps, desc="Sampling", leave=False):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
             step_condition = self.timestep_condition(M, condition, t_batch)
             
-            # Predict clean target
             pred_target = self.model(x_t, t_batch, step_condition)
 
-            # Cold diffusion step update
             t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
             deg_t = self.degrade(M, pred_target, t_batch)
             deg_t_prev = self.degrade(M, pred_target, t_prev_batch)
 
             x_t = x_t - deg_t + deg_t_prev
 
-        # x_0 is the recovered target
         return x_t
 
 
@@ -307,18 +282,15 @@ def train_conditional_demorph(
     root = Path(data_dir)
 
     print("Loading datasets into memory...")
-    # Load Training Data
     train_bf = np.load(root / "train_bonafide_zsem.npy").astype(np.float32)
     train_morphs = np.load(root / "train_morph_zsem.npy").astype(np.float32)
     
-    # Compute normalizers dynamically from Bona Fide distribution
     global_mean = train_bf.mean(axis=0, keepdims=True)
     global_std = train_bf.std(axis=0, keepdims=True) + 1e-8
     
     train_bf = (train_bf - global_mean) / global_std
     train_morphs = (train_morphs - global_mean) / global_std
     
-    # Load Evaluation Data
     eval_bf = np.load(root / "eval_bonafide_zsem.npy").astype(np.float32)
     eval_morphs = np.load(resolve_existing_path(root, "eval_morph_zsem.npy", "eval_morph_zsem_1000.npy")).astype(np.float32)
     
@@ -391,13 +363,11 @@ def train_conditional_demorph(
         avg_val_loss_b_to_a = val_loss_b_to_a / val_count
         avg_val_loss = 0.5 * (avg_val_loss_a_to_b + avg_val_loss_b_to_a)
         
-        # Periodic full sample evaluation
         sample_l1_a_to_b = 0.0
         sample_l1_b_to_a = 0.0
         sample_l1 = 0.0
         if (epoch + 1) % 25 == 0 or (epoch + 1) == epochs:
             with torch.no_grad():
-                # We only sample the first batch to save time during train loop
                 b_M, b_A, b_B = next(iter(val_loader))
                 b_M, b_A, b_B = b_M.to(device), b_A.to(device), b_B.to(device)
                 pred_B = diffusion.sample_loop(b_M, b_A)
@@ -437,10 +407,11 @@ def train_conditional_demorph(
 # ==========================================
 # 6. Evaluation Script
 # ==========================================
-def evaluate_conditional_demorph(data_dir: str, run_name: str, num_timesteps: int = 300):
+def evaluate_conditional_demorph(data_dir: str, run_name: str, num_timesteps: int = 300, mode: str = 'iterative'):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
     ckpt_path = exp_dir / "checkpoints" / "best.pt"
+    out_file_path = exp_dir / f"eval_metrics_{mode}.txt"
     
     root = Path(data_dir)
     train_bf = np.load(root / "train_bonafide_zsem.npy").astype(np.float32)
@@ -475,48 +446,73 @@ def evaluate_conditional_demorph(data_dir: str, run_name: str, num_timesteps: in
     total_l1_b_to_a = 0
     total_cos_b_to_a = 0
     
+    total_S_a_to_b = 0
+    total_S_b_to_a = 0
+    
     with torch.no_grad():
-        # Iterate manually to compute exact metrics
         batch_size = 500
-        for i in tqdm(range(0, len(records), batch_size), desc="Evaluating"):
+        for i in tqdm(range(0, len(records), batch_size), desc=f"Evaluating ({mode.upper()})"):
             batch_records = records[i:i+batch_size]
             
             b_M = torch.tensor(np.array([eval_morphs[r[0]] for r in batch_records]), device=device)
             b_A = torch.tensor(np.array([eval_bf[r[1]] for r in batch_records]), device=device)
             b_B = torch.tensor(np.array([eval_bf[r[2]] for r in batch_records]), device=device)
             
-            pred_B = diffusion.sample_loop(b_M, b_A)
-            pred_A = diffusion.sample_loop(b_M, b_B)
+            if mode == 'iterative':
+                pred_B = diffusion.sample_loop(b_M, b_A)
+                pred_A = diffusion.sample_loop(b_M, b_B)
+            else:  # 'one_shot'
+                t_max = torch.full((b_M.shape[0],), num_timesteps, device=device).long()
+                pred_B = net(b_M, t_max, b_A)
+                pred_A = net(b_M, t_max, b_B)
             
             total_l1_a_to_b += F.l1_loss(pred_B, b_B, reduction="sum").item()
             total_cos_a_to_b += F.cosine_similarity(pred_B, b_B, dim=-1).sum().item()
             total_l1_b_to_a += F.l1_loss(pred_A, b_A, reduction="sum").item()
             total_cos_b_to_a += F.cosine_similarity(pred_A, b_A, dim=-1).sum().item()
 
+            # --- Success Rate of Reversal (%S) Metrics ---
+            cos_B_gt = F.cosine_similarity(pred_B, b_B, dim=-1)
+            cos_B_M = F.cosine_similarity(pred_B, b_M, dim=-1)
+            total_S_a_to_b += (cos_B_gt > cos_B_M).float().sum().item()
+
+            cos_A_gt = F.cosine_similarity(pred_A, b_A, dim=-1)
+            cos_A_M = F.cosine_similarity(pred_A, b_M, dim=-1)
+            total_S_b_to_a += (cos_A_gt > cos_A_M).float().sum().item()
+
     avg_l1_a_to_b = total_l1_a_to_b / (len(records) * 512) if len(records) > 0 else float('inf')
     avg_cos_a_to_b = total_cos_a_to_b / len(records) if len(records) > 0 else 0.0
+    pct_S_a_to_b = (total_S_a_to_b / len(records)) * 100 if len(records) > 0 else 0.0
+
     avg_l1_b_to_a = total_l1_b_to_a / (len(records) * 512) if len(records) > 0 else float('inf')
     avg_cos_b_to_a = total_cos_b_to_a / len(records) if len(records) > 0 else 0.0
+    pct_S_b_to_a = (total_S_b_to_a / len(records)) * 100 if len(records) > 0 else 0.0
+
     avg_l1 = 0.5 * (avg_l1_a_to_b + avg_l1_b_to_a)
     avg_cos = 0.5 * (avg_cos_a_to_b + avg_cos_b_to_a)
+    pct_S_comb = 0.5 * (pct_S_a_to_b + pct_S_b_to_a)
 
     results = (
-        f"--- CONDITIONAL EVALUATION (EXTERNAL CONDITION ONLY AT FIRST REVERSE STEP) ---\n"
+        f"--- CONDITIONAL EVALUATION ({mode.upper()}) ---\n"
         f"Condition A -> Recover B L1 Distance : {avg_l1_a_to_b:.6f}\n"
         f"Condition A -> Recover B Cosine Sim  : {avg_cos_a_to_b:.6f}\n"
+        f"Condition A -> Recover B %S1         : {pct_S_a_to_b:.2f}%\n"
         f"Condition B -> Recover A L1 Distance : {avg_l1_b_to_a:.6f}\n"
         f"Condition B -> Recover A Cosine Sim  : {avg_cos_b_to_a:.6f}\n"
+        f"Condition B -> Recover A %S2         : {pct_S_b_to_a:.2f}%\n"
         f"Mean Conditional L1 Distance         : {avg_l1:.6f}\n"
         f"Mean Conditional Cosine Sim          : {avg_cos:.6f}\n"
+        f"Combined Total %S                    : {pct_S_comb:.2f}%\n"
     )
     print("\n" + results)
-    with open(exp_dir / "eval_metrics.txt", "w") as f:
+    with open(out_file_path, "w") as f:
         f.write(results)
 
 
 if __name__ == "__main__":
-    DATA_DIR = "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings"
-    RUN_NAME = "diffae_conditional_lastT_10ts"
+    DATA_DIR = "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v1"
+    RUN_NAME = "diffae_conditional_jointID"
 
     train_conditional_demorph(data_dir=DATA_DIR, run_name=RUN_NAME)
-    evaluate_conditional_demorph(data_dir=DATA_DIR, run_name=RUN_NAME)
+    evaluate_conditional_demorph(data_dir=DATA_DIR, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
+    evaluate_conditional_demorph(data_dir=DATA_DIR, run_name=RUN_NAME, num_timesteps=300, mode='iterative')
