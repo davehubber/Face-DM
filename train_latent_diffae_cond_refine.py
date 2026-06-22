@@ -137,7 +137,7 @@ class MathBaselineColdDemorph(nn.Module):
         
         # 2. Degrade target towards z_coarse using variance-preserving trajectory
         gamma = (t / self.num_timesteps).view(-1, 1).float()
-        x_t = torch.sqrt(gamma) * z_coarse + torch.sqrt(1 - gamma) * target
+        x_t = gamma * z_coarse + (1 - gamma) * target
         
         # 3. Predict target using x_t, unconditioned (only time)
         pred_target = self.model(x_t, t)
@@ -164,8 +164,8 @@ class MathBaselineColdDemorph(nn.Module):
             gamma_t = (t_batch / self.num_timesteps).view(-1, 1).float()
             gamma_prev = ((t_batch - 1) / self.num_timesteps).view(-1, 1).float()
             
-            deg_t = torch.sqrt(gamma_t) * z_coarse + torch.sqrt(1 - gamma_t) * pred_target
-            deg_t_prev = torch.sqrt(gamma_prev) * z_coarse + torch.sqrt(1 - gamma_prev) * pred_target
+            deg_t = gamma_t * z_coarse + (1 - gamma_t) * pred_target
+            deg_t_prev = gamma_prev * z_coarse + (1 - gamma_prev) * pred_target
 
             x_t = x_t - deg_t + deg_t_prev
             
@@ -225,7 +225,7 @@ def train_math_diffusion_unconditioned(data_dir: str, run_name: str, num_timeste
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4, weight_decay=0.01)
     early_stopper = EarlyStopping(patience=20)
 
-    wandb.init(project="Face-DM-MathBaseline-Uncond", name=run_name, config={"timesteps": num_timesteps, "batch_size": batch_size})
+    wandb.init(project="Face-DM-Conditional", name=run_name, config={"timesteps": num_timesteps, "batch_size": batch_size})
     best_val_loss = float("inf")
 
     for epoch in range(150):
@@ -260,7 +260,7 @@ def train_math_diffusion_unconditioned(data_dir: str, run_name: str, num_timeste
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            torch.save(net.state_dict(), ckpt_dir / "uncond_math_refiner_best.pt")
+            torch.save(net.state_dict(), ckpt_dir / "best.pt")
 
         if early_stopper(avg_val_loss):
             print("Early stopping triggered.")
@@ -274,7 +274,7 @@ def train_math_diffusion_unconditioned(data_dir: str, run_name: str, num_timeste
 def evaluate_math_diffusion_unconditioned(data_dir: str, run_name: str, num_timesteps: int = 10, mode: str = 'iterative'):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
-    ckpt_path = exp_dir / "checkpoints" / "uncond_math_refiner_best.pt"
+    ckpt_path = exp_dir / "checkpoints" / "best.pt"
     out_file_path = exp_dir / f"eval_metrics_{mode}.txt"
     
     root = Path(data_dir)
@@ -378,9 +378,9 @@ def evaluate_math_diffusion_unconditioned(data_dir: str, run_name: str, num_time
 
 if __name__ == "__main__":
     DATA_DIR = "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v2"
-    RUN_NAME = "math_baseline_10step_refiner"
+    RUN_NAME = "diffae_conditional_refiner"
     TIMESTEPS = 10
 
-    # train_math_diffusion_unconditioned(DATA_DIR, RUN_NAME, num_timesteps=TIMESTEPS)
+    train_math_diffusion_unconditioned(DATA_DIR, RUN_NAME, num_timesteps=TIMESTEPS)
     evaluate_math_diffusion_unconditioned(data_dir=DATA_DIR, run_name=RUN_NAME, num_timesteps=TIMESTEPS, mode='one_shot')
     evaluate_math_diffusion_unconditioned(data_dir=DATA_DIR, run_name=RUN_NAME, num_timesteps=TIMESTEPS, mode='iterative')

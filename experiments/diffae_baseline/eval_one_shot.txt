@@ -14,3 +14,8 @@ Run Name: diffae_baseline
 [3. Predicted Outputs Inter-Relationship / Spread]
   - Inter-Predicted (p1 vs p2) -> L1: 0.493246 | Cosine Similarity: 0.662686
   - Inter-Ground-Truth (z1 vs z2) -> L1: 1.125759 | Cosine Similarity: -0.002203
+
+[4. Success Rate of Reversal (%S)]
+  - Embedding 1 -> %S1: 1.60%
+  - Embedding 2 -> %S2: 1.50%
+  - Combined Total -> %S: 1.55%

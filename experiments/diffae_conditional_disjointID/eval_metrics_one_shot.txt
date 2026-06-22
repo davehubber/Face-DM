@@ -1,0 +1,10 @@
+--- CONDITIONAL EVALUATION (ONE_SHOT) ---
+Condition A -> Recover B L1 Distance : 0.701648
+Condition A -> Recover B Cosine Sim  : 0.460965
+Condition A -> Recover B %S1         : 17.96%
+Condition B -> Recover A L1 Distance : 0.671308
+Condition B -> Recover A Cosine Sim  : 0.526297
+Condition B -> Recover A %S2         : 9.22%
+Mean Conditional L1 Distance         : 0.686478
+Mean Conditional Cosine Sim          : 0.493631
+Combined Total %S                    : 13.59%

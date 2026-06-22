@@ -1,0 +1,97 @@
+Loading data...
+Epoch 1 | Train Loss: 0.4854 | Val Loss: 0.6791 | Sample L1: 0.6791
+Epoch 2 | Train Loss: 0.2476 | Val Loss: 0.4666 | Sample L1: 0.6007
+Epoch 3 | Train Loss: 0.1569 | Val Loss: 0.3554 | Sample L1: 0.5515
+Epoch 4 | Train Loss: 0.1060 | Val Loss: 0.2919 | Sample L1: 0.5207
+Epoch 5 | Train Loss: 0.0854 | Val Loss: 0.2669 | Sample L1: 0.5104
+Epoch 6 | Train Loss: 0.0718 | Val Loss: 0.2483 | Sample L1: 0.5067
+Epoch 7 | Train Loss: 0.0624 | Val Loss: 0.2380 | Sample L1: 0.4970
+Epoch 8 | Train Loss: 0.0543 | Val Loss: 0.2292 | Sample L1: 0.5061
+Epoch 9 | Train Loss: 0.0499 | Val Loss: 0.2255 | Sample L1: 0.5010
+Epoch 10 | Train Loss: 0.0462 | Val Loss: 0.2196 | Sample L1: 0.4985
+Epoch 11 | Train Loss: 0.0411 | Val Loss: 0.2119 | Sample L1: 0.4853
+Epoch 12 | Train Loss: 0.0383 | Val Loss: 0.2172 | Sample L1: 0.4902
+Epoch 13 | Train Loss: 0.0358 | Val Loss: 0.2114 | Sample L1: 0.4922
+Epoch 14 | Train Loss: 0.0336 | Val Loss: 0.2087 | Sample L1: 0.4926
+Epoch 15 | Train Loss: 0.0310 | Val Loss: 0.2042 | Sample L1: 0.4822
+Epoch 16 | Train Loss: 0.0295 | Val Loss: 0.2102 | Sample L1: 0.4915
+Epoch 17 | Train Loss: 0.0283 | Val Loss: 0.2078 | Sample L1: 0.4922
+Epoch 18 | Train Loss: 0.0262 | Val Loss: 0.2084 | Sample L1: 0.4871
+Epoch 19 | Train Loss: 0.0255 | Val Loss: 0.2012 | Sample L1: 0.4861
+Epoch 20 | Train Loss: 0.0233 | Val Loss: 0.2046 | Sample L1: 0.4866
+Epoch 21 | Train Loss: 0.0218 | Val Loss: 0.1987 | Sample L1: 0.4839
+Epoch 22 | Train Loss: 0.0204 | Val Loss: 0.2027 | Sample L1: 0.4888
+Epoch 23 | Train Loss: 0.0201 | Val Loss: 0.2045 | Sample L1: 0.4863
+Epoch 24 | Train Loss: 0.0189 | Val Loss: 0.2007 | Sample L1: 0.4887
+Epoch 25 | Train Loss: 0.0183 | Val Loss: 0.2007 | Sample L1: 0.4840
+Epoch 26 | Train Loss: 0.0176 | Val Loss: 0.1983 | Sample L1: 0.4842
+Epoch 27 | Train Loss: 0.0170 | Val Loss: 0.2027 | Sample L1: 0.4908
+Epoch 28 | Train Loss: 0.0161 | Val Loss: 0.2078 | Sample L1: 0.4845
+Epoch 29 | Train Loss: 0.0157 | Val Loss: 0.2026 | Sample L1: 0.4830
+Epoch 30 | Train Loss: 0.0149 | Val Loss: 0.2020 | Sample L1: 0.4891
+Epoch 31 | Train Loss: 0.0149 | Val Loss: 0.2091 | Sample L1: 0.4821
+Epoch 32 | Train Loss: 0.0134 | Val Loss: 0.2062 | Sample L1: 0.4856
+Epoch 33 | Train Loss: 0.0133 | Val Loss: 0.2041 | Sample L1: 0.4887
+Epoch 34 | Train Loss: 0.0131 | Val Loss: 0.2073 | Sample L1: 0.4820
+Epoch 35 | Train Loss: 0.0128 | Val Loss: 0.2053 | Sample L1: 0.4884
+Epoch 36 | Train Loss: 0.0123 | Val Loss: 0.2046 | Sample L1: 0.4815
+Epoch 37 | Train Loss: 0.0117 | Val Loss: 0.2053 | Sample L1: 0.4854
+Epoch 38 | Train Loss: 0.0115 | Val Loss: 0.1960 | Sample L1: 0.4823
+Epoch 39 | Train Loss: 0.0112 | Val Loss: 0.2073 | Sample L1: 0.4831
+Epoch 40 | Train Loss: 0.0107 | Val Loss: 0.1982 | Sample L1: 0.4826
+Epoch 41 | Train Loss: 0.0104 | Val Loss: 0.2079 | Sample L1: 0.4819
+Epoch 42 | Train Loss: 0.0103 | Val Loss: 0.1979 | Sample L1: 0.4833
+Epoch 43 | Train Loss: 0.0097 | Val Loss: 0.1980 | Sample L1: 0.4830
+Epoch 44 | Train Loss: 0.0095 | Val Loss: 0.1984 | Sample L1: 0.4868
+Epoch 45 | Train Loss: 0.0094 | Val Loss: 0.2010 | Sample L1: 0.4859
+Epoch 46 | Train Loss: 0.0088 | Val Loss: 0.2025 | Sample L1: 0.4819
+Epoch 47 | Train Loss: 0.0087 | Val Loss: 0.2037 | Sample L1: 0.4810
+Epoch 48 | Train Loss: 0.0083 | Val Loss: 0.2017 | Sample L1: 0.4809
+Epoch 49 | Train Loss: 0.0084 | Val Loss: 0.2034 | Sample L1: 0.4858
+Epoch 50 | Train Loss: 0.0082 | Val Loss: 0.1987 | Sample L1: 0.4814
+Epoch 51 | Train Loss: 0.0081 | Val Loss: 0.1956 | Sample L1: 0.4805
+Epoch 52 | Train Loss: 0.0079 | Val Loss: 0.1976 | Sample L1: 0.4782
+Epoch 53 | Train Loss: 0.0076 | Val Loss: 0.2015 | Sample L1: 0.4823
+Epoch 54 | Train Loss: 0.0077 | Val Loss: 0.2034 | Sample L1: 0.4826
+Epoch 55 | Train Loss: 0.0075 | Val Loss: 0.2061 | Sample L1: 0.4775
+Epoch 56 | Train Loss: 0.0074 | Val Loss: 0.1959 | Sample L1: 0.4754
+Epoch 57 | Train Loss: 0.0072 | Val Loss: 0.2034 | Sample L1: 0.4859
+Epoch 58 | Train Loss: 0.0073 | Val Loss: 0.2027 | Sample L1: 0.4837
+Epoch 59 | Train Loss: 0.0069 | Val Loss: 0.1977 | Sample L1: 0.4792
+Epoch 60 | Train Loss: 0.0071 | Val Loss: 0.2009 | Sample L1: 0.4834
+Epoch 61 | Train Loss: 0.0067 | Val Loss: 0.1986 | Sample L1: 0.4783
+Epoch 62 | Train Loss: 0.0067 | Val Loss: 0.1990 | Sample L1: 0.4836
+Epoch 63 | Train Loss: 0.0063 | Val Loss: 0.1984 | Sample L1: 0.4811
+Epoch 64 | Train Loss: 0.0062 | Val Loss: 0.2045 | Sample L1: 0.4833
+Epoch 65 | Train Loss: 0.0063 | Val Loss: 0.1987 | Sample L1: 0.4770
+Epoch 66 | Train Loss: 0.0062 | Val Loss: 0.2001 | Sample L1: 0.4789
+Epoch 67 | Train Loss: 0.0061 | Val Loss: 0.2017 | Sample L1: 0.4794
+Epoch 68 | Train Loss: 0.0059 | Val Loss: 0.2039 | Sample L1: 0.4805
+Epoch 69 | Train Loss: 0.0058 | Val Loss: 0.1990 | Sample L1: 0.4793
+Epoch 70 | Train Loss: 0.0054 | Val Loss: 0.1992 | Sample L1: 0.4823
+Epoch 71 | Train Loss: 0.0055 | Val Loss: 0.2070 | Sample L1: 0.4788
+Early stopping triggered.
+
+--- MATH BASELINE UNCONDITIONED EVALUATION (ONE_SHOT) ---
+Condition A -> Recover B L1 Distance : 0.488993
+Condition A -> Recover B Cosine Sim  : 0.791375
+Condition A -> Recover B %S1         : 97.55%
+Condition B -> Recover A L1 Distance : 0.459515
+Condition B -> Recover A Cosine Sim  : 0.821104
+Condition B -> Recover A %S2         : 100.00%
+Mean Conditional L1 Distance         : 0.474254
+Mean Conditional Cosine Sim          : 0.806240
+Combined Total %S                    : 98.77%
+
+
+--- MATH BASELINE UNCONDITIONED EVALUATION (ITERATIVE) ---
+Condition A -> Recover B L1 Distance : 0.493691
+Condition A -> Recover B Cosine Sim  : 0.787160
+Condition A -> Recover B %S1         : 98.23%
+Condition B -> Recover A L1 Distance : 0.462253
+Condition B -> Recover A Cosine Sim  : 0.818800
+Condition B -> Recover A %S2         : 100.00%
+Mean Conditional L1 Distance         : 0.477972
+Mean Conditional Cosine Sim          : 0.802980
+Combined Total %S                    : 99.12%
+

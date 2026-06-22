@@ -510,8 +510,8 @@ def evaluate_conditional_demorph(data_dir: str, run_name: str, num_timesteps: in
 
 
 if __name__ == "__main__":
-    DATA_DIR = "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v1"
-    RUN_NAME = "diffae_conditional_jointID"
+    DATA_DIR = "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v2"
+    RUN_NAME = "diffae_conditional_disjointID"
 
     train_conditional_demorph(data_dir=DATA_DIR, run_name=RUN_NAME)
     evaluate_conditional_demorph(data_dir=DATA_DIR, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
