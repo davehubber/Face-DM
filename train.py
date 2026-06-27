@@ -33,6 +33,7 @@ class ColdDiffusion:
 
     def mix_images(self, bright_image, dark_image, t):
         weight = (self.alteration_per_t * t)[:, None, None, None]
+        # Applied square root to both coefficients
         return bright_image * torch.sqrt(1.0 - weight) + dark_image * torch.sqrt(weight)
 
     def sample_timesteps(self, n):
@@ -45,44 +46,39 @@ class ColdDiffusion:
         model.eval()
         with torch.no_grad():
             x_t = mixed_image.to(self.device)
-            prev_tracked = None
 
             for i in reversed(range(1, init_timestep + 1)):
                 t = torch.full((n,), i, device=self.device, dtype=torch.long)
 
+                # Model predicts 6 channels: (Bright, Dark)
                 model_out = model(x_t, t).sample
-                p1 = model_out[:, :3]
-                p2 = model_out[:, 3:]
-
-                if i == init_timestep:
-                    # Anchor onto the first 3 channels from the model's first prediction
-                    tracked_pred = p1
-                    prev_tracked = p1.clone()
-                else:
-                    # Trace the anchored identity step-by-step using MSE
-                    mse_p1 = torch.mean((p1 - prev_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
-                    mse_p2 = torch.mean((p2 - prev_tracked) ** 2, dim=[1, 2, 3], keepdim=True)
-                    
-                    tracked_pred = torch.where(mse_p1 < mse_p2, p1, p2)
-                    prev_tracked = tracked_pred.clone()
                 
-                # The secondary target is always extracted mathematically 
-                extracted_other = (mixed_image - math.sqrt(1.0 - alpha_init) * tracked_pred) / math.sqrt(alpha_init)
+                # 1. ONLY use the dark image prediction (channels 3 to 6)
+                predicted_dark = model_out[:, 3:]
+                
+                # 2. Extract the bright image mathematically
+                predicted_bright = (mixed_image - math.sqrt(1.0 - alpha_init) * predicted_dark) / math.sqrt(alpha_init)
 
                 # --- CLAMPING LOGIC ---
-                tracked_pred = torch.clamp(tracked_pred, -1.0, 1.0)
-                extracted_other = torch.clamp(extracted_other, -1.0, 1.0)
+                # Safely enforce bounds symmetrically
+                predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
+                predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
                 # --------------------------
 
-                x_t = x_t - self.mix_images(tracked_pred, extracted_other, t) + self.mix_images(
-                    tracked_pred, extracted_other, t - 1
+                # 3. Pass the dark image first to the mixing method
+                x_t = x_t - self.mix_images(predicted_dark, predicted_bright, t) + self.mix_images(
+                    predicted_dark, predicted_bright, t - 1
                 )
 
         model.train()
 
-        # Final mathematical derivation for the output pair execution
-        extracted_other = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
-        return to_uint8(x_t), to_uint8(extracted_other)       
+        # --- CRITICAL RETURN ALIGNMENT ---
+        # Because dark was passed first, x_t converges to the clean DARK image at t=0.
+        # We must mathematically extract the final BRIGHT image using the final x_t.
+        predicted_bright = (mixed_image - math.sqrt(1.0 - alpha_init) * x_t) / math.sqrt(alpha_init)
+        
+        # Return order maintained as (Bright, Dark) to ensure pipeline compatibility
+        return to_uint8(predicted_bright), to_uint8(x_t)     
 
 
 def get_unet(image_size):
@@ -90,7 +86,7 @@ def get_unet(image_size):
     return UNet2DModel(
         sample_size=resolution,
         in_channels=3,
-        out_channels=6, 
+        out_channels=6, # Updated to predict both images
         layers_per_block=2,
         block_out_channels=(64, 128, 256, 512),
         down_block_types=("DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "DownBlock2D"),
@@ -99,6 +95,7 @@ def get_unet(image_size):
 
 
 def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
+    """Calculates fast validation loss by sampling random timesteps."""
     model.eval()
     loss_sum = torch.zeros(1, device=accelerator.device)
     loss_count = torch.zeros(1, device=accelerator.device)
@@ -111,14 +108,9 @@ def evaluate_validation_loss(model, dataloader, diffusion, accelerator):
             model_out = model(x_t, t).sample
             pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
             
-            # Permutation Invariant Loss evaluation (Summed across tokens for collection)
-            loss_perm1 = F.mse_loss(pred_bright_unet, bright_images, reduction="none").sum(dim=[1, 2, 3]) + \
-                         F.mse_loss(pred_dark_unet, dark_images, reduction="none").sum(dim=[1, 2, 3])
-            
-            loss_perm2 = F.mse_loss(pred_bright_unet, dark_images, reduction="none").sum(dim=[1, 2, 3]) + \
-                         F.mse_loss(pred_dark_unet, bright_images, reduction="none").sum(dim=[1, 2, 3])
-
-            loss = torch.minimum(loss_perm1, loss_perm2).sum()
+            # Loss evaluates both UNet predictions against ground truths
+            loss = F.mse_loss(pred_bright_unet, bright_images, reduction="sum") + \
+                   F.mse_loss(pred_dark_unet, dark_images, reduction="sum")
 
             loss_sum += loss.detach()
             loss_count += bright_images.numel()
@@ -206,14 +198,8 @@ def train(args):
                 model_out = model(x_t, t).sample
                 pred_bright_unet, pred_dark_unet = torch.chunk(model_out, 2, dim=1)
                 
-                # Permutation Invariant Loss formulation per-sample
-                loss_perm1 = F.mse_loss(pred_bright_unet, bright_images, reduction="none").mean(dim=[1, 2, 3]) + \
-                             F.mse_loss(pred_dark_unet, dark_images, reduction="none").mean(dim=[1, 2, 3])
-                
-                loss_perm2 = F.mse_loss(pred_bright_unet, dark_images, reduction="none").mean(dim=[1, 2, 3]) + \
-                             F.mse_loss(pred_dark_unet, bright_images, reduction="none").mean(dim=[1, 2, 3])
-
-                loss = torch.minimum(loss_perm1, loss_perm2).mean()
+                # Combine losses to force the UNet to learn representations for both
+                loss = F.mse_loss(pred_bright_unet, bright_images) + F.mse_loss(pred_dark_unet, dark_images)
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -265,7 +251,7 @@ def train(args):
         accelerator.wait_for_everyone()
 
 
-def calculate_metrics(bright_img, dark_img, pred_bright, pred_dark, bright_tensor, dark_tensor, pred_bright_tensor, pred_dark_tensor, lpips_model, mixed_img):
+def calculate_metrics(bright_img, dark_img, pred_bright, pred_dark, bright_tensor, dark_tensor, pred_bright_tensor, pred_dark_tensor, lpips_model):
     def prep_lpips(tensor):
         return (tensor.unsqueeze(0).float() - 127.5) / 127.5
 
@@ -299,15 +285,7 @@ def calculate_metrics(bright_img, dark_img, pred_bright, pred_dark, bright_tenso
     psnr_bright = peak_signal_noise_ratio(bright_img, pred_bright, data_range=255)
     psnr_dark = peak_signal_noise_ratio(dark_img, pred_dark, data_range=255)
     
-    # Calculate baseline SSIM from the input mixed/superimposed image
-    ssim_mixed_bright = structural_similarity(bright_img, mixed_img, data_range=255, channel_axis=-1)
-    ssim_mixed_dark = structural_similarity(dark_img, mixed_img, data_range=255, channel_axis=-1)
-
-    # Reversal success criteria (%S): Reconstructed image must be closer to ground truth than its input mixture
-    success_bright = 1.0 if ssim_bright > ssim_mixed_bright else 0.0
-    success_dark = 1.0 if ssim_dark > ssim_mixed_dark else 0.0
-    
-    return ssim_bright, ssim_dark, psnr_bright, psnr_dark, final_lpips_bright, final_lpips_dark, is_swapped, success_bright, success_dark
+    return ssim_bright, ssim_dark, psnr_bright, psnr_dark, final_lpips_bright, final_lpips_dark, is_swapped
 
 
 def eval(args):
@@ -320,7 +298,6 @@ def eval(args):
 
     model, val_dataloader = accelerator.prepare(model, val_dataloader)
 
-    # Leaving target pointing to unet_ema.pt as requested
     model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
     accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
@@ -333,7 +310,6 @@ def eval(args):
     lpips_model = lpips.LPIPS(net="alex").to(device)
 
     ssim_bright, ssim_dark, lpips_bright, lpips_dark, psnr_bright, psnr_dark = [], [], [], [], [], []
-    success_bright_list, success_dark_list = [], []
 
     grid_predicted_bright, grid_predicted_dark, grid_bright, grid_dark, grid_mixed = [], [], [], [], []
     collected_for_grid = 0
@@ -361,11 +337,10 @@ def eval(args):
         predicted_bright_np = predicted_bright.cpu().permute(0, 2, 3, 1).numpy()
         dark_np = dark_uint8.cpu().permute(0, 2, 3, 1).numpy()
         predicted_dark_np = predicted_dark.cpu().permute(0, 2, 3, 1).numpy()
-        mixed_np = mixed_uint8.cpu().permute(0, 2, 3, 1).numpy()
 
         with torch.no_grad():
             for k in range(len(bright_np)):
-                sb, sd, pb, pd, lb, ld, is_swapped, sec_b, sec_d = calculate_metrics(
+                sb, sd, pb, pd, lb, ld, is_swapped = calculate_metrics(
                     bright_np[k],
                     dark_np[k],
                     predicted_bright_np[k],
@@ -375,7 +350,6 @@ def eval(args):
                     predicted_bright[k],
                     predicted_dark[k],
                     lpips_model,
-                    mixed_np[k]
                 )
 
                 if is_swapped:
@@ -387,8 +361,6 @@ def eval(args):
                 psnr_dark.append(pd)
                 lpips_bright.append(lb)
                 lpips_dark.append(ld)
-                success_bright_list.append(sec_b)
-                success_dark_list.append(sec_d)
                 total_evaluated += 1
 
     if collected_for_grid > 0:
@@ -411,8 +383,6 @@ def eval(args):
         f"PSNR Dark: {np.average(psnr_dark):.4f}\n"
         f"LPIPS Bright: {np.average(lpips_bright):.4f}\n"
         f"LPIPS Dark: {np.average(lpips_dark):.4f}\n"
-        f"Success Rate Bright (%S): {np.average(success_bright_list) * 100:.2f}%\n"
-        f"Success Rate Dark (%S): {np.average(success_dark_list) * 100:.2f}%\n"
     )
     print(f"\n{metrics_report}")
 
@@ -429,8 +399,6 @@ def one_shot_eval(args):
     model = get_unet(args.image_size)
 
     model, val_dataloader = accelerator.prepare(model, val_dataloader)
-    
-    # Leaving target pointing to unet_ema.pt as requested
     model_path = os.path.join(base_dir, "checkpoints", "unet_ema.pt")
     accelerator.unwrap_model(model).load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
@@ -443,7 +411,6 @@ def one_shot_eval(args):
     lpips_model = lpips.LPIPS(net="alex").to(device)
 
     ssim_bright, ssim_dark, psnr_bright, psnr_dark, lpips_bright, lpips_dark = [], [], [], [], [], []
-    success_bright_list, success_dark_list = [], []
 
     grid_predicted_bright, grid_predicted_dark, grid_bright, grid_dark, grid_mixed = [], [], [], [], []
     collected_for_grid = 0
@@ -461,11 +428,13 @@ def one_shot_eval(args):
         with torch.no_grad():
             model_out = model(mixed_images, t).sample
             
-            # Use direct model predictions for both endpoints instead of mathematical extraction
+            # Use only the bright prediction
             predicted_bright = model_out[:, :3]
-            predicted_dark = model_out[:, 3:]
             
-            # Apply bounds clamping for the one-shot preview predictions
+            # Mathematically extract the dark prediction
+            predicted_dark = (mixed_images - math.sqrt(1.0 - args.alpha_init) * predicted_bright) / math.sqrt(args.alpha_init)
+            
+            # Apply bounds clamping for the one-shot preview (optional but recommended for consistency)
             predicted_bright = torch.clamp(predicted_bright, -1.0, 1.0)
             predicted_dark = torch.clamp(predicted_dark, -1.0, 1.0)
 
@@ -487,11 +456,10 @@ def one_shot_eval(args):
         predicted_bright_np = predicted_bright.cpu().permute(0, 2, 3, 1).numpy()
         dark_np = dark_uint8.cpu().permute(0, 2, 3, 1).numpy()
         predicted_dark_np = predicted_dark.cpu().permute(0, 2, 3, 1).numpy()
-        mixed_np = mixed_uint8.cpu().permute(0, 2, 3, 1).numpy()
 
         with torch.no_grad():
             for k in range(n):
-                sb, sd, pb, pd, lb, ld, is_swapped, sec_b, sec_d = calculate_metrics(
+                sb, sd, pb, pd, lb, ld, is_swapped = calculate_metrics(
                     bright_np[k],
                     dark_np[k],
                     predicted_bright_np[k],
@@ -501,7 +469,6 @@ def one_shot_eval(args):
                     predicted_bright[k],
                     predicted_dark[k],
                     lpips_model,
-                    mixed_np[k]
                 )
 
                 if is_swapped:
@@ -513,8 +480,6 @@ def one_shot_eval(args):
                 psnr_dark.append(pd)
                 lpips_bright.append(lb)
                 lpips_dark.append(ld)
-                success_bright_list.append(sec_b)
-                success_dark_list.append(sec_d)
                 total_evaluated += 1
 
     if collected_for_grid > 0:
@@ -537,8 +502,6 @@ def one_shot_eval(args):
         f"PSNR Dark: {np.average(psnr_dark):.4f}\n"
         f"LPIPS Bright: {np.average(lpips_bright):.4f}\n"
         f"LPIPS Dark: {np.average(lpips_dark):.4f}\n"
-        f"Success Rate Bright (%S): {np.average(success_bright_list) * 100:.2f}%\n"
-        f"Success Rate Dark (%S): {np.average(success_dark_list) * 100:.2f}%\n"
     )
     print(f"\n{metrics_report}")
 
@@ -573,7 +536,7 @@ def launch():
 
     #train(args)
     eval(args)
-    one_shot_eval(args)
+    #one_shot_eval(args)
 
 
 if __name__ == "__main__":

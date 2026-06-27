@@ -13,14 +13,11 @@ import csv
 # 1. Dataset & Data Loading
 # ==========================================
 class ColdDiffAEDemorphTrainDataset(Dataset):
-    """Generates random on-the-fly training pairs and strictly enforces PC-score ordering."""
-    def __init__(self, embeddings: np.ndarray, pc_weights: np.ndarray, pc_idx: int = 0, epoch_size: int = 1_000_000):
+    """Generates random on-the-fly training pairs from the training matrix."""
+    def __init__(self, embeddings: np.ndarray, epoch_size: int = 1_000_000):
         self.embeddings = embeddings
         self.epoch_size = epoch_size
         self.num_samples = len(embeddings)
-        
-        # Precompute PC scores for the entire training split to keep __getitem__ ultra-fast
-        self.scores = np.dot(embeddings, pc_weights[pc_idx])
 
     def __len__(self):
         return self.epoch_size
@@ -30,23 +27,13 @@ class ColdDiffAEDemorphTrainDataset(Dataset):
         offset = np.random.randint(1, self.num_samples)
         idx2 = (idx1 + offset) % self.num_samples
             
-        z1 = self.embeddings[idx1]
-        z2 = self.embeddings[idx2]
-        
-        score1 = self.scores[idx1]
-        score2 = self.scores[idx2]
-        
-        # Enforce ordering: z1 must always be the embedding with the LARGER PC score
-        if score1 < score2:
-            z1, z2 = z2, z1
-            
-        return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
+        return (torch.tensor(self.embeddings[idx1], dtype=torch.float32), 
+                torch.tensor(self.embeddings[idx2], dtype=torch.float32))
 
 class ColdDiffAEDemorphTestPairsDataset(Dataset):
-    """Loads pre-paired evaluation arrays and strictly enforces PC-score ordering."""
-    def __init__(self, paired_embeddings: np.ndarray, pc_weights: np.ndarray, pc_idx: int = 0):
+    """Loads pre-paired evaluation arrays directly from disk."""
+    def __init__(self, paired_embeddings: np.ndarray):
         self.pairs = paired_embeddings
-        self.v = pc_weights[pc_idx]
 
     def __len__(self):
         return len(self.pairs)
@@ -54,15 +41,6 @@ class ColdDiffAEDemorphTestPairsDataset(Dataset):
     def __getitem__(self, idx):
         z1 = self.pairs[idx, 0]
         z2 = self.pairs[idx, 1]
-        
-        # Compute PC scores for this specific evaluation pair on the fly
-        score1 = np.dot(z1, self.v)
-        score2 = np.dot(z2, self.v)
-        
-        # Enforce ordering: z1 must always be the embedding with the LARGER PC score
-        if score1 < score2:
-            z1, z2 = z2, z1
-            
         return torch.tensor(z1, dtype=torch.float32), torch.tensor(z2, dtype=torch.float32)
 
 def load_split_and_normalize(base_path_str: str, split: str) -> np.ndarray:
@@ -143,7 +121,7 @@ class ColdDemorphNet(nn.Module):
         return self.final_linear(h)
 
 # ==========================================
-# 3. Cold Diffusion Process (Ordered Trajectory Constraint)
+# 3. Cold Diffusion Process (PIT with Midpoint Reflection Spread)
 # ==========================================
 class DeterministicColdDemorph(nn.Module):
     def __init__(self, model, num_timesteps=300):
@@ -158,58 +136,69 @@ class DeterministicColdDemorph(nn.Module):
         w2 = torch.sqrt(0.5 * gamma)
         return w1 * z1 + w2 * z2
 
-    def compute_loss(self, z1, z2, spread_weight=0.5, t=None):
+    def compute_loss(self, z1, z2, spread_weight=0.5):
         b = z1.shape[0]
         
         # 1. Compute the constant maximum-timestep midpoint vector 'c' for this pair
         t_max = torch.full((b,), self.num_timesteps, device=z1.device).long()
         c = self.degrade(z1, z2, t_max)
         
-        # 2. Degrade at a intermediate step 't'
-        if t is None:
-            t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
+        # 2. Degrade at a random intermediate step 't' for standard training
+        t = torch.randint(1, self.num_timesteps + 1, (b,), device=z1.device).long()
         x_t = self.degrade(z1, z2, t)
         
         pred = self.model(x_t, t)
         pred_z1_raw, pred_z2_raw = pred.chunk(2, dim=-1)
         
-        # 3. Ordered Structural Loss (No PIT assignment optimization needed)
-        loss_recon = F.mse_loss(pred_z1_raw, z1, reduction='none').mean(dim=-1) + \
-                     F.mse_loss(pred_z2_raw, z2, reduction='none').mean(dim=-1)
-        loss_recon = loss_recon.mean()
+        # 3. Standard Permutation-Invariant Assignment Loss
+        loss_A = F.mse_loss(pred_z1_raw, z1, reduction='none').mean(dim=-1) + \
+                 F.mse_loss(pred_z2_raw, z2, reduction='none').mean(dim=-1)
+                 
+        loss_B = F.mse_loss(pred_z1_raw, z2, reduction='none').mean(dim=-1) + \
+                 F.mse_loss(pred_z2_raw, z1, reduction='none').mean(dim=-1)
         
+        loss_pit = torch.min(loss_A, loss_B).mean()
+        
+        # 4. Spread Loss computed via Midpoint Formula Extraction (Matches Sampling Layout)
         pred_z2_extracted = self.SQRT_2 * c - pred_z1_raw
         
         dist_gt = F.mse_loss(z1, z2, reduction='none').mean(dim=-1)
         dist_pred = F.mse_loss(pred_z1_raw, pred_z2_extracted, reduction='none').mean(dim=-1)
+        loss_spread = F.mse_loss(dist_pred, dist_gt)
         
-        # Apply element-wise scaling across the batch matrix
-        loss_spread = F.mse_loss(dist_pred, dist_gt, reduction='none').mean()
-        
-        total_loss = loss_recon + spread_weight * loss_spread
+        total_loss = loss_pit + spread_weight * loss_spread
         return total_loss
 
     @torch.no_grad()
-    def tacos_sample_loop(self, c, stride=1):
+    def tacos_sample_loop(self, c):
         device = c.device
         b = c.shape[0]
-        timesteps = torch.arange(self.num_timesteps, 0, -stride, device=device).long()
+        timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
         x_t = c.clone()
         
-        for t in tqdm(timesteps, desc=f'TACOs Sampling (Stride {stride})', leave=False):
+        prev_pred_z1 = None
+        for t in tqdm(timesteps, desc='TACOs Sampling', leave=False):
             t_batch = torch.full((b,), t, device=device, dtype=torch.long)
             pred_raw = self.model(x_t, t_batch)
-            pred_z1, _ = pred_raw.chunk(2, dim=-1) # Directly extract ordered z1
+            pred_raw_1, pred_raw_2 = pred_raw.chunk(2, dim=-1)
+            
+            if prev_pred_z1 is None:
+                pred_z1 = pred_raw_1
+            else:
+                dist_1 = F.mse_loss(pred_raw_1, prev_pred_z1, reduction='none').mean(dim=-1)
+                dist_2 = F.mse_loss(pred_raw_2, prev_pred_z1, reduction='none').mean(dim=-1)
+                
+                swap_mask = dist_2 < dist_1
+                pred_z1 = torch.where(swap_mask.unsqueeze(-1), pred_raw_2, pred_raw_1)
             
             pred_z2 = self.SQRT_2 * c - pred_z1
+            prev_pred_z1 = pred_z1
             
-            t_next = max(0, int(t.item() - stride))
-            t_next_batch = torch.full((b,), t_next, device=device, dtype=torch.long)
-            
+            t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
             deg_t = self.degrade(pred_z1, pred_z2, t_batch)
-            deg_t_next = self.degrade(pred_z1, pred_z2, t_next_batch)
+            deg_t_prev = self.degrade(pred_z1, pred_z2, t_prev_batch)
             
-            x_t = x_t - deg_t + deg_t_next
+            x_t = x_t - deg_t + deg_t_prev
             
         final_z1 = x_t
         final_z2 = self.SQRT_2 * c - final_z1
@@ -240,7 +229,7 @@ class EarlyStopping:
 # ==========================================
 # 5. Training & Validation Mechanics
 # ==========================================
-def train_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, num_timesteps: int = 300, epochs: int = 150, patience: int = 20):
+def train_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 300, epochs: int = 150, patience: int = 20):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
     ckpt_dir = exp_dir / "checkpoints"
@@ -251,17 +240,11 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, num
         with open(metrics_path, "w", newline="") as f:
             csv.writer(f).writerow(["Epoch", "Train_Loss", "Val_Cheap_Loss", "Val_Cheap_Cos_Similarity", "Val_TACOs_Reconstruct_MSE"])
             
-    # Load ArcFace PCA Weights for ordered score configuration
-    pca_path = Path("/nas-ctm01/homes/dacordeiro/Face-DM/pca_analysis_arcface/arcface_pca_components_v.npy")
-    if not pca_path.exists():
-        raise FileNotFoundError(f"ArcFace PCA matrices missing at {pca_path}. Run analyze_pca_arcface.py first!")
-    pc_weights = np.load(pca_path).astype(np.float32)
-
     train_embs = load_split_and_normalize(diffae_path_str, "train")
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
     
-    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, pc_weights, pc_idx, epoch_size=1_000_000), batch_size=32_768, shuffle=True, num_workers=8)
-    val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs, pc_weights, pc_idx), batch_size=1000, shuffle=False, num_workers=4)
+    train_loader = DataLoader(ColdDiffAEDemorphTrainDataset(train_embs, epoch_size=1_000_000), batch_size=32_768, shuffle=True, num_workers=8)
+    val_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
@@ -271,7 +254,7 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, num
     
     SPREAD_WEIGHT_VAL = 0.1
     wandb.init(project="Face-DM", name=run_name, dir=str(exp_dir), config={
-        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "embedding_type": "ArcFace_Scaled_Sqrt512", "loss_type": "MSE_Ordered_Spread_Reg", "spread_loss_weight": SPREAD_WEIGHT_VAL, "sorted_by_pc": pc_idx + 1
+        "learning_rate": 1e-4, "batch_size": 32_768, "num_layers": 10, "hidden_dim": 2048, "num_timesteps": num_timesteps, "early_stop_patience": patience, "embedding_type": "ArcFace_Scaled_Sqrt512", "loss_type": "MSE_with_Midpoint_Spread_Reg", "spread_loss_weight": SPREAD_WEIGHT_VAL
     })
 
     best_val_loss = float("inf")
@@ -299,17 +282,26 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, num
             for batch_z1, batch_z2 in val_loader:
                 batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
                 
-                # Validation relies completely on ordered trajectory evaluation pipeline
-                val_cheap_loss += diffusion.compute_loss(batch_z1, batch_z2, spread_weight=SPREAD_WEIGHT_VAL).item()
-                
                 b = batch_z1.shape[0]
                 t = torch.randint(1, diffusion.num_timesteps + 1, (b,), device=batch_z1.device).long()
                 x_t = diffusion.degrade(batch_z1, batch_z2, t)
                 pred = net(x_t, t)
                 pred_z1_raw, pred_z2_raw = pred.chunk(2, dim=-1)
                 
-                cos_1 = F.cosine_similarity(pred_z1_raw, batch_z1, dim=-1)
-                cos_2 = F.cosine_similarity(pred_z2_raw, batch_z2, dim=-1)
+                loss_path_A = F.mse_loss(pred_z1_raw, batch_z1, reduction='none').mean(dim=-1) + \
+                              F.mse_loss(pred_z2_raw, batch_z2, reduction='none').mean(dim=-1)
+                
+                loss_path_B = F.mse_loss(pred_z1_raw, batch_z2, reduction='none').mean(dim=-1) + \
+                              F.mse_loss(pred_z2_raw, batch_z1, reduction='none').mean(dim=-1)
+                
+                val_cheap_loss += torch.min(loss_path_A, loss_path_B).mean().item()
+                
+                mask_a = (loss_path_A <= loss_path_B).unsqueeze(-1)
+                aligned_pred_z1 = torch.where(mask_a, pred_z1_raw, pred_z2_raw)
+                aligned_pred_z2 = torch.where(mask_a, pred_z2_raw, pred_z1_raw)
+                
+                cos_1 = F.cosine_similarity(aligned_pred_z1, batch_z1, dim=-1)
+                cos_2 = F.cosine_similarity(aligned_pred_z2, batch_z2, dim=-1)
                 val_cheap_cos += 0.5 * (cos_1 + cos_2).mean().item()
 
         avg_val_cheap_loss = val_cheap_loss / len(val_loader)
@@ -321,10 +313,11 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, num
                 for batch_z1, batch_z2 in val_loader:
                     batch_z1, batch_z2 = batch_z1.to(device), batch_z2.to(device)
                     batch_c_vp = SQRT_05 * batch_z1 + SQRT_05 * batch_z2
-                    pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp, stride=1)
+                    pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp)
                     
-                    dist_total = F.mse_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
-                    val_tacos_loss_total += dist_total.mean().item()
+                    dist_a = F.mse_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
+                    dist_b = F.mse_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
+                    val_tacos_loss_total += torch.min(dist_a, dist_b).mean().item()
             val_tacos_loss = val_tacos_loss_total / len(val_loader)
             
         log_dict = {
@@ -367,22 +360,14 @@ def train_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, num
 # ==========================================
 # 6. Evaluation Script
 # ==========================================
-def evaluate_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, num_timesteps: int = 300, mode: str = 'iterative', stride: int = 1):
+def evaluate_cold_demorph(diffae_path_str: str, run_name: str, num_timesteps: int = 300, mode: str = 'iterative'):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     exp_dir = Path("experiments") / run_name
-    
-    if mode == 'iterative':
-        out_file_path = exp_dir / f"eval_{mode}_stride{stride}.txt"
-    else:
-        out_file_path = exp_dir / f"eval_{mode}.txt"
-        
     ckpt_path = exp_dir / "checkpoints" / "best.pt"
+    out_file_path = exp_dir / f"eval_{mode}.txt"
     
-    pca_path = Path("/nas-ctm01/homes/dacordeiro/Face-DM/pca_analysis_arcface/arcface_pca_components_v.npy")
-    pc_weights = np.load(pca_path).astype(np.float32)
-
     test_pairs_embs = load_split_and_normalize(diffae_path_str, "test")
-    test_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs, pc_weights, pc_idx), batch_size=1000, shuffle=False, num_workers=4)
+    test_loader = DataLoader(ColdDiffAEDemorphTestPairsDataset(test_pairs_embs), batch_size=1000, shuffle=False, num_workers=4)
 
     net = ColdDemorphNet().to(device)
     diffusion = DeterministicColdDemorph(net, num_timesteps=num_timesteps).to(device)
@@ -400,7 +385,7 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, 
             batch_c_true = 0.5 * (batch_z1 + batch_z2)           
             
             if mode == 'iterative':
-                pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp, stride=stride)
+                pred_z1, pred_z2 = diffusion.tacos_sample_loop(batch_c_vp)
             else:
                 pred = net(batch_c_vp, torch.full((batch_z1.shape[0],), num_timesteps, device=device).long())
                 pred_raw_1, _ = pred.chunk(2, dim=-1)
@@ -408,9 +393,12 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, 
                 pred_z1 = pred_raw_1
                 pred_z2 = SQRT_2 * batch_c_vp - pred_z1
 
-            # No identity swap sorting metrics needed anymore
-            aligned_pred_z1 = pred_z1
-            aligned_pred_z2 = pred_z2
+            dist_a = F.mse_loss(pred_z1, batch_z1, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z2, reduction='none').mean(dim=1)
+            dist_b = F.mse_loss(pred_z1, batch_z2, reduction='none').mean(dim=1) + F.mse_loss(pred_z2, batch_z1, reduction='none').mean(dim=1)
+            mask_a = (dist_a <= dist_b).unsqueeze(-1)
+            
+            aligned_pred_z1 = torch.where(mask_a, pred_z1, pred_z2)
+            aligned_pred_z2 = torch.where(mask_a, pred_z2, pred_z1)
 
             mse_gt_1 = F.mse_loss(aligned_pred_z1, batch_z1).item()
             mse_gt_2 = F.mse_loss(aligned_pred_z2, batch_z2).item()
@@ -442,9 +430,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, 
             pct_S2 = (cos_p2_gt > cos_p2_c).float().mean().item() * 100
             pct_S_comb = 0.5 * (pct_S1 + pct_S2)
 
-    header_text = f"--- Evaluation Results: {mode.upper()} (Stride: {stride}) ---" if mode == 'iterative' else f"--- Evaluation Results: {mode.upper()} ---"
     results_text = (
-        f"{header_text}\nRun Name: {run_name}\nSorted via ArcFace PC Component Index: {pc_idx + 1}\n----------------------------------------\n"
+        f"--- Evaluation Results: {mode.upper()} ---\nRun Name: {run_name}\n----------------------------------------\n"
         f"[1. Prediction to Ground-Truth Alignment]\n"
         f"  - Embedding 1 -> MSE Distance: {mse_gt_1:.6f} | Cosine Similarity: {cos_gt_1:.6f}\n"
         f"  - Embedding 2 -> MSE Distance: {mse_gt_2:.6f} | Cosine Similarity: {cos_gt_2:.6f}\n\n"
@@ -468,13 +455,8 @@ def evaluate_cold_demorph(diffae_path_str: str, run_name: str, pc_idx: int = 0, 
 
 if __name__ == "__main__":
     BASE_PATH = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
+    RUN_NAME = "arcface_baseline_mse_scaled_spreadLoss0.1_new"
     
-    # ----------------------------------------------------
-    # CONFIGURATION SWITCH FOR PRINCIPAL COMPONENTS
-    # ----------------------------------------------------
-    TARGET_PC_IDX = 0  # 0 = PC1, 1 = PC2, 2 = PC3
-    RUN_NAME = f"arcface_sorted_pc{TARGET_PC_IDX + 1}"
-    
-    train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, pc_idx=TARGET_PC_IDX, num_timesteps=300, epochs=150, patience=20)
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, pc_idx=TARGET_PC_IDX, num_timesteps=300, mode='one_shot')
-    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, pc_idx=TARGET_PC_IDX, num_timesteps=300, mode='iterative', stride=1)
+    train_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, epochs=150, patience=20)
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='one_shot')
+    evaluate_cold_demorph(diffae_path_str=BASE_PATH, run_name=RUN_NAME, num_timesteps=300, mode='iterative')
