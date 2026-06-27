@@ -1,0 +1,13 @@
+==================================================
+      DIFFAE Z-SCORE SEMANTIC SIMILARITY REPORT   
+==================================================
+
+Total Valid Pairs Sampled:       99,998,516
+Pairs found with CosSim > 0.8: 68
+Percentage of total:             0.000068 %
+
+Ground-Truth Visual Metric Averages (Target Pairs Only):
+--------------------------------------------------
+Average SSIM:                    0.4725
+Average PSNR:                    14.82 dB
+Average LPIPS (AlexNet):         0.2239

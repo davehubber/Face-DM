@@ -190,7 +190,7 @@ def evaluate_identity_leakage(diffae_path_str: str, run_name: str, num_timesteps
         "----------------------------------------------------------\n\n"
         "[1. ELEMENT-LEVEL IDENTIFICATION ACCURACY (RANK-1)]\n"
         f"  - Target Identity A Correct Matches:    {p1_correct}/{num_pairs} ({pct_p1:.2f}%)\n"
-        f"  - Target Identity B Correct Matches:    {p2_correct}/{num_pairs} ({pct_b:=.2f}% if formatting matches)\n"
+        f"  - Target Identity B Correct Matches:    {p2_correct}/{num_pairs} ({pct_both:.2f}% if formatting matches)\n"
         f"  - Target Identity B Correct Matches:    {p2_correct}/{num_pairs} ({pct_p2:.2f}%)\n"
         f"  - Combined Vector Success Rate:         {p1_correct + p2_correct}/{num_pairs * 2} ({pct_total_vectors:.2f}%)\n\n"
         "[2. PAIR-LEVEL RESOLUTION SUCCESS PROFILE]\n"
