@@ -1,0 +1,17 @@
+==================================================
+    DIFFAE SELECTION VS ARCFACE IDENTITY REPORT   
+==================================================
+
+Total Valid Pairs Sampled:       99,998,516
+Pairs found with DiffAE CosSim > 0.8: 68
+Percentage of total:             0.000068 %
+
+Identity Validation Deep Feature Profile:
+--------------------------------------------------
+AVERAGE ARCFACE COSINE SIMILARITY:  0.8213  <-- Identity Key
+
+Low-Level Ground-Truth Visual Metric Averages:
+--------------------------------------------------
+Average SSIM:                    0.4725
+Average PSNR:                    14.82 dB
+Average LPIPS (AlexNet):         0.2239

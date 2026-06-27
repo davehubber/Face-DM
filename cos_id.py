@@ -10,7 +10,6 @@ from tqdm import tqdm
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
 
-# Attempt to import lpips cleanly
 try:
     import lpips
 except ImportError:
@@ -20,6 +19,7 @@ except ImportError:
 def run_similarity_test(
     diffae_npy_path: str,
     diffae_metadata_path: str,
+    arcface_npy_path: str,
     mean_path: str,
     std_path: str,
     out_dir: str,
@@ -29,6 +29,7 @@ def run_similarity_test(
 ):
     diffae_path = Path(diffae_npy_path).resolve()
     metadata_path = Path(diffae_metadata_path).resolve()
+    arcface_path = Path(arcface_npy_path).resolve()
     mean_p = Path(mean_path).resolve()
     std_p = Path(std_path).resolve()
     output_path = Path(out_dir).resolve()
@@ -37,9 +38,10 @@ def run_similarity_test(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device for LPIPS: {device}")
 
-    # 1. Load Embeddings and Metadata
-    print("Loading master embeddings and normalization statistics...")
+    # 1. Load Embeddings, ArcFace Gallery, and Normalization Statistics
+    print("Loading master embedding layers and validation matrices...")
     embeddings = np.load(diffae_path).astype(np.float32)
+    arcface_embs = np.load(arcface_path).astype(np.float32)
     train_mean = np.load(mean_p).astype(np.float32)
     train_std = np.load(std_p).astype(np.float32)
 
@@ -48,21 +50,21 @@ def run_similarity_test(
         metadata_rows = list(csv.DictReader(f))
 
     num_samples = len(embeddings)
-    if num_samples != len(metadata_rows):
-        raise ValueError("Mismatch between embeddings count and metadata rows!")
+    if num_samples != len(metadata_rows) or num_samples != len(arcface_embs):
+        raise ValueError("DATASET MISMATCH: Total rows in embeddings, ArcFace, and metadata do not match!")
 
-    # 2. Z-Score Normalization & Unit Length Scaling
-    print("Applying Z-score normalization using training statistics...")
+    # 2. Z-Score Normalization & Unit Length Scaling (DiffAE)
+    print("Applying Z-score normalization to DiffAE embeddings...")
     norm_embeddings = (embeddings - train_mean) / train_std
 
-    print("Pre-computing L2 unit vectors for ultra-fast cosine similarity...")
+    print("Pre-computing L2 unit vectors for fast DiffAE mining...")
     row_norms = np.linalg.norm(norm_embeddings, axis=1, keepdims=True)
-    row_norms = np.where(row_norms == 0, 1.0, row_norms)  # Zero division guard
+    row_norms = np.where(row_norms == 0, 1.0, row_norms)
     unit_embeddings = norm_embeddings / row_norms
 
     # 3. Process 100 Million Pairs in Vectorized Chunks
     print(f"\nSampling {total_pairs:,} random pairs...")
-    np.random.seed(42)  # For reproducibility
+    np.random.seed(42)
     
     high_sim_pairs = []
     sampled_count = 0
@@ -72,16 +74,13 @@ def run_similarity_test(
         idx_A = np.random.randint(0, num_samples, size=chunk_size)
         idx_B = np.random.randint(0, num_samples, size=chunk_size)
 
-        # Filter out self-pairs
         valid_mask = idx_A != idx_B
         idx_A = idx_A[valid_mask]
         idx_B = idx_B[valid_mask]
         sampled_count += len(idx_A)
 
-        # Vectorized dot product on unit vectors yields exact cosine similarity
         sims = np.sum(unit_embeddings[idx_A] * unit_embeddings[idx_B], axis=1)
 
-        # Check threshold
         match_mask = sims > similarity_threshold
         if np.any(match_mask):
             matched_A = idx_A[match_mask]
@@ -92,10 +91,10 @@ def run_similarity_test(
                 high_sim_pairs.append((int(a), int(b), float(s)))
 
     pct_found = (len(high_sim_pairs) / sampled_count) * 100 if sampled_count > 0 else 0.0
-    print(f"\nFound {len(high_sim_pairs)} pairs with cosine similarity > {similarity_threshold} ({pct_found:.6f}%)")
+    print(f"\nFound {len(high_sim_pairs)} pairs with DiffAE similarity > {similarity_threshold} ({pct_found:.6f}%)")
 
-    # 4. Compute Image Metrics for Highly Similar Pairs
-    avg_ssim, avg_psnr, avg_lpips = 0.0, 0.0, 0.0
+    # 4. Compute Image Metrics & ArcFace Identity Verification
+    avg_ssim, avg_psnr, avg_lpips, avg_arcface = 0.0, 0.0, 0.0, 0.0
 
     if len(high_sim_pairs) > 0:
         print("\nInitializing LPIPS model network (AlexNet)...")
@@ -108,25 +107,30 @@ def run_similarity_test(
             transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
         ])
 
-        ssim_values, psnr_values, lpips_values = [], [], []
+        ssim_values, psnr_values, lpips_values, arcface_values = [], [], [], []
 
-        print("Computing visual metric spaces (SSIM, PSNR, LPIPS) for matched pairs...")
-        for idx_A, idx_B, _ in tqdm(high_sim_pairs, desc="Evaluating Images"):
+        print("Computing evaluation spaces (ArcFace, SSIM, PSNR, LPIPS) for matched pairs...")
+        for idx_A, idx_B, _ in tqdm(high_sim_pairs, desc="Evaluating Pairs"):
+            # A. ArcFace Cosine Similarity (Identity Verification Metric)
+            vec_A = arcface_embs[idx_A]
+            vec_B = arcface_embs[idx_B]
+            # Matrix is pre-L2-normalized, so standard dot product yields exact Cosine Similarity
+            sim_arcface = float(np.dot(vec_A, vec_B))
+            arcface_values.append(sim_arcface)
+
+            # B. Structural & Visual Ground-Truth Checks
             path_A = Path(metadata_rows[idx_A]['image_path'])
             path_B = Path(metadata_rows[idx_B]['image_path'])
 
             img_A_pil = Image.open(path_A).convert("RGB")
             img_B_pil = Image.open(path_B).convert("RGB")
 
-            # Transforms for LPIPS [-1, 1]
             tensor_A = transform_tensor(img_A_pil).unsqueeze(0).to(device)
             tensor_B = transform_tensor(img_B_pil).unsqueeze(0).to(device)
 
-            # Numpy conversion for SSIM / PSNR [0, 255]
             np_A = np.array(img_A_pil.resize((256, 256)))
             np_B = np.array(img_B_pil.resize((256, 256)))
 
-            # Metrics calculation
             val_ssim = ssim(np_A, np_B, channel_axis=2)
             val_psnr = psnr(np_A, np_B, data_range=255)
             
@@ -140,17 +144,21 @@ def run_similarity_test(
         avg_ssim = np.mean(ssim_values)
         avg_psnr = np.mean(psnr_values)
         avg_lpips = np.mean(lpips_values)
+        avg_arcface = np.mean(arcface_values)
 
-    # 5. Generate and Save TXT Report
-    report_path = output_path / "similarity_test_report.txt"
+    # 5. Generate and Save Identity Validation Report
+    report_path = output_path / "similarity_identity_report.txt"
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("==================================================\n")
-        f.write("      DIFFAE Z-SCORE SEMANTIC SIMILARITY REPORT   \n")
+        f.write("    DIFFAE SELECTION VS ARCFACE IDENTITY REPORT   \n")
         f.write("==================================================\n\n")
         f.write(f"Total Valid Pairs Sampled:       {sampled_count:,}\n")
-        f.write(f"Pairs found with CosSim > {similarity_threshold}: {len(high_sim_pairs):,}\n")
+        f.write(f"Pairs found with DiffAE CosSim > {similarity_threshold}: {len(high_sim_pairs):,}\n")
         f.write(f"Percentage of total:             {pct_found:.6f} %\n\n")
-        f.write("Ground-Truth Visual Metric Averages (Target Pairs Only):\n")
+        f.write("Identity Validation Deep Feature Profile:\n")
+        f.write("--------------------------------------------------\n")
+        f.write(f"AVERAGE ARCFACE COSINE SIMILARITY:  {avg_arcface:.4f}  <-- Identity Key\n\n")
+        f.write("Low-Level Ground-Truth Visual Metric Averages:\n")
         f.write("--------------------------------------------------\n")
         f.write(f"Average SSIM:                    {avg_ssim:.4f}\n")
         f.write(f"Average PSNR:                    {avg_psnr:.2f} dB\n")
@@ -172,21 +180,22 @@ def run_similarity_test(
             grid_img.paste(img_A, (0, i * 256))
             grid_img.paste(img_B, (256, i * 256))
 
-        grid_out_path = output_path / "high_similarity_pairs_grid.png"
+        grid_out_path = output_path / "high_similarity_identity_pairs_grid.png"
         grid_img.save(grid_out_path)
         print(f"Visual validation grid saved to: {grid_out_path}")
-    else:
-        print("No pairs found above 0.8 similarity; skipping visualization grid generation.")
+
 
 if __name__ == "__main__":
-    BASE_DIR = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings"
+    DIFFAE_DIR = "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings"
+    ARCFACE_FILE = "/nas-ctm01/homes/dacordeiro/Face-DM/arcface_embeddings/Face-DM/ffhq256_deepface_arcface_retinaface_l2norm.npy"
     
     run_similarity_test(
-        diffae_npy_path=f"{BASE_DIR}/ffhq256_diffae_zsem.npy",
-        diffae_metadata_path=f"{BASE_DIR}/ffhq256_diffae_zsem_metadata.csv",
-        mean_path=f"{BASE_DIR}/ffhq256_diffae_zsem_train_mean.npy",
-        std_path=f"{BASE_DIR}/ffhq256_diffae_zsem_train_std.npy",
-        out_dir=f"{BASE_DIR}/similarity_evaluation_results",
+        diffae_npy_path=f"{DIFFAE_DIR}/ffhq256_diffae_zsem.npy",
+        diffae_metadata_path=f"{DIFFAE_DIR}/ffhq256_diffae_zsem_metadata.csv",
+        arcface_npy_path=ARCFACE_FILE,
+        mean_path=f"{DIFFAE_DIR}/ffhq256_diffae_zsem_train_mean.npy",
+        std_path=f"{DIFFAE_DIR}/ffhq256_diffae_zsem_train_std.npy",
+        out_dir=f"{DIFFAE_DIR}/similarity_evaluation_results",
         total_pairs=100_000_000,
         chunk_size=5_000_000,
         similarity_threshold=0.8
