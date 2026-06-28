@@ -2,15 +2,20 @@
 Run Name: diffae_bigMag
 ----------------------------------------
 [1. Prediction to Ground-Truth Alignment]
-  - Embedding 1 -> L1 Distance: 0.676173 | Cosine Similarity: 0.591448
-  - Embedding 2 -> L1 Distance: 0.676173 | Cosine Similarity: 0.538744
+  - Embedding 1 -> L1 Distance: 0.556841 | Cosine Similarity: 0.747879
+  - Embedding 2 -> L1 Distance: 0.556841 | Cosine Similarity: 0.693285
 
 [2. Proximity to True Average Mixture (c)]
-  - Predicted 1 to c -> L1 Distance: 0.318614 | Cosine Similarity: 0.900873
+  - Predicted 1 to c -> L1 Distance: 0.248227 | Cosine Similarity: 0.948148
   - Baseline GT 1 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.734268
-  - Predicted 2 to c -> L1 Distance: 0.318614 | Cosine Similarity: 0.856877
+  - Predicted 2 to c -> L1 Distance: 0.248227 | Cosine Similarity: 0.909739
   - Baseline GT 2 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.675151
 
 [3. Predicted Outputs Inter-Relationship / Spread]
-  - Inter-Predicted (p1 vs p2) -> L1: 0.637229 | Cosine Similarity: 0.574892
+  - Inter-Predicted (p1 vs p2) -> L1: 0.496455 | Cosine Similarity: 0.741688
   - Inter-Ground-Truth (z1 vs z2) -> L1: 1.125759 | Cosine Similarity: -0.002203
+
+[4. Success Rate of Reversal (%S)]
+  - Embedding 1 -> %S1: 0.00%
+  - Embedding 2 -> %S2: 0.80%
+  - Combined Total -> %S: 0.40%

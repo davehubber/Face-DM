@@ -1,0 +1,48 @@
+
+--- Evaluation Results: ONE_SHOT ---
+Run Name: diffae_sorted_pc2
+Sorted via PC Component Index: 2
+----------------------------------------
+[1. Prediction to Ground-Truth Alignment]
+  - Embedding 1 -> L1 Distance: 0.533628 | Cosine Similarity: 0.733103
+  - Embedding 2 -> L1 Distance: 0.533628 | Cosine Similarity: 0.744862
+
+[2. Proximity to True Average Mixture (c)]
+  - Predicted 1 to c -> L1 Distance: 0.206069 | Cosine Similarity: 0.938100
+  - Baseline GT 1 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.697402
+  - Predicted 2 to c -> L1 Distance: 0.206069 | Cosine Similarity: 0.930865
+  - Baseline GT 2 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.712017
+
+[3. Predicted Outputs Inter-Relationship / Spread]
+  - Inter-Predicted (p1 vs p2) -> L1: 0.412139 | Cosine Similarity: 0.749453
+  - Inter-Ground-Truth (z1 vs z2) -> L1: 1.125759 | Cosine Similarity: -0.002203
+
+[4. Success Rate of Reversal (%S)]
+  - Embedding 1 -> %S1: 0.00%
+  - Embedding 2 -> %S2: 0.20%
+  - Combined Total -> %S: 0.10%
+
+
+--- Evaluation Results: ITERATIVE ---
+Run Name: diffae_sorted_pc2
+Sorted via PC Component Index: 2
+----------------------------------------
+[1. Prediction to Ground-Truth Alignment]
+  - Embedding 1 -> L1 Distance: 0.543900 | Cosine Similarity: 0.728936
+  - Embedding 2 -> L1 Distance: 0.543900 | Cosine Similarity: 0.736412
+
+[2. Proximity to True Average Mixture (c)]
+  - Predicted 1 to c -> L1 Distance: 0.255871 | Cosine Similarity: 0.925165
+  - Baseline GT 1 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.697402
+  - Predicted 2 to c -> L1 Distance: 0.255871 | Cosine Similarity: 0.897197
+  - Baseline GT 2 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.712017
+
+[3. Predicted Outputs Inter-Relationship / Spread]
+  - Inter-Predicted (p1 vs p2) -> L1: 0.511741 | Cosine Similarity: 0.668200
+  - Inter-Ground-Truth (z1 vs z2) -> L1: 1.125759 | Cosine Similarity: -0.002203
+
+[4. Success Rate of Reversal (%S)]
+  - Embedding 1 -> %S1: 0.00%
+  - Embedding 2 -> %S2: 1.70%
+  - Combined Total -> %S: 0.85%
+

@@ -3,17 +3,17 @@ Run Name: diffae_sorted_pc1
 Sorted via PC Component Index: 1
 ----------------------------------------
 [1. Prediction to Ground-Truth Alignment]
-  - Embedding 1 -> L1 Distance: 0.640827 | Cosine Similarity: 0.612122
-  - Embedding 2 -> L1 Distance: 0.640827 | Cosine Similarity: 0.610593
+  - Embedding 1 -> L1 Distance: 0.546758 | Cosine Similarity: 0.726858
+  - Embedding 2 -> L1 Distance: 0.546758 | Cosine Similarity: 0.732719
 
 [2. Proximity to True Average Mixture (c)]
-  - Predicted 1 to c -> L1 Distance: 0.302686 | Cosine Similarity: 0.899958
+  - Predicted 1 to c -> L1 Distance: 0.245240 | Cosine Similarity: 0.933140
   - Baseline GT 1 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.698685
-  - Predicted 2 to c -> L1 Distance: 0.302686 | Cosine Similarity: 0.860628
+  - Predicted 2 to c -> L1 Distance: 0.245240 | Cosine Similarity: 0.905251
   - Baseline GT 2 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.710734
 
 [3. Predicted Outputs Inter-Relationship / Spread]
-  - Inter-Predicted (p1 vs p2) -> L1: 0.605372 | Cosine Similarity: 0.569533
+  - Inter-Predicted (p1 vs p2) -> L1: 0.490480 | Cosine Similarity: 0.697996
   - Inter-Ground-Truth (z1 vs z2) -> L1: 1.125759 | Cosine Similarity: -0.002203
 
 [4. Success Rate of Reversal (%S)]

@@ -3,17 +3,17 @@ Run Name: diffae_sorted_smiling_b32k
 Sorted via: Precomputed Smiling Attribute Scores
 ----------------------------------------
 [1. Prediction to Ground-Truth Alignment]
-  - Embedding 1 -> L1 Distance: 0.737797 | Cosine Similarity: 0.492160
-  - Embedding 2 -> L1 Distance: 0.737797 | Cosine Similarity: 0.493323
+  - Embedding 1 -> L1 Distance: 0.561427 | Cosine Similarity: 0.708530
+  - Embedding 2 -> L1 Distance: 0.561427 | Cosine Similarity: 0.722882
 
 [2. Proximity to True Average Mixture (c)]
-  - Predicted 1 to c -> L1 Distance: 0.326039 | Cosine Similarity: 0.883484
+  - Predicted 1 to c -> L1 Distance: 0.213764 | Cosine Similarity: 0.949999
   - Baseline GT 1 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.695726
-  - Predicted 2 to c -> L1 Distance: 0.326039 | Cosine Similarity: 0.849238
+  - Predicted 2 to c -> L1 Distance: 0.213764 | Cosine Similarity: 0.936470
   - Baseline GT 2 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.713694
 
 [3. Predicted Outputs Inter-Relationship / Spread]
-  - Inter-Predicted (p1 vs p2) -> L1: 0.652078 | Cosine Similarity: 0.531888
+  - Inter-Predicted (p1 vs p2) -> L1: 0.427528 | Cosine Similarity: 0.786876
   - Inter-Ground-Truth (z1 vs z2) -> L1: 0.614110 | Cosine Similarity: -0.002203
 
 [4. Success Rate of Reversal (%S)]
