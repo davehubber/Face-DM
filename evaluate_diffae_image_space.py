@@ -4,7 +4,7 @@ import math
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -268,15 +268,38 @@ class TestPairImageSpaceDataset(Dataset):
         }
 
 
-def tensor_to_01(x: torch.Tensor) -> torch.Tensor:
+# Important range convention used here:
+# - Dataset images are normalized to [-1, 1].
+# - DiffAE rendered images are assumed to already be in [0, 1].
+#   Therefore, do NOT apply (x + 1) / 2 to decoded images.
+
+def gt_norm_to_01(x: torch.Tensor) -> torch.Tensor:
+    """Convert ground-truth tensors from [-1, 1] to [0, 1]."""
     return x.clamp(-1, 1).add(1.0).div(2.0)
 
 
-def tensor_to_uint8_rgb(x: torch.Tensor) -> np.ndarray:
-    x01 = tensor_to_01(x.detach().cpu())
+def decoded_to_01(x: torch.Tensor) -> torch.Tensor:
+    """Keep decoded DiffAE tensors in their expected [0, 1] range."""
+    return x.clamp(0, 1)
+
+
+def gt_norm_to_uint8_rgb(x: torch.Tensor) -> np.ndarray:
+    x01 = gt_norm_to_01(x.detach().cpu())
     arr = x01.permute(1, 2, 0).numpy()
     arr = (arr * 255.0).round().clip(0, 255).astype(np.uint8)
     return arr
+
+
+def decoded_to_uint8_rgb(x: torch.Tensor) -> np.ndarray:
+    x01 = decoded_to_01(x.detach().cpu())
+    arr = x01.permute(1, 2, 0).numpy()
+    arr = (arr * 255.0).round().clip(0, 255).astype(np.uint8)
+    return arr
+
+
+def decoded_to_lpips_input(x: torch.Tensor) -> torch.Tensor:
+    """LPIPS expects tensors in [-1, 1]."""
+    return decoded_to_01(x).mul(2.0).sub(1.0)
 
 
 def slerp_tensors(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
@@ -371,7 +394,27 @@ def deepface_arcface_embedding(
 
 
 # =========================================================
-# 5. Evaluation
+# 5. Metric helpers
+# =========================================================
+
+def tmr_at_fmr(
+    genuine_scores: np.ndarray,
+    impostor_scores: np.ndarray,
+    fmr: float,
+) -> Tuple[float, float]:
+    """
+    Returns (threshold, TMR%) at a target false match rate.
+
+    The threshold is selected from the impostor-score distribution so that
+    approximately fmr of impostor scores are accepted.
+    """
+    threshold = float(np.quantile(impostor_scores, 1.0 - fmr))
+    tmr = float((genuine_scores >= threshold).mean() * 100.0)
+    return threshold, tmr
+
+
+# =========================================================
+# 6. Evaluation
 # =========================================================
 
 def evaluate_image_space(
@@ -495,7 +538,7 @@ def evaluate_image_space(
 
         img = Image.open(img_path).convert("RGB")
         img_t = dataset.transform(img)
-        img_uint8 = tensor_to_uint8_rgb(img_t)
+        img_uint8 = gt_norm_to_uint8_rgb(img_t)
 
         emb = deepface_arcface_embedding(
             img_rgb_uint8=img_uint8,
@@ -508,9 +551,6 @@ def evaluate_image_space(
 
     gallery_embeddings = np.stack(gallery_embeddings, axis=0).astype(np.float32)
 
-    # -----------------------------------------------------
-    # Metric accumulators
-    # -----------------------------------------------------
     psnr_scores: List[float] = []
     ssim_scores: List[float] = []
     lpips_scores: List[float] = []
@@ -526,9 +566,6 @@ def evaluate_image_space(
     mean_t = torch.from_numpy(train_mean).to(device).float().unsqueeze(0)
     std_t = torch.from_numpy(train_std).to(device).float().unsqueeze(0)
 
-    # -----------------------------------------------------
-    # Main evaluation loop
-    # -----------------------------------------------------
     with torch.no_grad():
         for batch in tqdm(loader, desc="Image-space evaluation"):
             z1_raw = batch["z1_raw"].to(device).float()
@@ -563,12 +600,7 @@ def evaluate_image_space(
             else:
                 raise ValueError("mode must be either 'iterative' or 'one_shot'.")
 
-            # -------------------------------------------------
-            # Permutation-invariant alignment in semantic space.
-            # This gives decoded prediction 1 in the same order as
-            # ground-truth source 1, and prediction 2 in the same
-            # order as ground-truth source 2.
-            # -------------------------------------------------
+            # Align prediction order to GT order.
             dist_a = (
                 F.l1_loss(pred1_norm, z1_norm, reduction="none").mean(dim=1)
                 + F.l1_loss(pred2_norm, z2_norm, reduction="none").mean(dim=1)
@@ -587,27 +619,25 @@ def evaluate_image_space(
             pred1_raw = pred1_aligned_norm * std_t + mean_t
             pred2_raw = pred2_aligned_norm * std_t + mean_t
 
-            # Decode each aligned prediction using the corresponding
-            # stored stochastic code of its ground-truth image.
-            pred1_img = diffae_model.render(xt1, pred1_raw, T=decode_steps)
-            pred2_img = diffae_model.render(xt2, pred2_raw, T=decode_steps)
+            # Realistic stochastic conditioning:
+            # both outputs use the morph stochastic midpoint.
+            morph_xt = slerp_tensors(xt1, xt2, t=0.5)
 
-            # -------------------------------------------------
-            # LPIPS
-            # -------------------------------------------------
-            lpips_1 = lpips_model(pred1_img, gt1).view(-1).detach().cpu().tolist()
-            lpips_2 = lpips_model(pred2_img, gt2).view(-1).detach().cpu().tolist()
+            pred1_img = diffae_model.render(morph_xt, pred1_raw, T=decode_steps)
+            pred2_img = diffae_model.render(morph_xt, pred2_raw, T=decode_steps)
+
+            # LPIPS expects [-1, 1].
+            lpips_1 = lpips_model(decoded_to_lpips_input(pred1_img), gt1).view(-1).detach().cpu().tolist()
+            lpips_2 = lpips_model(decoded_to_lpips_input(pred2_img), gt2).view(-1).detach().cpu().tolist()
 
             lpips_scores.extend(lpips_1)
             lpips_scores.extend(lpips_2)
 
-            # -------------------------------------------------
-            # PSNR and SSIM
-            # -------------------------------------------------
-            pred1_01 = tensor_to_01(pred1_img).detach().cpu()
-            pred2_01 = tensor_to_01(pred2_img).detach().cpu()
-            gt1_01 = tensor_to_01(gt1).detach().cpu()
-            gt2_01 = tensor_to_01(gt2).detach().cpu()
+            # PSNR and SSIM in [0, 1].
+            pred1_01 = decoded_to_01(pred1_img).detach().cpu()
+            pred2_01 = decoded_to_01(pred2_img).detach().cpu()
+            gt1_01 = gt_norm_to_01(gt1).detach().cpu()
+            gt2_01 = gt_norm_to_01(gt2).detach().cpu()
 
             current_batch_size = pred1_01.shape[0]
 
@@ -641,12 +671,7 @@ def evaluate_image_space(
                         )
                     )
 
-            # -------------------------------------------------
             # ArcFace biometric metrics.
-            # Genuine score: prediction vs matched GT.
-            # Impostor score: closest gallery face, excluding the
-            # two ground-truth identities/images of the morph pair.
-            # -------------------------------------------------
             for i in range(current_batch_size):
                 idx_a = int(batch["idx_a"][i])
                 idx_b = int(batch["idx_b"][i])
@@ -662,7 +687,7 @@ def evaluate_image_space(
                 ]
 
                 for pred_img_tensor, gt_idx in output_items:
-                    pred_uint8 = tensor_to_uint8_rgb(pred_img_tensor)
+                    pred_uint8 = decoded_to_uint8_rgb(pred_img_tensor)
 
                     pred_emb = deepface_arcface_embedding(
                         img_rgb_uint8=pred_uint8,
@@ -684,44 +709,32 @@ def evaluate_image_space(
                     closest_impostor = float(all_scores[impostor_mask].max())
                     closest_impostor_scores.append(closest_impostor)
 
-            # -------------------------------------------------
             # Qualitative grid.
-            # Each row:
-            # morph, source 1, source 2, decoded prediction 1,
-            # decoded prediction 2
-            # -------------------------------------------------
             for i in range(current_batch_size):
                 if len(grid_images) >= grid_rows * 5:
                     break
 
                 morph_z = 0.5 * (z1_raw[i : i + 1] + z2_raw[i : i + 1])
-                morph_xt = slerp_tensors(
-                    xt1[i : i + 1],
-                    xt2[i : i + 1],
-                    t=0.5,
-                )
+                morph_xt_i = morph_xt[i : i + 1]
 
                 morph_img = diffae_model.render(
-                    morph_xt,
+                    morph_xt_i,
                     morph_z,
                     T=decode_steps,
                 )[0].detach().cpu()
 
                 row_images = [
-                    tensor_to_01(morph_img),
-                    tensor_to_01(gt1[i].detach().cpu()),
-                    tensor_to_01(gt2[i].detach().cpu()),
-                    tensor_to_01(pred1_img[i].detach().cpu()),
-                    tensor_to_01(pred2_img[i].detach().cpu()),
+                    decoded_to_01(morph_img),
+                    gt_norm_to_01(gt1[i].detach().cpu()),
+                    gt_norm_to_01(gt2[i].detach().cpu()),
+                    decoded_to_01(pred1_img[i].detach().cpu()),
+                    decoded_to_01(pred2_img[i].detach().cpu()),
                 ]
 
                 grid_images.extend(row_images)
 
             total_pairs += current_batch_size
 
-    # -----------------------------------------------------
-    # Aggregate metrics
-    # -----------------------------------------------------
     psnr_scores = np.asarray(psnr_scores, dtype=np.float32)
     ssim_scores = np.asarray(ssim_scores, dtype=np.float32)
     lpips_scores = np.asarray(lpips_scores, dtype=np.float32)
@@ -744,18 +757,26 @@ def evaluate_image_space(
     impostor_mean = float(closest_impostor_scores.mean())
     impostor_std = float(closest_impostor_scores.std())
 
-    # TMR @ 10% FMR:
-    # choose threshold so that 10% of impostor scores are accepted.
-    tmr_threshold = float(np.quantile(closest_impostor_scores, 0.90))
-    tmr_10_fmr = float((genuine_scores >= tmr_threshold).mean() * 100.0)
+    threshold_10, tmr_10 = tmr_at_fmr(
+        genuine_scores=genuine_scores,
+        impostor_scores=closest_impostor_scores,
+        fmr=0.10,
+    )
 
-    # Restoration Accuracy:
-    # fixed threshold, typically 0.4 in diffDeMorph-style reporting.
+    threshold_1, tmr_1 = tmr_at_fmr(
+        genuine_scores=genuine_scores,
+        impostor_scores=closest_impostor_scores,
+        fmr=0.01,
+    )
+
+    threshold_01, tmr_01 = tmr_at_fmr(
+        genuine_scores=genuine_scores,
+        impostor_scores=closest_impostor_scores,
+        fmr=0.001,
+    )
+
     ra = float((genuine_scores >= ra_threshold).mean() * 100.0)
 
-    # -----------------------------------------------------
-    # Save grid
-    # -----------------------------------------------------
     if len(grid_images) != grid_rows * 5:
         raise RuntimeError(
             f"Expected {grid_rows * 5} images for the grid, "
@@ -771,9 +792,6 @@ def evaluate_image_space(
         normalize=False,
     )
 
-    # -----------------------------------------------------
-    # Save report
-    # -----------------------------------------------------
     report = (
         "Image-space evaluation for latent DiffAE de-morphing\n"
         "===================================================\n"
@@ -788,9 +806,9 @@ def evaluate_image_space(
         f"Number of test pairs           : {total_pairs}\n"
         f"Number of evaluated outputs    : {len(genuine_scores)}\n"
         f"DeepFace detector backend      : {deepface_detector_backend}\n"
+        f"Prediction stochastic code     : morph stochastic midpoint, slerp(xT1, xT2, 0.5)\n"
+        f"Decoded image range assumption : DiffAE render output already in [0, 1]\n"
         f"RA threshold                   : {ra_threshold:.3f}\n"
-        f"TMR operating point            : 10% FMR\n"
-        f"TMR similarity threshold       : {tmr_threshold:.6f}\n"
         "\n"
         "[Image quality metrics]\n"
         f"PSNR  : mean = {psnr_mean:.6f} | std = {psnr_std:.6f}\n"
@@ -801,7 +819,9 @@ def evaluate_image_space(
         f"Mean genuine similarity        : {genuine_mean:.6f} | std = {genuine_std:.6f}\n"
         f"Mean closest impostor sim.     : {impostor_mean:.6f} | std = {impostor_std:.6f}\n"
         f"Restoration Accuracy (RA)      : {ra:.4f}%\n"
-        f"True Match Rate @ 10% FMR      : {tmr_10_fmr:.4f}%\n"
+        f"TMR @ 10% FMR                  : {tmr_10:.4f}% | threshold = {threshold_10:.6f}\n"
+        f"TMR @ 1% FMR                   : {tmr_1:.4f}% | threshold = {threshold_1:.6f}\n"
+        f"TMR @ 0.1% FMR                 : {tmr_01:.4f}% | threshold = {threshold_01:.6f}\n"
         "\n"
         "[Qualitative grid]\n"
         "Each row contains:\n"
@@ -820,7 +840,7 @@ def evaluate_image_space(
 
 
 # =========================================================
-# 6. CLI
+# 7. CLI
 # =========================================================
 
 if __name__ == "__main__":

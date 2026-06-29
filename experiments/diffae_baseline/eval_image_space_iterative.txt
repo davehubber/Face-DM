@@ -11,20 +11,22 @@ Decode steps                   : 20
 Number of test pairs           : 1000
 Number of evaluated outputs    : 2000
 DeepFace detector backend      : skip
+Prediction stochastic code     : morph stochastic midpoint, slerp(xT1, xT2, 0.5)
+Decoded image range assumption : DiffAE render output already in [0, 1]
 RA threshold                   : 0.400
-TMR operating point            : 10% FMR
-TMR similarity threshold       : 0.593514
 
 [Image quality metrics]
-PSNR  : mean = 9.719987 | std = 1.697953
-SSIM  : mean = 0.504028 | std = 0.094161
-LPIPS : mean = 0.432569 | std = 0.061378
+PSNR  : mean = 15.402564 | std = 1.920702
+SSIM  : mean = 0.554124 | std = 0.077035
+LPIPS : mean = 0.321937 | std = 0.062154
 
 [Biometric metrics - DeepFace ArcFace cosine similarity]
-Mean genuine similarity        : 0.552335 | std = 0.141643
-Mean closest impostor sim.     : 0.494758 | std = 0.077189
-Restoration Accuracy (RA)      : 85.1500%
-True Match Rate @ 10% FMR      : 41.1000%
+Mean genuine similarity        : 0.516693 | std = 0.142303
+Mean closest impostor sim.     : 0.488312 | std = 0.077745
+Restoration Accuracy (RA)      : 79.2000%
+TMR @ 10% FMR                  : 32.2500% | threshold = 0.585852
+TMR @ 1% FMR                   : 9.3000% | threshold = 0.703461
+TMR @ 0.1% FMR                 : 0.3500% | threshold = 0.830008
 
 [Qualitative grid]
 Each row contains:
