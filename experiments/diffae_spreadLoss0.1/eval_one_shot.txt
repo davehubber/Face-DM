@@ -4,16 +4,7 @@ Run Name: diffae_spreadLoss0.1
 [1. Prediction to Ground-Truth Alignment]
   - Embedding 1 -> L1 Distance: 0.613981 | Cosine Similarity: 0.485127
   - Embedding 2 -> L1 Distance: 0.613981 | Cosine Similarity: 0.488411
-
-[2. Proximity to True Average Mixture (c)]
-  - Predicted 1 to c -> L1 Distance: 0.268424 | Cosine Similarity: 0.662365
-  - Baseline GT 1 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.704848
-  - Predicted 2 to c -> L1 Distance: 0.268424 | Cosine Similarity: 0.666949
-  - Baseline GT 2 to c -> L1 Distance: 0.562880 | Cosine Similarity: 0.704571
-
-[3. Predicted Outputs Inter-Relationship / Spread]
-  - Inter-Predicted (p1 vs p2) -> L1: 0.536848 | Cosine Similarity: -0.082285
-  - Inter-Ground-Truth (z1 vs z2) -> L1: 1.125759 | Cosine Similarity: -0.002203
+  - Combined Average -> L1 Distance: 0.613981 | Cosine Similarity: 0.486769
 
 [4. Success Rate of Reversal (%S)]
   - Embedding 1 -> %S1: 0.00%
