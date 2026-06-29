@@ -1,7 +1,0 @@
-Scanning metrics from: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_train_probs/train_smiling_probabilities.csv
-
-Extremes Located:
-  - Lowest Smiling Score:  0.000087 (0.0087%) -> 54894.png
-  - Highest Smiling Score: 0.999985 (99.9985%) -> 00770.png
-
-[SUCCESS] Side-by-side grid exported to: /nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/smiling_train_probs/smiling_extremes_comparison.png
