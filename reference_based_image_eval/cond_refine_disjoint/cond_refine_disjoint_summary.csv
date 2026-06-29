@@ -1,0 +1,4 @@
+test_name,direction,arcface_threshold,num_samples,accuracy,ASC,ASA,DCI,DAI
+cond_refine_disjoint,A_to_B,0.57000714,1019,71.344453,0.29664904,0.61233801,-0.27335810,0.04233086
+cond_refine_disjoint,B_to_A,0.57000714,1019,94.896960,0.22812013,0.70898813,-0.34188701,0.13898099
+cond_refine_disjoint,combined,0.57000714,2038,83.120704,0.26238456,0.66066313,-0.30762258,0.09065598

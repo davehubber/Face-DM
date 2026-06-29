@@ -1,0 +1,39 @@
+Reference-based image-space evaluation: cond_disjoint
+====================================================
+ArcFace threshold S: 0.57000714
+Metrics follow the Accuracy / DCI / DAI protocol:
+  success = score_accomplice >= S and score_reference < S
+  ASC = mean(score_reference)
+  ASA = mean(score_accomplice)
+  DCI = ASC - S
+  DAI = ASA - S
+Decoder range convention: DiffAE render output is treated as already in [0, 1].
+
+[A_to_B]
+  samples  : 1019
+  Accuracy : 9.715407%
+  ASC      : 0.53310752
+  ASA      : 0.46357363
+  DCI      : -0.03689962
+  DAI      : -0.10643351
+
+[B_to_A]
+  samples  : 1019
+  Accuracy : 32.286555%
+  ASC      : 0.46305114
+  ASA      : 0.53359342
+  DCI      : -0.10695600
+  DAI      : -0.03641373
+
+[combined]
+  samples  : 2038
+  Accuracy : 21.000981%
+  ASC      : 0.49807933
+  ASA      : 0.49858350
+  DCI      : -0.07192781
+  DAI      : -0.07142365
+
+Output files:
+  Per-sample CSV : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_disjoint/cond_disjoint_per_sample.csv
+  Summary CSV    : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_disjoint/cond_disjoint_summary.csv
+  Grid           : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_disjoint/cond_disjoint_grid.png

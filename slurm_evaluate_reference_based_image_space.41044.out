@@ -1,0 +1,150 @@
+Loading DiffAE FFHQ256 autoencoder...
+Model params: 160.69 M
+loading pretrain ... ffhq256_autoenc
+step: 1563562
+Loading DeepFace ArcFace...
+
+================================================================================
+Evaluating test: cond_joint [cond]
+================================================================================
+Calibrating ArcFace threshold for cond_joint at FMR=0.001...
+Threshold for cond_joint: 0.56779375
+
+Reference-based image-space evaluation: cond_joint
+====================================================
+ArcFace threshold S: 0.56779375
+Metrics follow the Accuracy / DCI / DAI protocol:
+  success = score_accomplice >= S and score_reference < S
+  ASC = mean(score_reference)
+  ASA = mean(score_accomplice)
+  DCI = ASC - S
+  DAI = ASA - S
+Decoder range convention: DiffAE render output is treated as already in [0, 1].
+
+[A_to_B]
+  samples  : 1000
+  Accuracy : 18.700001%
+  ASC      : 0.66274732
+  ASA      : 0.35712972
+  DCI      : 0.09495357
+  DAI      : -0.21066403
+
+[B_to_A]
+  samples  : 1000
+  Accuracy : 81.199998%
+  ASC      : 0.34780180
+  ASA      : 0.67268431
+  DCI      : -0.21999195
+  DAI      : 0.10489056
+
+[combined]
+  samples  : 2000
+  Accuracy : 49.950001%
+  ASC      : 0.50527459
+  ASA      : 0.51490700
+  DCI      : -0.06251916
+  DAI      : -0.05288675
+
+Output files:
+  Per-sample CSV : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_joint/cond_joint_per_sample.csv
+  Summary CSV    : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_joint/cond_joint_summary.csv
+  Grid           : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_joint/cond_joint_grid.png
+
+================================================================================
+Evaluating test: cond_disjoint [cond]
+================================================================================
+No eval morph x_T file found in /nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v2. Computing and caching eval_morph_xt.npy...
+Saved computed morph stochastic codes to: /nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v2/eval_morph_xt.npy
+Calibrating ArcFace threshold for cond_disjoint at FMR=0.001...
+Threshold for cond_disjoint: 0.57000714
+
+Reference-based image-space evaluation: cond_disjoint
+====================================================
+ArcFace threshold S: 0.57000714
+Metrics follow the Accuracy / DCI / DAI protocol:
+  success = score_accomplice >= S and score_reference < S
+  ASC = mean(score_reference)
+  ASA = mean(score_accomplice)
+  DCI = ASC - S
+  DAI = ASA - S
+Decoder range convention: DiffAE render output is treated as already in [0, 1].
+
+[A_to_B]
+  samples  : 1019
+  Accuracy : 9.715407%
+  ASC      : 0.53310752
+  ASA      : 0.46357363
+  DCI      : -0.03689962
+  DAI      : -0.10643351
+
+[B_to_A]
+  samples  : 1019
+  Accuracy : 32.286555%
+  ASC      : 0.46305114
+  ASA      : 0.53359342
+  DCI      : -0.10695600
+  DAI      : -0.03641373
+
+[combined]
+  samples  : 2038
+  Accuracy : 21.000981%
+  ASC      : 0.49807933
+  ASA      : 0.49858350
+  DCI      : -0.07192781
+  DAI      : -0.07142365
+
+Output files:
+  Per-sample CSV : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_disjoint/cond_disjoint_per_sample.csv
+  Summary CSV    : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_disjoint/cond_disjoint_summary.csv
+  Grid           : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_disjoint/cond_disjoint_grid.png
+
+================================================================================
+Evaluating test: cond_refine_disjoint [cond_refine]
+================================================================================
+Calibrating ArcFace threshold for cond_refine_disjoint at FMR=0.001...
+Threshold for cond_refine_disjoint: 0.57000714
+
+Reference-based image-space evaluation: cond_refine_disjoint
+====================================================
+ArcFace threshold S: 0.57000714
+Metrics follow the Accuracy / DCI / DAI protocol:
+  success = score_accomplice >= S and score_reference < S
+  ASC = mean(score_reference)
+  ASA = mean(score_accomplice)
+  DCI = ASC - S
+  DAI = ASA - S
+Decoder range convention: DiffAE render output is treated as already in [0, 1].
+
+[A_to_B]
+  samples  : 1019
+  Accuracy : 71.344453%
+  ASC      : 0.29664904
+  ASA      : 0.61233801
+  DCI      : -0.27335810
+  DAI      : 0.04233086
+
+[B_to_A]
+  samples  : 1019
+  Accuracy : 94.896960%
+  ASC      : 0.22812013
+  ASA      : 0.70898813
+  DCI      : -0.34188701
+  DAI      : 0.13898099
+
+[combined]
+  samples  : 2038
+  Accuracy : 83.120704%
+  ASC      : 0.26238456
+  ASA      : 0.66066313
+  DCI      : -0.30762258
+  DAI      : 0.09065598
+
+Output files:
+  Per-sample CSV : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_refine_disjoint/cond_refine_disjoint_per_sample.csv
+  Summary CSV    : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_refine_disjoint/cond_refine_disjoint_summary.csv
+  Grid           : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_refine_disjoint/cond_refine_disjoint_grid.png
+
+================================================================================
+Evaluating test: baseline_informed [baseline_informed]
+================================================================================
+Calibrating ArcFace threshold for baseline_informed at FMR=0.001...

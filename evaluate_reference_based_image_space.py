@@ -1317,10 +1317,10 @@ def write_global_outputs(output_root: Path, all_rows: List[dict], all_summary_ro
 
 DEFAULT_TESTS = [
     {
-        "name": "cond_non_disjoint",
+        "name": "cond_joint",
         "kind": "cond",
         "data_dir": "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v1",
-        "run_name": "diffae_conditional_non_disjoint",
+        "run_name": "diffae_conditional_jointID",
         "num_timesteps": 300,
         "mode": "iterative",
     },
