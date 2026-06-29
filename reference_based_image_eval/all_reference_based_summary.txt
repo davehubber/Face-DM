@@ -1,0 +1,42 @@
+Global reference-based image-space evaluation summary
+====================================================
+
+[cond_joint]
+  samples   : 2000
+  threshold : 0.56779375
+  Accuracy  : 49.950001%
+  ASC       : 0.50527459
+  ASA       : 0.51490700
+  DCI       : -0.06251916
+  DAI       : -0.05288675
+
+[cond_disjoint]
+  samples   : 2038
+  threshold : 0.57000714
+  Accuracy  : 21.000981%
+  ASC       : 0.49807933
+  ASA       : 0.49858350
+  DCI       : -0.07192781
+  DAI       : -0.07142365
+
+[cond_refine_disjoint]
+  samples   : 2038
+  threshold : 0.57000714
+  Accuracy  : 83.120704%
+  ASC       : 0.26238456
+  ASA       : 0.66066313
+  DCI       : -0.30762258
+  DAI       : 0.09065598
+
+[baseline_informed]
+  samples   : 2000
+  threshold : 0.56306566
+  Accuracy  : 99.800003%
+  ASC       : 0.16486804
+  ASA       : 0.85804492
+  DCI       : -0.39819762
+  DAI       : 0.29497926
+
+Output files:
+  Per-sample CSV : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/all_reference_based_per_sample.csv
+  Summary CSV    : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/all_reference_based_summary.csv

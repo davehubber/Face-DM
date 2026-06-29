@@ -1,0 +1,39 @@
+Reference-based image-space evaluation: baseline_informed
+====================================================
+ArcFace threshold S: 0.56306566
+Metrics follow the Accuracy / DCI / DAI protocol:
+  success = score_accomplice >= S and score_reference < S
+  ASC = mean(score_reference)
+  ASA = mean(score_accomplice)
+  DCI = ASC - S
+  DAI = ASA - S
+Decoder range convention: DiffAE render output is treated as already in [0, 1].
+
+[A_to_B]
+  samples  : 1000
+  Accuracy : 99.800003%
+  ASC      : 0.16464041
+  ASA      : 0.85905564
+  DCI      : -0.39842525
+  DAI      : 0.29598997
+
+[B_to_A]
+  samples  : 1000
+  Accuracy : 99.800003%
+  ASC      : 0.16509567
+  ASA      : 0.85703421
+  DCI      : -0.39796999
+  DAI      : 0.29396854
+
+[combined]
+  samples  : 2000
+  Accuracy : 99.800003%
+  ASC      : 0.16486804
+  ASA      : 0.85804492
+  DCI      : -0.39819762
+  DAI      : 0.29497926
+
+Output files:
+  Per-sample CSV : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/baseline_informed/baseline_informed_per_sample.csv
+  Summary CSV    : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/baseline_informed/baseline_informed_summary.csv
+  Grid           : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/baseline_informed/baseline_informed_grid.png
