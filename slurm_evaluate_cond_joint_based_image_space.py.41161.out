@@ -1,0 +1,67 @@
+Loading DiffAE FFHQ256 autoencoder...
+Model params: 160.69 M
+loading pretrain ... ffhq256_autoenc
+step: 1563562
+Loading DeepFace ArcFace...
+Loading non-disjoint morph evaluation data...
+Calibrating ArcFace threshold for cond_non_disjoint at FMR=0.001...
+Threshold for cond_non_disjoint: 0.56779369
+Loading conditional model checkpoint...
+
+Reference-based image-space evaluation: cond_non_disjoint
+====================================================
+Mode: one_shot
+ArcFace threshold S: 0.56779369
+Metrics follow the Accuracy / DCI / DAI protocol:
+  success = score_accomplice >= S and score_reference < S
+  ASC = mean(score_reference)
+  ASA = mean(score_accomplice)
+  DCI = ASC - S
+  DAI = ASA - S
+Decoder range convention: DiffAE render output is treated as already in [0, 1].
+Prediction mode: one-shot target prediction at t = T.
+
+[A_to_B]
+  samples  : 1000
+  Accuracy : 82.999998%
+  ASC      : 0.22542846
+  ASA      : 0.65389186
+  DCI      : -0.34236523
+  DAI      : 0.08609817
+
+[B_to_A]
+  samples  : 1000
+  Accuracy : 96.600002%
+  ASC      : 0.31789950
+  ASA      : 0.76377195
+  DCI      : -0.24989420
+  DAI      : 0.19597826
+
+[combined]
+  samples  : 2000
+  Accuracy : 89.800000%
+  ASC      : 0.27166399
+  ASA      : 0.70883191
+  DCI      : -0.29612970
+  DAI      : 0.14103822
+
+Output files:
+  Per-sample CSV : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_non_disjoint/cond_non_disjoint_per_sample.csv
+  Summary CSV    : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_non_disjoint/cond_non_disjoint_summary.csv
+  Grid           : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/cond_non_disjoint/cond_non_disjoint_grid.png
+
+Global reference-based image-space evaluation summary
+====================================================
+
+[cond_non_disjoint]
+  samples   : 2000
+  threshold : 0.56779369
+  Accuracy  : 89.800000%
+  ASC       : 0.27166399
+  ASA       : 0.70883191
+  DCI       : -0.29612970
+  DAI       : 0.14103822
+
+Output files:
+  Per-sample CSV : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/all_reference_based_per_sample.csv
+  Summary CSV    : /nas-ctm01/homes/dacordeiro/Face-DM/reference_based_image_eval/all_reference_based_summary.csv

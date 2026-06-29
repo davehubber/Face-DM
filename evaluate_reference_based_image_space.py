@@ -1,13 +1,12 @@
 import argparse
 import csv
-import json
 import math
 import os
 import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import torch
@@ -21,7 +20,7 @@ from tqdm import tqdm
 
 
 # =========================================================
-# 1. Shared model blocks
+# 1. Model blocks
 # =========================================================
 
 class SinusoidalPositionEmbeddings(nn.Module):
@@ -51,10 +50,6 @@ class AdaLNBlock(nn.Module):
         scale, shift = self.cond_proj(cond).chunk(2, dim=-1)
         return self.silu(self.norm(h) * (1 + scale) + shift)
 
-
-# =========================================================
-# 2. Regular conditional model from train_latent_diffae_cond.py
-# =========================================================
 
 class ConditionalColdDemorphNet(nn.Module):
     def __init__(self, x_dim=512, hidden_dim=2048, num_layers=10, time_emb_dim=512):
@@ -89,182 +84,8 @@ class ConditionalColdDemorphNet(nn.Module):
         return self.final_linear(h)
 
 
-class ConditionalColdDemorph(nn.Module):
-    def __init__(self, model: nn.Module, num_timesteps=300):
-        super().__init__()
-        self.model = model
-        self.num_timesteps = num_timesteps
-
-    def degrade(self, M: torch.Tensor, target: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        gamma = (t / self.num_timesteps).view(-1, 1).float()
-        return gamma * M + (1 - gamma) * target
-
-    def timestep_condition(self, M: torch.Tensor, condition: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        use_external_condition = (t == self.num_timesteps).view(-1, 1)
-        return torch.where(use_external_condition, condition, M)
-
-    @torch.no_grad()
-    def sample_loop(self, M: torch.Tensor, condition: torch.Tensor) -> torch.Tensor:
-        device = M.device
-        b = M.shape[0]
-        timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
-        x_t = M.clone()
-
-        for t in tqdm(timesteps, desc="Conditional sampling", leave=False):
-            t_batch = torch.full((b,), t, device=device, dtype=torch.long)
-            step_condition = self.timestep_condition(M, condition, t_batch)
-            pred_target = self.model(x_t, t_batch, step_condition)
-
-            t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
-            deg_t = self.degrade(M, pred_target, t_batch)
-            deg_t_prev = self.degrade(M, pred_target, t_prev_batch)
-            x_t = x_t - deg_t + deg_t_prev
-
-        return x_t
-
-
 # =========================================================
-# 3. Conditional refinement model from train_latent_diffae_cond_refine.py
-# =========================================================
-
-class RefineColdDemorphNet(nn.Module):
-    def __init__(self, x_dim=512, hidden_dim=2048, num_layers=10, time_emb_dim=512):
-        super().__init__()
-        self.time_mlp = nn.Sequential(
-            SinusoidalPositionEmbeddings(time_emb_dim),
-            nn.Linear(time_emb_dim, time_emb_dim * 2),
-            nn.SiLU(),
-            nn.Linear(time_emb_dim * 2, time_emb_dim),
-        )
-
-        self.blocks = nn.ModuleList()
-        self.blocks.append(AdaLNBlock(x_dim, hidden_dim, time_emb_dim))
-        for _ in range(num_layers - 1):
-            self.blocks.append(AdaLNBlock(hidden_dim + x_dim, hidden_dim, time_emb_dim))
-
-        self.final_linear = nn.Linear(hidden_dim, x_dim)
-
-    def forward(self, x_t: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        t_emb = self.time_mlp(t)
-        h = x_t
-
-        for i, block in enumerate(self.blocks):
-            if i == 0:
-                h = block(h, t_emb)
-            else:
-                h = block(torch.cat([h, x_t], dim=-1), t_emb)
-
-        return self.final_linear(h)
-
-
-class MathBaselineColdDemorph(nn.Module):
-    def __init__(self, model: nn.Module, num_timesteps=10):
-        super().__init__()
-        self.model = model
-        self.num_timesteps = num_timesteps
-
-    @torch.no_grad()
-    def sample_loop(self, M: torch.Tensor, condition: torch.Tensor) -> torch.Tensor:
-        device = M.device
-        b = M.shape[0]
-        timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
-
-        z_coarse = (2.0 * M) - condition
-        x_t = z_coarse.clone()
-
-        for t in tqdm(timesteps, desc="Refinement sampling", leave=False):
-            t_batch = torch.full((b,), t, device=device, dtype=torch.long)
-            pred_target = self.model(x_t, t_batch)
-
-            gamma_t = (t_batch / self.num_timesteps).view(-1, 1).float()
-            gamma_prev = ((t_batch - 1) / self.num_timesteps).view(-1, 1).float()
-
-            deg_t = gamma_t * z_coarse + (1 - gamma_t) * pred_target
-            deg_t_prev = gamma_prev * z_coarse + (1 - gamma_prev) * pred_target
-            x_t = x_t - deg_t + deg_t_prev
-
-        return x_t
-
-
-# =========================================================
-# 4. Reference-free baseline model from train_latent_diffae.py
-# =========================================================
-
-class BaselineColdDemorphNet(nn.Module):
-    def __init__(self, x_dim=512, hidden_dim=2048, num_layers=10, time_emb_dim=512):
-        super().__init__()
-        self.time_mlp = nn.Sequential(
-            SinusoidalPositionEmbeddings(time_emb_dim),
-            nn.Linear(time_emb_dim, time_emb_dim * 2),
-            nn.SiLU(),
-            nn.Linear(time_emb_dim * 2, time_emb_dim),
-        )
-
-        self.blocks = nn.ModuleList()
-        self.blocks.append(AdaLNBlock(x_dim, hidden_dim, time_emb_dim))
-        for _ in range(num_layers - 1):
-            self.blocks.append(AdaLNBlock(hidden_dim + x_dim, hidden_dim, time_emb_dim))
-
-        self.final_linear = nn.Linear(hidden_dim, x_dim * 2)
-
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        t_emb = self.time_mlp(t)
-        h = x
-
-        for i, block in enumerate(self.blocks):
-            if i == 0:
-                h = block(h, t_emb)
-            else:
-                h = block(torch.cat([h, x], dim=-1), t_emb)
-
-        return self.final_linear(h)
-
-
-class BaselineColdDemorph(nn.Module):
-    def __init__(self, model: nn.Module, num_timesteps=300):
-        super().__init__()
-        self.model = model
-        self.num_timesteps = num_timesteps
-
-    def degrade(self, z1: torch.Tensor, z2: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        gamma = (t / self.num_timesteps).view(-1, 1).float()
-        w1 = torch.sqrt(1.0 - 0.5 * gamma)
-        w2 = torch.sqrt(0.5 * gamma)
-        return w1 * z1 + w2 * z2
-
-    @torch.no_grad()
-    def informed_sample_target(self, c: torch.Tensor, z_known: torch.Tensor) -> torch.Tensor:
-        """
-        Informed evaluation used for the reference-free baseline.
-        z_known is only used during sampling to re-degrade the target prediction.
-        The returned vector is the predicted unknown/target embedding.
-        """
-        device = c.device
-        b = c.shape[0]
-        timesteps = torch.arange(self.num_timesteps, 0, -1, device=device).long()
-        x_t = c.clone()
-
-        for t in tqdm(timesteps, desc="Informed baseline sampling", leave=False):
-            t_batch = torch.full((b,), t, device=device, dtype=torch.long)
-            pred_raw = self.model(x_t, t_batch)
-            pred_raw_1, pred_raw_2 = pred_raw.chunk(2, dim=-1)
-
-            dist_1 = F.l1_loss(pred_raw_1, z_known, reduction="none").mean(dim=-1)
-            dist_2 = F.l1_loss(pred_raw_2, z_known, reduction="none").mean(dim=-1)
-
-            target_mask = (dist_1 > dist_2).unsqueeze(-1)
-            pred_target = torch.where(target_mask, pred_raw_1, pred_raw_2)
-
-            t_prev_batch = torch.full((b,), t - 1, device=device, dtype=torch.long)
-            deg_t = self.degrade(pred_target, z_known, t_batch)
-            deg_t_prev = self.degrade(pred_target, z_known, t_prev_batch)
-            x_t = x_t - deg_t + deg_t_prev
-
-        return x_t
-
-
-# =========================================================
-# 5. DiffAE loading and image helpers
+# 2. DiffAE loading and image helpers
 # =========================================================
 
 class PathImageDataset(Dataset):
@@ -332,9 +153,9 @@ def load_diffae_ffhq256_autoencoder(diffae_root: Path, checkpoint_path: Path, de
 
 
 # Range convention:
-# - images loaded from disk are normalized to [-1, 1]
-# - DiffAE render() is assumed to already return [0, 1]
-#   so decoded outputs are NOT converted using (x + 1) / 2.
+# - ground-truth images loaded from disk are normalized to [-1, 1]
+# - DiffAE render() already returns images in [0, 1]
+#   so decoded outputs MUST NOT be remapped via (x + 1) / 2
 
 def gt_norm_to_01(x: torch.Tensor) -> torch.Tensor:
     return x.clamp(-1, 1).add(1.0).div(2.0)
@@ -363,32 +184,8 @@ def decoded_tensor_to_uint8_rgb(x: torch.Tensor) -> np.ndarray:
     return (arr * 255.0).round().clip(0, 255).astype(np.uint8)
 
 
-def slerp_tensors(v0: torch.Tensor, v1: torch.Tensor, t: float) -> torch.Tensor:
-    original_shape = v0.shape
-    v0_flat = v0.reshape(v0.shape[0], -1)
-    v1_flat = v1.reshape(v1.shape[0], -1)
-
-    v0_norm = F.normalize(v0_flat, p=2, dim=1)
-    v1_norm = F.normalize(v1_flat, p=2, dim=1)
-
-    dot = (v0_norm * v1_norm).sum(dim=1, keepdim=True).clamp(-1.0, 1.0)
-    omega = torch.acos(dot)
-    sin_omega = torch.sin(omega)
-    use_lerp = sin_omega.abs() < 1e-6
-    safe_sin_omega = torch.where(use_lerp, torch.ones_like(sin_omega), sin_omega)
-
-    out_flat = (
-        torch.sin((1.0 - t) * omega) / safe_sin_omega * v0_flat
-        + torch.sin(t * omega) / safe_sin_omega * v1_flat
-    )
-    lerp_flat = (1.0 - t) * v0_flat + t * v1_flat
-    out_flat = torch.where(use_lerp, lerp_flat, out_flat)
-
-    return out_flat.reshape(original_shape)
-
-
 # =========================================================
-# 6. File and metadata helpers
+# 3. File and metadata helpers
 # =========================================================
 
 def resolve_existing_path(root: Path, *names: str) -> Path:
@@ -436,77 +233,40 @@ class MorphEvalData:
     std: np.ndarray
 
 
-def ensure_eval_morph_xt(
-    root: Path,
-    diffae_model,
-    device: torch.device,
-    batch_size: int,
-    num_workers: int,
-    image_size: int = 256,
-) -> np.ndarray:
+def ensure_eval_morph_xt_v1_only(root: Path) -> np.ndarray:
+    """
+    Non-disjoint v1 already has encoded morph stochastic codes.
+    We only load them here.
+    """
     xt_path = optional_existing_path(root, "eval_morph_xt.npy", "eval_morph_xt_1000.npy")
-    if xt_path is not None:
-        return np.load(xt_path).astype(np.float32)
-
-    metadata_path = resolve_existing_path(root, "eval_morph_metadata.csv", "eval_morph_metadata_1000.csv")
-    rows = read_csv_rows(metadata_path)
-
-    print(f"No eval morph x_T file found in {root}. Computing and caching eval_morph_xt.npy...")
-
-    rows_sorted = sorted(rows, key=lambda r: int(r["embedding_index"]))
-    image_paths = [row["image_path"] for row in rows_sorted]
-    max_idx = max(int(row["embedding_index"]) for row in rows_sorted)
-
-    dataset = PathImageDataset(image_paths, image_size=image_size)
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=(device.type == "cuda"),
-    )
-
-    xt_array = None
-
-    with torch.no_grad():
-        for batch in tqdm(loader, desc="Encoding eval morph x_T"):
-            imgs = batch["img"].to(device, non_blocking=True)
-            z_sem = diffae_model.encode(imgs)
-            x_t = diffae_model.encode_stochastic(imgs, z_sem, T=250)
-            x_t_np = x_t.detach().float().cpu().numpy()
-
-            if xt_array is None:
-                xt_array = np.zeros((max_idx + 1,) + x_t_np.shape[1:], dtype=np.float32)
-
-            for local_i, dataset_pos in enumerate(batch["index"].tolist()):
-                emb_idx = int(rows_sorted[dataset_pos]["embedding_index"])
-                xt_array[emb_idx] = x_t_np[local_i]
-
-    out_path = root / "eval_morph_xt.npy"
-    np.save(out_path, xt_array)
-    print(f"Saved computed morph stochastic codes to: {out_path}")
-    return xt_array.astype(np.float32)
+    if xt_path is None:
+        raise FileNotFoundError(
+            f"No stored eval morph stochastic codes found in {root}. "
+            f"For the non-disjoint v1 setup, eval_morph_xt_1000.npy should already exist."
+        )
+    return np.load(xt_path).astype(np.float32)
 
 
-def load_morph_eval_data(
-    data_dir: str,
-    diffae_model,
-    device: torch.device,
-    batch_size: int,
-    num_workers: int,
-) -> MorphEvalData:
+def load_morph_eval_data_v1(data_dir: str) -> MorphEvalData:
     root = Path(data_dir).resolve()
 
     train_bf_raw = np.load(root / "train_bonafide_zsem.npy").astype(np.float32)
     eval_bf_raw = np.load(root / "eval_bonafide_zsem.npy").astype(np.float32)
     eval_morph_raw = np.load(resolve_existing_path(root, "eval_morph_zsem.npy", "eval_morph_zsem_1000.npy")).astype(np.float32)
-    eval_morph_xt = ensure_eval_morph_xt(root, diffae_model, device, batch_size, num_workers)
+    eval_morph_xt = ensure_eval_morph_xt_v1_only(root)
 
     mean = train_bf_raw.mean(axis=0, keepdims=True).astype(np.float32)
     std = (train_bf_raw.std(axis=0, keepdims=True) + 1e-8).astype(np.float32)
 
     morph_metadata_path = resolve_existing_path(root, "eval_morph_metadata.csv", "eval_morph_metadata_1000.csv")
     morph_rows = read_csv_rows(morph_metadata_path)
+
+    # In v1, eval_bonafide is a symlink to train_bonafide.
+    bf_meta_path = root / "train_bonafide_metadata.csv"
+    if not bf_meta_path.exists():
+        bf_meta_path = root / "eval_bonafide_metadata.csv"
+
+    bf_meta_by_idx = metadata_by_embedding_index(bf_meta_path)
 
     records = []
     for row in morph_rows:
@@ -519,12 +279,6 @@ def load_morph_eval_data(
         if idx_a < 0 or idx_b < 0:
             continue
 
-        bf_meta_path = root / "train_bonafide_metadata.csv" if col_a.endswith("train_bf") else root / "eval_bonafide_metadata.csv"
-        if not bf_meta_path.exists():
-            bf_meta_path = root / "train_bonafide_metadata.csv"
-
-        # The metadata source can differ by record only in theory; in practice it is constant.
-        bf_meta_by_idx = metadata_by_embedding_index(bf_meta_path)
         rec = {
             "pair_id": idx_m,
             "morph_idx": idx_m,
@@ -554,54 +308,8 @@ def load_morph_eval_data(
     )
 
 
-@dataclass
-class BaselineEvalData:
-    root: Path
-    raw_pairs: np.ndarray
-    xt_pairs: np.ndarray
-    records: List[dict]
-    mean: np.ndarray
-    std: np.ndarray
-
-
-def load_baseline_eval_data(diffae_base_path: str) -> BaselineEvalData:
-    base_path = Path(diffae_base_path).resolve()
-    root = base_path.parent
-    stem = base_path.stem.replace("_train", "").replace("_test_pairs", "")
-
-    raw_pairs = np.load(root / f"{stem}_test_pairs.npy").astype(np.float32)
-    xt_pairs = np.load(root / "ffhq256_diffae_xt_test_pairs.npy").astype(np.float32)
-    mean = np.load(root / f"{stem}_train_mean.npy").astype(np.float32)[None, :]
-    std = np.load(root / f"{stem}_train_std.npy").astype(np.float32)[None, :]
-    std = np.where(std == 0, 1.0, std).astype(np.float32)
-
-    metadata_path = root / f"{stem}_test_pairs_metadata.csv"
-    rows = read_csv_rows(metadata_path)
-
-    records = []
-    for row in rows:
-        records.append({
-            "pair_id": int(row["pair_index"]),
-            "source_a_idx": int(row["embedding_index_A"]),
-            "source_b_idx": int(row["embedding_index_B"]),
-            "source_a_path": row["image_path_A"],
-            "source_b_path": row["image_path_B"],
-            "source_a_filename": row.get("filename_A", ""),
-            "source_b_filename": row.get("filename_B", ""),
-        })
-
-    return BaselineEvalData(
-        root=root,
-        raw_pairs=raw_pairs,
-        xt_pairs=xt_pairs,
-        records=records,
-        mean=mean,
-        std=std,
-    )
-
-
 # =========================================================
-# 7. DeepFace ArcFace and metric helpers
+# 4. DeepFace ArcFace and metric helpers
 # =========================================================
 
 def load_deepface():
@@ -660,7 +368,10 @@ def calibrate_arcface_threshold(
     if len(unique_paths) < 2:
         raise ValueError("Need at least two source images to calibrate an impostor threshold.")
 
-    embeddings = np.stack([arcface_cache.source_embedding(p) for p in tqdm(unique_paths, desc="ArcFace source embeddings")], axis=0)
+    embeddings = np.stack(
+        [arcface_cache.source_embedding(p) for p in tqdm(unique_paths, desc="ArcFace source embeddings")],
+        axis=0,
+    )
     n = len(embeddings)
     total_pairs = n * (n - 1) // 2
 
@@ -728,7 +439,7 @@ def summarize_bucket(bucket: MetricsBucket, threshold: float) -> dict:
 
 
 # =========================================================
-# 8. Shared image-space evaluation engine
+# 5. Shared image-space evaluation engine
 # =========================================================
 
 class ImageSpaceEvaluator:
@@ -737,7 +448,6 @@ class ImageSpaceEvaluator:
         diffae_model,
         arcface_cache: ArcFaceCache,
         device: torch.device,
-        output_dir: Path,
         decode_steps: int,
         grid_rows: int,
         threshold: float,
@@ -745,7 +455,6 @@ class ImageSpaceEvaluator:
         self.diffae_model = diffae_model
         self.arcface_cache = arcface_cache
         self.device = device
-        self.output_dir = output_dir
         self.decode_steps = decode_steps
         self.grid_rows = grid_rows
         self.threshold = threshold
@@ -758,13 +467,12 @@ class ImageSpaceEvaluator:
         pred_z_raw: torch.Tensor,
         morph_xt: torch.Tensor,
         pair_ids: List[int],
-        morph_paths: List[Optional[str]],
+        morph_paths: List[str],
         reference_paths: List[str],
         target_paths: List[str],
         rows_out: List[dict],
         buckets: Dict[str, MetricsBucket],
         grid_images: List[torch.Tensor],
-        morph_grid_images: Optional[torch.Tensor] = None,
     ):
         decoded = self.diffae_model.render(morph_xt, pred_z_raw, T=self.decode_steps)
         decoded = decoded_to_01(decoded)
@@ -786,7 +494,7 @@ class ImageSpaceEvaluator:
                 "test_name": test_name,
                 "direction": direction,
                 "pair_id": pair_ids[i],
-                "morph_path": morph_paths[i] if morph_paths[i] is not None else "",
+                "morph_path": morph_paths[i],
                 "reference_path": reference_paths[i],
                 "target_path": target_paths[i],
                 "score_reference": f"{score_ref:.8f}",
@@ -798,19 +506,12 @@ class ImageSpaceEvaluator:
             buckets["combined"].add(score_ref, score_acc, success)
 
             if len(grid_images) < self.grid_rows * 4:
-                if morph_grid_images is not None:
-                    morph_img_01 = decoded_to_01(morph_grid_images[i].detach().cpu())
-                elif morph_paths[i] is not None:
-                    morph_img = gt_path_to_tensor(morph_paths[i], self.device, self.transform)
-                    morph_img_01 = gt_norm_to_01(morph_img.detach().cpu())
-                else:
-                    morph_img_01 = torch.zeros_like(decoded_i.detach().cpu())
-
+                morph_img = gt_path_to_tensor(morph_paths[i], self.device, self.transform)
                 ref_img = gt_path_to_tensor(reference_paths[i], self.device, self.transform)
                 tgt_img = gt_path_to_tensor(target_paths[i], self.device, self.transform)
 
                 grid_images.extend([
-                    morph_img_01,
+                    gt_norm_to_01(morph_img.detach().cpu()),
                     gt_norm_to_01(ref_img.detach().cpu()),
                     gt_norm_to_01(tgt_img.detach().cpu()),
                     decoded_i.detach().cpu(),
@@ -818,350 +519,7 @@ class ImageSpaceEvaluator:
 
 
 # =========================================================
-# 9. Test evaluators
-# =========================================================
-
-def evaluate_conditional_test(
-    test_cfg: dict,
-    shared,
-) -> Tuple[List[dict], List[dict]]:
-    device = shared["device"]
-    output_root = shared["output_root"]
-    experiments_root = Path(shared["experiments_root"]).resolve()
-    batch_size = shared["batch_size"]
-    num_workers = shared["num_workers"]
-    mode = test_cfg.get("mode", shared["mode"])
-    num_timesteps = int(test_cfg.get("num_timesteps", 300))
-    test_name = test_cfg["name"]
-
-    data = load_morph_eval_data(test_cfg["data_dir"], shared["diffae_model"], device, batch_size, num_workers)
-
-    source_paths = []
-    for rec in data.records:
-        source_paths.extend([rec["source_a_path"], rec["source_b_path"]])
-
-    threshold = shared["threshold_resolver"](test_name, source_paths)
-
-    exp_dir = experiments_root / test_cfg["run_name"]
-    ckpt_path = exp_dir / "checkpoints" / test_cfg.get("checkpoint", "best.pt")
-    if not ckpt_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found for {test_name}: {ckpt_path}")
-
-    net = ConditionalColdDemorphNet().to(device)
-    net.load_state_dict(load_checkpoint_state_dict(ckpt_path))
-    net.eval()
-    diffusion = ConditionalColdDemorph(net, num_timesteps=num_timesteps).to(device)
-
-    test_dir = output_root / test_name
-    test_dir.mkdir(parents=True, exist_ok=True)
-    evaluator = ImageSpaceEvaluator(
-        diffae_model=shared["diffae_model"],
-        arcface_cache=shared["arcface_cache"],
-        device=device,
-        output_dir=test_dir,
-        decode_steps=shared["decode_steps"],
-        grid_rows=shared["grid_rows"],
-        threshold=threshold,
-    )
-
-    mean_t = torch.from_numpy(data.mean).to(device).float()
-    std_t = torch.from_numpy(data.std).to(device).float()
-
-    eval_bf_norm = (data.eval_bf_raw - data.mean) / data.std
-    eval_morph_norm = (data.eval_morph_raw - data.mean) / data.std
-
-    rows_out: List[dict] = []
-    buckets = {"A_to_B": empty_bucket(), "B_to_A": empty_bucket(), "combined": empty_bucket()}
-    grid_images: List[torch.Tensor] = []
-
-    with torch.no_grad():
-        for start in tqdm(range(0, len(data.records), batch_size), desc=f"{test_name} predictions"):
-            batch_records = data.records[start:start + batch_size]
-            morph_indices = [r["morph_idx"] for r in batch_records]
-            a_indices = [r["source_a_idx"] for r in batch_records]
-            b_indices = [r["source_b_idx"] for r in batch_records]
-
-            b_M = torch.tensor(eval_morph_norm[morph_indices], device=device).float()
-            b_A = torch.tensor(eval_bf_norm[a_indices], device=device).float()
-            b_B = torch.tensor(eval_bf_norm[b_indices], device=device).float()
-            b_xt = torch.tensor(data.eval_morph_xt[morph_indices], device=device).float()
-
-            if mode == "iterative":
-                pred_B_norm = diffusion.sample_loop(b_M, b_A)
-                pred_A_norm = diffusion.sample_loop(b_M, b_B)
-            elif mode == "one_shot":
-                t_max = torch.full((b_M.shape[0],), num_timesteps, device=device, dtype=torch.long)
-                pred_B_norm = net(b_M, t_max, b_A)
-                pred_A_norm = net(b_M, t_max, b_B)
-            else:
-                raise ValueError("mode must be 'iterative' or 'one_shot'.")
-
-            pred_B_raw = pred_B_norm * std_t + mean_t
-            pred_A_raw = pred_A_norm * std_t + mean_t
-
-            pair_ids = [r["pair_id"] for r in batch_records]
-            morph_paths = [r["morph_path"] for r in batch_records]
-
-            evaluator.evaluate_decoded_batch(
-                test_name=test_name,
-                direction="A_to_B",
-                pred_z_raw=pred_B_raw,
-                morph_xt=b_xt,
-                pair_ids=pair_ids,
-                morph_paths=morph_paths,
-                reference_paths=[r["source_a_path"] for r in batch_records],
-                target_paths=[r["source_b_path"] for r in batch_records],
-                rows_out=rows_out,
-                buckets=buckets,
-                grid_images=grid_images,
-            )
-
-            evaluator.evaluate_decoded_batch(
-                test_name=test_name,
-                direction="B_to_A",
-                pred_z_raw=pred_A_raw,
-                morph_xt=b_xt,
-                pair_ids=pair_ids,
-                morph_paths=morph_paths,
-                reference_paths=[r["source_b_path"] for r in batch_records],
-                target_paths=[r["source_a_path"] for r in batch_records],
-                rows_out=rows_out,
-                buckets=buckets,
-                grid_images=grid_images,
-            )
-
-    summary_rows = write_outputs(test_name, test_dir, rows_out, buckets, threshold, grid_images)
-    return rows_out, summary_rows
-
-
-def evaluate_refine_test(test_cfg: dict, shared) -> Tuple[List[dict], List[dict]]:
-    device = shared["device"]
-    output_root = shared["output_root"]
-    experiments_root = Path(shared["experiments_root"]).resolve()
-    batch_size = shared["batch_size"]
-    num_workers = shared["num_workers"]
-    mode = test_cfg.get("mode", shared["mode"])
-    num_timesteps = int(test_cfg.get("num_timesteps", 10))
-    test_name = test_cfg["name"]
-
-    data = load_morph_eval_data(test_cfg["data_dir"], shared["diffae_model"], device, batch_size, num_workers)
-
-    source_paths = []
-    for rec in data.records:
-        source_paths.extend([rec["source_a_path"], rec["source_b_path"]])
-
-    threshold = shared["threshold_resolver"](test_name, source_paths)
-
-    exp_dir = experiments_root / test_cfg["run_name"]
-    ckpt_path = exp_dir / "checkpoints" / test_cfg.get("checkpoint", "best.pt")
-    if not ckpt_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found for {test_name}: {ckpt_path}")
-
-    net = RefineColdDemorphNet(num_layers=10).to(device)
-    net.load_state_dict(load_checkpoint_state_dict(ckpt_path))
-    net.eval()
-    diffusion = MathBaselineColdDemorph(net, num_timesteps=num_timesteps).to(device)
-
-    test_dir = output_root / test_name
-    test_dir.mkdir(parents=True, exist_ok=True)
-    evaluator = ImageSpaceEvaluator(
-        diffae_model=shared["diffae_model"],
-        arcface_cache=shared["arcface_cache"],
-        device=device,
-        output_dir=test_dir,
-        decode_steps=shared["decode_steps"],
-        grid_rows=shared["grid_rows"],
-        threshold=threshold,
-    )
-
-    mean_t = torch.from_numpy(data.mean).to(device).float()
-    std_t = torch.from_numpy(data.std).to(device).float()
-
-    eval_bf_norm = (data.eval_bf_raw - data.mean) / data.std
-    eval_morph_norm = (data.eval_morph_raw - data.mean) / data.std
-
-    rows_out: List[dict] = []
-    buckets = {"A_to_B": empty_bucket(), "B_to_A": empty_bucket(), "combined": empty_bucket()}
-    grid_images: List[torch.Tensor] = []
-
-    with torch.no_grad():
-        for start in tqdm(range(0, len(data.records), batch_size), desc=f"{test_name} predictions"):
-            batch_records = data.records[start:start + batch_size]
-            morph_indices = [r["morph_idx"] for r in batch_records]
-            a_indices = [r["source_a_idx"] for r in batch_records]
-            b_indices = [r["source_b_idx"] for r in batch_records]
-
-            b_M = torch.tensor(eval_morph_norm[morph_indices], device=device).float()
-            b_A = torch.tensor(eval_bf_norm[a_indices], device=device).float()
-            b_B = torch.tensor(eval_bf_norm[b_indices], device=device).float()
-            b_xt = torch.tensor(data.eval_morph_xt[morph_indices], device=device).float()
-
-            if mode == "iterative":
-                pred_B_norm = diffusion.sample_loop(b_M, b_A)
-                pred_A_norm = diffusion.sample_loop(b_M, b_B)
-            elif mode == "one_shot":
-                t_max = torch.full((b_M.shape[0],), num_timesteps, device=device, dtype=torch.long)
-                z_coarse_B = (2.0 * b_M) - b_A
-                z_coarse_A = (2.0 * b_M) - b_B
-                pred_B_norm = net(z_coarse_B, t_max)
-                pred_A_norm = net(z_coarse_A, t_max)
-            else:
-                raise ValueError("mode must be 'iterative' or 'one_shot'.")
-
-            pred_B_raw = pred_B_norm * std_t + mean_t
-            pred_A_raw = pred_A_norm * std_t + mean_t
-
-            pair_ids = [r["pair_id"] for r in batch_records]
-            morph_paths = [r["morph_path"] for r in batch_records]
-
-            evaluator.evaluate_decoded_batch(
-                test_name=test_name,
-                direction="A_to_B",
-                pred_z_raw=pred_B_raw,
-                morph_xt=b_xt,
-                pair_ids=pair_ids,
-                morph_paths=morph_paths,
-                reference_paths=[r["source_a_path"] for r in batch_records],
-                target_paths=[r["source_b_path"] for r in batch_records],
-                rows_out=rows_out,
-                buckets=buckets,
-                grid_images=grid_images,
-            )
-
-            evaluator.evaluate_decoded_batch(
-                test_name=test_name,
-                direction="B_to_A",
-                pred_z_raw=pred_A_raw,
-                morph_xt=b_xt,
-                pair_ids=pair_ids,
-                morph_paths=morph_paths,
-                reference_paths=[r["source_b_path"] for r in batch_records],
-                target_paths=[r["source_a_path"] for r in batch_records],
-                rows_out=rows_out,
-                buckets=buckets,
-                grid_images=grid_images,
-            )
-
-    summary_rows = write_outputs(test_name, test_dir, rows_out, buckets, threshold, grid_images)
-    return rows_out, summary_rows
-
-
-def evaluate_baseline_informed_test(test_cfg: dict, shared) -> Tuple[List[dict], List[dict]]:
-    device = shared["device"]
-    output_root = shared["output_root"]
-    experiments_root = Path(shared["experiments_root"]).resolve()
-    batch_size = shared["batch_size"]
-    num_timesteps = int(test_cfg.get("num_timesteps", 300))
-    test_name = test_cfg["name"]
-
-    data = load_baseline_eval_data(test_cfg["diffae_base_path"])
-
-    source_paths = []
-    for rec in data.records:
-        source_paths.extend([rec["source_a_path"], rec["source_b_path"]])
-
-    threshold = shared["threshold_resolver"](test_name, source_paths)
-
-    exp_dir = experiments_root / test_cfg["run_name"]
-    ckpt_path = exp_dir / "checkpoints" / test_cfg.get("checkpoint", "best.pt")
-    if not ckpt_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found for {test_name}: {ckpt_path}")
-
-    net = BaselineColdDemorphNet().to(device)
-    net.load_state_dict(load_checkpoint_state_dict(ckpt_path))
-    net.eval()
-    diffusion = BaselineColdDemorph(net, num_timesteps=num_timesteps).to(device)
-
-    test_dir = output_root / test_name
-    test_dir.mkdir(parents=True, exist_ok=True)
-    evaluator = ImageSpaceEvaluator(
-        diffae_model=shared["diffae_model"],
-        arcface_cache=shared["arcface_cache"],
-        device=device,
-        output_dir=test_dir,
-        decode_steps=shared["decode_steps"],
-        grid_rows=shared["grid_rows"],
-        threshold=threshold,
-    )
-
-    mean_t = torch.from_numpy(data.mean).to(device).float()
-    std_t = torch.from_numpy(data.std).to(device).float()
-
-    raw_pairs_norm = (data.raw_pairs - data.mean[:, None, :]) / data.std[:, None, :]
-
-    rows_out: List[dict] = []
-    buckets = {"A_to_B": empty_bucket(), "B_to_A": empty_bucket(), "combined": empty_bucket()}
-    grid_images: List[torch.Tensor] = []
-
-    sqrt_half = math.sqrt(0.5)
-
-    with torch.no_grad():
-        for start in tqdm(range(0, len(data.records), batch_size), desc=f"{test_name} predictions"):
-            end = min(start + batch_size, len(data.records))
-            batch_records = data.records[start:end]
-            idx = np.arange(start, end)
-
-            zA_norm = torch.tensor(raw_pairs_norm[idx, 0], device=device).float()
-            zB_norm = torch.tensor(raw_pairs_norm[idx, 1], device=device).float()
-            zA_raw = torch.tensor(data.raw_pairs[idx, 0], device=device).float()
-            zB_raw = torch.tensor(data.raw_pairs[idx, 1], device=device).float()
-
-            xtA = torch.tensor(data.xt_pairs[idx, 0], device=device).float()
-            xtB = torch.tensor(data.xt_pairs[idx, 1], device=device).float()
-            morph_xt = slerp_tensors(xtA, xtB, t=0.5)
-
-            c_vp = sqrt_half * zA_norm + sqrt_half * zB_norm
-
-            pred_B_norm = diffusion.informed_sample_target(c_vp, zA_norm)
-            pred_A_norm = diffusion.informed_sample_target(c_vp, zB_norm)
-
-            pred_B_raw = pred_B_norm * std_t + mean_t
-            pred_A_raw = pred_A_norm * std_t + mean_t
-
-            # Baseline has synthetic morphs. Generate their display images from midpoint semantic + midpoint stochastic.
-            morph_z = 0.5 * (zA_raw + zB_raw)
-            morph_imgs = shared["diffae_model"].render(morph_xt, morph_z, T=shared["decode_steps"])
-            morph_imgs = decoded_to_01(morph_imgs.detach().cpu())
-
-            pair_ids = [r["pair_id"] for r in batch_records]
-            morph_paths = [None for _ in batch_records]
-
-            evaluator.evaluate_decoded_batch(
-                test_name=test_name,
-                direction="A_to_B",
-                pred_z_raw=pred_B_raw,
-                morph_xt=morph_xt,
-                pair_ids=pair_ids,
-                morph_paths=morph_paths,
-                reference_paths=[r["source_a_path"] for r in batch_records],
-                target_paths=[r["source_b_path"] for r in batch_records],
-                rows_out=rows_out,
-                buckets=buckets,
-                grid_images=grid_images,
-                morph_grid_images=morph_imgs,
-            )
-
-            evaluator.evaluate_decoded_batch(
-                test_name=test_name,
-                direction="B_to_A",
-                pred_z_raw=pred_A_raw,
-                morph_xt=morph_xt,
-                pair_ids=pair_ids,
-                morph_paths=morph_paths,
-                reference_paths=[r["source_b_path"] for r in batch_records],
-                target_paths=[r["source_a_path"] for r in batch_records],
-                rows_out=rows_out,
-                buckets=buckets,
-                grid_images=grid_images,
-                morph_grid_images=morph_imgs,
-            )
-
-    summary_rows = write_outputs(test_name, test_dir, rows_out, buckets, threshold, grid_images)
-    return rows_out, summary_rows
-
-
-# =========================================================
-# 10. Output helpers
+# 6. Output helpers
 # =========================================================
 
 def write_outputs(
@@ -1222,6 +580,7 @@ def write_outputs(
     report_lines = [
         f"Reference-based image-space evaluation: {test_name}",
         "====================================================",
+        "Mode: one_shot",
         f"ArcFace threshold S: {threshold:.8f}",
         "Metrics follow the Accuracy / DCI / DAI protocol:",
         "  success = score_accomplice >= S and score_reference < S",
@@ -1230,6 +589,7 @@ def write_outputs(
         "  DCI = ASC - S",
         "  DAI = ASA - S",
         "Decoder range convention: DiffAE render output is treated as already in [0, 1].",
+        "Prediction mode: one-shot target prediction at t = T.",
         "",
     ]
 
@@ -1312,153 +672,250 @@ def write_global_outputs(output_root: Path, all_rows: List[dict], all_summary_ro
 
 
 # =========================================================
-# 11. Config and CLI
+# 7. Main evaluation for cond_non_disjoint only
 # =========================================================
 
-DEFAULT_TESTS = [
-    {
-        "name": "cond_joint",
-        "kind": "cond",
-        "data_dir": "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v1",
-        "run_name": "diffae_conditional_jointID",
-        "num_timesteps": 300,
-        "mode": "iterative",
-    },
-    {
-        "name": "cond_disjoint",
-        "kind": "cond",
-        "data_dir": "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v2",
-        "run_name": "diffae_conditional_disjointID",
-        "num_timesteps": 300,
-        "mode": "iterative",
-    },
-    {
-        "name": "cond_refine_disjoint",
-        "kind": "cond_refine",
-        "data_dir": "/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v2",
-        "run_name": "diffae_conditional_refiner",
-        "num_timesteps": 10,
-        "mode": "iterative",
-    },
-    {
-        "name": "baseline_informed",
-        "kind": "baseline_informed",
-        "diffae_base_path": "/nas-ctm01/homes/dacordeiro/Face-DM/diffae_embeddings/ffhq256_diffae_zsem.npy",
-        "run_name": "diffae_baseline",
-        "num_timesteps": 300,
-    },
-]
-
-
-def load_tests_config(path: Optional[str]) -> List[dict]:
-    if path is None:
-        return DEFAULT_TESTS
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Image-space evaluation for all reference-based DiffAE de-morphing tests."
-    )
-
-    parser.add_argument("--tests-config", type=str, default=None, help="Optional JSON file with the list of tests to evaluate.")
-    parser.add_argument("--experiments-root", type=str, default="experiments")
-    parser.add_argument("--output-dir", type=str, default="reference_based_image_eval")
-    parser.add_argument("--diffae-root", type=str, default="/nas-ctm01/homes/dacordeiro/diffae/")
-    parser.add_argument("--diffae-checkpoint", type=str, default="/nas-ctm01/homes/dacordeiro/Face-DM/ffhq256_autoenc/last.ckpt")
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--decode-steps", type=int, default=20)
-    parser.add_argument("--grid-rows", type=int, default=8)
-    parser.add_argument("--mode", type=str, default="iterative", choices=["iterative", "one_shot"])
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--deepface-detector-backend", type=str, default="skip")
-    parser.add_argument("--arcface-threshold", type=str, default="auto", help="Use 'auto' or a fixed numeric ArcFace cosine threshold.")
-    parser.add_argument("--threshold-fmr", type=float, default=0.001, help="FMR used when --arcface-threshold auto. Default is 0.001 = 0.1% FMR.")
-    parser.add_argument("--threshold-max-pairs", type=int, default=200000)
-    parser.add_argument("--threshold-seed", type=int, default=42)
-    parser.add_argument("--skip-missing", action="store_true", help="Skip a test if a required checkpoint or data file is missing.")
-
-    args = parser.parse_args()
-
+def evaluate_cond_non_disjoint_one_shot(args):
     device = torch.device(args.device)
+
+    test_name = "cond_non_disjoint"
     output_root = Path(args.output_dir).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    test_dir = output_root / test_name
+    test_dir.mkdir(parents=True, exist_ok=True)
 
     print("Loading DiffAE FFHQ256 autoencoder...")
-    diffae_model = load_diffae_ffhq256_autoencoder(Path(args.diffae_root), Path(args.diffae_checkpoint), device)
+    diffae_model = load_diffae_ffhq256_autoencoder(
+        Path(args.diffae_root),
+        Path(args.diffae_checkpoint),
+        device,
+    )
 
     print("Loading DeepFace ArcFace...")
     DeepFace = load_deepface()
     arcface_cache = ArcFaceCache(DeepFace, device, detector_backend=args.deepface_detector_backend)
 
-    fixed_threshold = None
-    threshold_cache: Dict[str, float] = {}
+    print("Loading non-disjoint morph evaluation data...")
+    data = load_morph_eval_data_v1(args.data_dir)
 
-    if args.arcface_threshold.lower() != "auto":
-        fixed_threshold = float(args.arcface_threshold)
+    source_paths = []
+    for rec in data.records:
+        source_paths.extend([rec["source_a_path"], rec["source_b_path"]])
 
-    def threshold_resolver(test_name: str, source_paths: List[str]) -> float:
-        if fixed_threshold is not None:
-            return fixed_threshold
-        if test_name not in threshold_cache:
-            print(f"Calibrating ArcFace threshold for {test_name} at FMR={args.threshold_fmr}...")
-            threshold_cache[test_name] = calibrate_arcface_threshold(
-                source_paths=source_paths,
-                arcface_cache=arcface_cache,
-                fmr=args.threshold_fmr,
-                max_pairs=args.threshold_max_pairs,
-                seed=args.threshold_seed,
+    if args.arcface_threshold.lower() == "auto":
+        print(f"Calibrating ArcFace threshold for {test_name} at FMR={args.threshold_fmr}...")
+        threshold = calibrate_arcface_threshold(
+            source_paths=source_paths,
+            arcface_cache=arcface_cache,
+            fmr=args.threshold_fmr,
+            max_pairs=args.threshold_max_pairs,
+            seed=args.threshold_seed,
+        )
+        print(f"Threshold for {test_name}: {threshold:.8f}")
+    else:
+        threshold = float(args.arcface_threshold)
+        print(f"Using fixed ArcFace threshold for {test_name}: {threshold:.8f}")
+
+    experiments_root = Path(args.experiments_root).resolve()
+    ckpt_path = experiments_root / args.run_name / "checkpoints" / args.checkpoint
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+
+    print("Loading conditional model checkpoint...")
+    net = ConditionalColdDemorphNet().to(device)
+    net.load_state_dict(load_checkpoint_state_dict(ckpt_path))
+    net.eval()
+
+    evaluator = ImageSpaceEvaluator(
+        diffae_model=diffae_model,
+        arcface_cache=arcface_cache,
+        device=device,
+        decode_steps=args.decode_steps,
+        grid_rows=args.grid_rows,
+        threshold=threshold,
+    )
+
+    mean_t = torch.from_numpy(data.mean).to(device).float()
+    std_t = torch.from_numpy(data.std).to(device).float()
+
+    eval_bf_norm = (data.eval_bf_raw - data.mean) / data.std
+    eval_morph_norm = (data.eval_morph_raw - data.mean) / data.std
+
+    rows_out: List[dict] = []
+    buckets = {"A_to_B": empty_bucket(), "B_to_A": empty_bucket(), "combined": empty_bucket()}
+    grid_images: List[torch.Tensor] = []
+
+    num_timesteps = args.num_timesteps
+
+    with torch.no_grad():
+        for start in tqdm(range(0, len(data.records), args.batch_size), desc=f"{test_name} predictions"):
+            batch_records = data.records[start:start + args.batch_size]
+            morph_indices = [r["morph_idx"] for r in batch_records]
+            a_indices = [r["source_a_idx"] for r in batch_records]
+            b_indices = [r["source_b_idx"] for r in batch_records]
+
+            b_M = torch.tensor(eval_morph_norm[morph_indices], device=device).float()
+            b_A = torch.tensor(eval_bf_norm[a_indices], device=device).float()
+            b_B = torch.tensor(eval_bf_norm[b_indices], device=device).float()
+            b_xt = torch.tensor(data.eval_morph_xt[morph_indices], device=device).float()
+
+            # ONE-SHOT prediction at t = T
+            t_max = torch.full((b_M.shape[0],), num_timesteps, device=device, dtype=torch.long)
+            pred_B_norm = net(b_M, t_max, b_A)  # A as reference, predict B
+            pred_A_norm = net(b_M, t_max, b_B)  # B as reference, predict A
+
+            pred_B_raw = pred_B_norm * std_t + mean_t
+            pred_A_raw = pred_A_norm * std_t + mean_t
+
+            pair_ids = [r["pair_id"] for r in batch_records]
+            morph_paths = [r["morph_path"] for r in batch_records]
+
+            evaluator.evaluate_decoded_batch(
+                test_name=test_name,
+                direction="A_to_B",
+                pred_z_raw=pred_B_raw,
+                morph_xt=b_xt,
+                pair_ids=pair_ids,
+                morph_paths=morph_paths,
+                reference_paths=[r["source_a_path"] for r in batch_records],
+                target_paths=[r["source_b_path"] for r in batch_records],
+                rows_out=rows_out,
+                buckets=buckets,
+                grid_images=grid_images,
             )
-            print(f"Threshold for {test_name}: {threshold_cache[test_name]:.8f}")
-        return threshold_cache[test_name]
 
-    shared = {
-        "device": device,
-        "output_root": output_root,
-        "experiments_root": args.experiments_root,
-        "batch_size": args.batch_size,
-        "num_workers": args.num_workers,
-        "decode_steps": args.decode_steps,
-        "grid_rows": args.grid_rows,
-        "mode": args.mode,
-        "diffae_model": diffae_model,
-        "arcface_cache": arcface_cache,
-        "threshold_resolver": threshold_resolver,
-    }
+            evaluator.evaluate_decoded_batch(
+                test_name=test_name,
+                direction="B_to_A",
+                pred_z_raw=pred_A_raw,
+                morph_xt=b_xt,
+                pair_ids=pair_ids,
+                morph_paths=morph_paths,
+                reference_paths=[r["source_b_path"] for r in batch_records],
+                target_paths=[r["source_a_path"] for r in batch_records],
+                rows_out=rows_out,
+                buckets=buckets,
+                grid_images=grid_images,
+            )
 
-    tests = load_tests_config(args.tests_config)
+    summary_rows = write_outputs(
+        test_name=test_name,
+        test_dir=test_dir,
+        rows_out=rows_out,
+        buckets=buckets,
+        threshold=threshold,
+        grid_images=grid_images,
+    )
 
-    all_rows: List[dict] = []
-    all_summary_rows: List[dict] = []
+    # Also write the same global-style summary files at the output root,
+    # now containing just this single test.
+    write_global_outputs(output_root, rows_out, summary_rows)
 
-    for test_cfg in tests:
-        test_name = test_cfg["name"]
-        kind = test_cfg["kind"]
-        print("\n" + "=" * 80)
-        print(f"Evaluating test: {test_name} [{kind}]")
-        print("=" * 80)
 
-        try:
-            if kind == "cond":
-                rows, summary = evaluate_conditional_test(test_cfg, shared)
-            elif kind == "cond_refine":
-                rows, summary = evaluate_refine_test(test_cfg, shared)
-            elif kind == "baseline_informed":
-                rows, summary = evaluate_baseline_informed_test(test_cfg, shared)
-            else:
-                raise ValueError(f"Unknown test kind: {kind}")
-        except Exception as exc:
-            if args.skip_missing:
-                print(f"[SKIPPED] {test_name}: {exc}")
-                continue
-            raise
+# =========================================================
+# 8. CLI
+# =========================================================
 
-        all_rows.extend(rows)
-        all_summary_rows.extend(summary)
+def main():
+    parser = argparse.ArgumentParser(
+        description="One-shot image-space evaluation for the non-disjoint conditional DiffAE de-morphing model."
+    )
 
-    write_global_outputs(output_root, all_rows, all_summary_rows)
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default="/nas-ctm01/homes/dacordeiro/Face-DM/morph_embeddings_v1",
+        help="Path to the non-disjoint morph embedding dataset (v1).",
+    )
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default="diffae_conditional_jointID",
+        help="Experiment folder name under experiments-root.",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default="best.pt",
+        help="Checkpoint filename inside experiments/<run-name>/checkpoints/.",
+    )
+    parser.add_argument(
+        "--experiments-root",
+        type=str,
+        default="experiments",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="reference_based_image_eval",
+        help="Same root output folder used by the all-tests script.",
+    )
+    parser.add_argument(
+        "--diffae-root",
+        type=str,
+        default="/nas-ctm01/homes/dacordeiro/diffae/",
+    )
+    parser.add_argument(
+        "--diffae-checkpoint",
+        type=str,
+        default="/nas-ctm01/homes/dacordeiro/Face-DM/ffhq256_autoenc/last.ckpt",
+    )
+    parser.add_argument(
+        "--num-timesteps",
+        type=int,
+        default=300,
+        help="Training/evaluation timestep count of the conditional model.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=16,
+    )
+    parser.add_argument(
+        "--decode-steps",
+        type=int,
+        default=20,
+    )
+    parser.add_argument(
+        "--grid-rows",
+        type=int,
+        default=8,
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda" if torch.cuda.is_available() else "cpu",
+    )
+    parser.add_argument(
+        "--deepface-detector-backend",
+        type=str,
+        default="skip",
+    )
+    parser.add_argument(
+        "--arcface-threshold",
+        type=str,
+        default="auto",
+        help="Use 'auto' or a fixed numeric ArcFace cosine threshold.",
+    )
+    parser.add_argument(
+        "--threshold-fmr",
+        type=float,
+        default=0.001,
+        help="FMR used when --arcface-threshold auto. Default 0.001 = 0.1%% FMR.",
+    )
+    parser.add_argument(
+        "--threshold-max-pairs",
+        type=int,
+        default=200000,
+    )
+    parser.add_argument(
+        "--threshold-seed",
+        type=int,
+        default=42,
+    )
+
+    args = parser.parse_args()
+    evaluate_cond_non_disjoint_one_shot(args)
 
 
 if __name__ == "__main__":
