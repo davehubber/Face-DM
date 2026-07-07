@@ -1,0 +1,4 @@
+--- SINGLE-DIRECTION MORPH-ENDPOINT REFERENCE-CONDITIONED COLD DIFFUSION EVALUATION (ONE_SHOT) ---
+Reference -> Recover Target L1 Distance : 0.843244
+Reference -> Recover Target Cosine Sim  : 0.273444
+Reference -> Recover Target %S          : 28.36%

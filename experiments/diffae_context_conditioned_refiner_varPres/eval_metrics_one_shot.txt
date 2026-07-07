@@ -1,0 +1,10 @@
+--- CONTEXT-CONDITIONED COLD DIFFUSION EVALUATION (ONE_SHOT) ---
+Condition A -> Recover B L1 Distance : 0.596003
+Condition A -> Recover B Cosine Sim  : 0.655403
+Condition A -> Recover B %S1         : 97.25%
+Condition B -> Recover A L1 Distance : 0.569474
+Condition B -> Recover A Cosine Sim  : 0.704765
+Condition B -> Recover A %S2         : 100.00%
+Mean Conditional L1 Distance         : 0.582738
+Mean Conditional Cosine Sim          : 0.680084
+Combined Total %S                    : 98.63%

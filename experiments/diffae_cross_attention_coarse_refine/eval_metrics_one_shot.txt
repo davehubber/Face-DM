@@ -1,0 +1,12 @@
+--- LEARNED COARSE COLD DIFFUSION EVALUATION (ONE_SHOT) ---
+Condition A -> Recover B L1 Distance : 0.495066
+Condition A -> Recover B Cosine Sim  : 0.781579
+Condition A -> Recover B %S1         : 99.90%
+Condition B -> Recover A L1 Distance : 0.487487
+Condition B -> Recover A Cosine Sim  : 0.796620
+Condition B -> Recover A %S2         : 100.00%
+Mean Conditional L1 Distance         : 0.491276
+Mean Conditional Cosine Sim          : 0.789099
+Combined Total %S                    : 99.95%
+Mean Initial Coarse L1 Distance      : 0.664917
+Mean Initial Coarse Cosine Sim       : 0.755518

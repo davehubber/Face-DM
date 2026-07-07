@@ -1,0 +1,12 @@
+--- LEARNED COARSE COLD DIFFUSION EVALUATION (ITERATIVE) ---
+Condition A -> Recover B L1 Distance : 0.496547
+Condition A -> Recover B Cosine Sim  : 0.780266
+Condition A -> Recover B %S1         : 99.80%
+Condition B -> Recover A L1 Distance : 0.487257
+Condition B -> Recover A Cosine Sim  : 0.797242
+Condition B -> Recover A %S2         : 100.00%
+Mean Conditional L1 Distance         : 0.491902
+Mean Conditional Cosine Sim          : 0.788754
+Combined Total %S                    : 99.90%
+Mean Initial Coarse L1 Distance      : 0.664917
+Mean Initial Coarse Cosine Sim       : 0.755518

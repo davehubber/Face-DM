@@ -1,0 +1,10 @@
+--- RECTIFIED FLOW CONDITIONAL EVALUATION (ONE_SHOT) ---
+Condition A -> Recover B L1 Distance : 0.542230
+Condition A -> Recover B Cosine Sim  : 0.766558
+Condition A -> Recover B %S1         : 96.37%
+Condition B -> Recover A L1 Distance : 0.518630
+Condition B -> Recover A Cosine Sim  : 0.790384
+Condition B -> Recover A %S2         : 100.00%
+Mean Conditional L1 Distance         : 0.530430
+Mean Conditional Cosine Sim          : 0.778471
+Combined Total %S                    : 98.18%

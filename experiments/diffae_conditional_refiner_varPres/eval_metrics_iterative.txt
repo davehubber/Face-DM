@@ -1,0 +1,10 @@
+--- MATH BASELINE UNCONDITIONED EVALUATION (ITERATIVE) ---
+Condition A -> Recover B L1 Distance : 0.499264
+Condition A -> Recover B Cosine Sim  : 0.778506
+Condition A -> Recover B %S1         : 97.64%
+Condition B -> Recover A L1 Distance : 0.461689
+Condition B -> Recover A Cosine Sim  : 0.816936
+Condition B -> Recover A %S2         : 100.00%
+Mean Conditional L1 Distance         : 0.480476
+Mean Conditional Cosine Sim          : 0.797721
+Combined Total %S                    : 98.82%
