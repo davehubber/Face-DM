@@ -41,7 +41,7 @@ def load_diffae_ffhq256_autoencoder(diffae_root: Path, checkpoint_path: Path, de
 
 def main():
     parser = argparse.ArgumentParser(description="Encode and decode a single image via DiffAE.")
-    parser.add_argument("--image_path", type=str, default="/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/MAD22/original_sorted/BonaFide/001_03.jpg", help="Path to the input image to process")
+    parser.add_argument("--image_path", type=str, default="/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/MAD22/original_sorted/BonaFide_cropped/001_03.jpg", help="Path to the input image to process")
     parser.add_argument("--diffae-root", type=str, default="/nas-ctm01/homes/dacordeiro/diffae/")
     parser.add_argument("--checkpoint", type=str, default="/nas-ctm01/homes/dacordeiro/Face-DM/ffhq256_autoenc/last.ckpt")
     parser.add_argument("--steps", type=int, default=20, help="Number of DDIM steps for decoding reconstruction")

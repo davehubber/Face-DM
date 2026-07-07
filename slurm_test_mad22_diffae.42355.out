@@ -1,0 +1,9 @@
+Using device: cuda
+Loading DiffAE model...
+Model params: 160.69 M
+loading pretrain ... ffhq256_autoenc
+step: 1563562
+Extracting semantic (z_sem) and stochastic (x_T) codes...
+Rendering reconstruction canvas using 20 DDIM steps...
+
+[SUCCESS] Execution finished. Output saved to: /nas-ctm01/homes/dacordeiro/Face-DM/reconstructed_001_03.png
