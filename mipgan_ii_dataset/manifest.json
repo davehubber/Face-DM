@@ -1,0 +1,58 @@
+{
+  "mad22_root": "/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/MAD22/original_sorted",
+  "method": "MIPGAN_II",
+  "split_type": "random_morph_level_split",
+  "train_ratio": 0.8,
+  "test_ratio": 0.19999999999999996,
+  "seed": 42,
+  "output_dir": "/nas-ctm01/homes/dacordeiro/Face-DM/mipgan_ii_dataset",
+  "counts": {
+    "bonafide_images_found": 204,
+    "morph_images_found": 491,
+    "valid_morphs": 491,
+    "invalid_morph_filenames": 0,
+    "morphs_with_missing_sources": 0,
+    "train_morphs": 393,
+    "test_morphs": 98,
+    "unique_source_bonafides_used": 198
+  },
+  "shapes": {
+    "train": {
+      "morph_shape": [
+        393,
+        512
+      ],
+      "z_cri_shape": [
+        393,
+        512
+      ],
+      "z_acc_shape": [
+        393,
+        512
+      ]
+    },
+    "test": {
+      "morph_shape": [
+        98,
+        512
+      ],
+      "z_cri_shape": [
+        98,
+        512
+      ],
+      "z_acc_shape": [
+        98,
+        512
+      ]
+    },
+    "source_bonafide_zsem": [
+      198,
+      512
+    ]
+  },
+  "naming": {
+    "z_cri": "semantic embedding of the first bona fide in the morph filename",
+    "z_acc": "semantic embedding of the second bona fide in the morph filename",
+    "eval_aliases": true
+  }
+}

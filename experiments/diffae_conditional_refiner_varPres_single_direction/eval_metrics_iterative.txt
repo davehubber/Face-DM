@@ -1,4 +1,0 @@
---- MATH BASELINE UNCONDITIONED SINGLE-DIRECTION EVALUATION (ITERATIVE) ---
-Condition -> Recover Target L1 Distance : 0.479014
-Condition -> Recover Target Cosine Sim  : 0.799247
-Condition -> Recover Target %S          : 98.72%

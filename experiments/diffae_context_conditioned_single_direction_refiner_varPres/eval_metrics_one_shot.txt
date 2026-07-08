@@ -1,4 +1,0 @@
---- SINGLE-DIRECTION CONTEXT-CONDITIONED COLD DIFFUSION EVALUATION (ONE_SHOT) ---
-Reference -> Recover Target L1 Distance : 0.602597
-Reference -> Recover Target Cosine Sim  : 0.652408
-Reference -> Recover Target %S          : 98.72%

@@ -1,4 +1,0 @@
---- SINGLE-DIRECTION CONTEXT-CONDITIONED COLD DIFFUSION EVALUATION (ITERATIVE) ---
-Reference -> Recover Target L1 Distance : 0.688196
-Reference -> Recover Target Cosine Sim  : 0.526949
-Reference -> Recover Target %S          : 96.47%

@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-MAD22_METHODS = ["FaceMorpher", "MIPGAN_I", "MIPGAN_II", "OpenCV", "Webmorph"]
+MAD22_METHODS = ["FaceMorpher_cropped", "MIPGAN_I_cropped", "MIPGAN_II_cropped", "OpenCV_cropped", "Webmorph_cropped"]
 
 
 class MorphImageDataset(Dataset):
@@ -438,13 +438,13 @@ def main():
     parser.add_argument(
         "--smdd-bonafide-root",
         type=str,
-        default="/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/SMDD/os25k_bf_t/",
+        default="/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/SMDD/os25k_m_t_cropped/",
         help="Path to the SMDD bona fide folder used to resolve morph source images.",
     )
     parser.add_argument(
         "--smdd-morph-root",
         type=str,
-        default="/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/SMDD/m15k_t/",
+        default="/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/SMDD/m15k_t_cropped/",
         help="Path to the SMDD training morph folder. All valid morphs here are used for training.",
     )
 
@@ -470,7 +470,7 @@ def main():
 
     # Operational hyperparameters.
     parser.add_argument("--image-size", type=int, default=256)
-    parser.add_argument("--batch-size", type=int, default=2)
+    parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
 
