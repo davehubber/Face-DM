@@ -1,0 +1,34 @@
+{
+  "dataset": "MAD22",
+  "method": "Webmorph",
+  "scenario": "identity_disjoint_80_20",
+  "out_dir": "MAD22_embeddings/Webmorph/identity_disjoint_80_20",
+  "semantic_only_for_train": true,
+  "stochastic_only_for_test_morphs": true,
+  "stochastic_T": 20,
+  "num_records_total_valid": 388,
+  "num_train_morphs": 303,
+  "num_test_morphs": 34,
+  "num_excluded_morphs": 51,
+  "morph_discovery_stats": {
+    "total_images": 500,
+    "valid_morphs": 388,
+    "invalid_name": 0,
+    "missing_bonafide": 112
+  },
+  "split_source": {
+    "type": "identity_disjoint_split_from_json",
+    "json_path": "mad22_optimal_identity_split_80_seed42.json",
+    "json_train_id_count": 82,
+    "json_test_id_count": 20,
+    "excluded_cross_identity_split_morphs": 51
+  },
+  "normalization": {
+    "files": [
+      "train_zsem_mean.npy",
+      "train_zsem_std.npy"
+    ],
+    "computed_over": "train_acc_zsem.npy + train_cri_zsem.npy",
+    "morph_embeddings_included": false
+  }
+}

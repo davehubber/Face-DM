@@ -1,0 +1,32 @@
+{
+  "dataset": "MAD22",
+  "method": "MIPGAN_II",
+  "scenario": "random_80_20",
+  "out_dir": "MAD22_embeddings/MIPGAN_II/random_80_20",
+  "semantic_only_for_train": true,
+  "stochastic_only_for_test_morphs": true,
+  "stochastic_T": 20,
+  "num_records_total_valid": 723,
+  "num_train_morphs": 578,
+  "num_test_morphs": 145,
+  "num_excluded_morphs": 0,
+  "morph_discovery_stats": {
+    "total_images": 892,
+    "valid_morphs": 723,
+    "invalid_name": 0,
+    "missing_bonafide": 169
+  },
+  "split_source": {
+    "type": "random_morph_level_split_no_identity_restriction",
+    "train_pct": 80.0,
+    "seed": 42
+  },
+  "normalization": {
+    "files": [
+      "train_zsem_mean.npy",
+      "train_zsem_std.npy"
+    ],
+    "computed_over": "train_acc_zsem.npy + train_cri_zsem.npy",
+    "morph_embeddings_included": false
+  }
+}

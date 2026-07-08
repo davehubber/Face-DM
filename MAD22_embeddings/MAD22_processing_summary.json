@@ -1,0 +1,118 @@
+{
+  "dataset": "MAD22",
+  "root": "/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/MAD22/original_sorted",
+  "out_dir": "MAD22_embeddings",
+  "identity_split_json": "mad22_optimal_identity_split_80_seed42.json",
+  "methods": [
+    {
+      "method": "FaceMorpher",
+      "method_dir": "/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/MAD22/original_sorted/FaceMorpher",
+      "method_out": "MAD22_embeddings/FaceMorpher",
+      "valid_records": 724,
+      "discovery_stats": {
+        "total_images": 893,
+        "valid_morphs": 724,
+        "invalid_name": 0,
+        "missing_bonafide": 169
+      },
+      "random_80_20": {
+        "train": 579,
+        "test": 145,
+        "excluded": 0
+      },
+      "identity_disjoint_80_20": {
+        "train": 561,
+        "test": 67,
+        "excluded": 96
+      }
+    },
+    {
+      "method": "MIPGAN_I",
+      "method_dir": "/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/MAD22/original_sorted/MIPGAN_I",
+      "method_out": "MAD22_embeddings/MIPGAN_I",
+      "valid_records": 726,
+      "discovery_stats": {
+        "total_images": 895,
+        "valid_morphs": 726,
+        "invalid_name": 0,
+        "missing_bonafide": 169
+      },
+      "random_80_20": {
+        "train": 581,
+        "test": 145,
+        "excluded": 0
+      },
+      "identity_disjoint_80_20": {
+        "train": 565,
+        "test": 69,
+        "excluded": 92
+      }
+    },
+    {
+      "method": "MIPGAN_II",
+      "method_dir": "/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/MAD22/original_sorted/MIPGAN_II",
+      "method_out": "MAD22_embeddings/MIPGAN_II",
+      "valid_records": 723,
+      "discovery_stats": {
+        "total_images": 892,
+        "valid_morphs": 723,
+        "invalid_name": 0,
+        "missing_bonafide": 169
+      },
+      "random_80_20": {
+        "train": 578,
+        "test": 145,
+        "excluded": 0
+      },
+      "identity_disjoint_80_20": {
+        "train": 562,
+        "test": 66,
+        "excluded": 95
+      }
+    },
+    {
+      "method": "OpenCV",
+      "method_dir": "/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/MAD22/original_sorted/OpenCV",
+      "method_out": "MAD22_embeddings/OpenCV",
+      "valid_records": 722,
+      "discovery_stats": {
+        "total_images": 889,
+        "valid_morphs": 722,
+        "invalid_name": 0,
+        "missing_bonafide": 167
+      },
+      "random_80_20": {
+        "train": 578,
+        "test": 144,
+        "excluded": 0
+      },
+      "identity_disjoint_80_20": {
+        "train": 560,
+        "test": 70,
+        "excluded": 92
+      }
+    },
+    {
+      "method": "Webmorph",
+      "method_dir": "/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/MAD22/original_sorted/Webmorph",
+      "method_out": "MAD22_embeddings/Webmorph",
+      "valid_records": 388,
+      "discovery_stats": {
+        "total_images": 500,
+        "valid_morphs": 388,
+        "invalid_name": 0,
+        "missing_bonafide": 112
+      },
+      "random_80_20": {
+        "train": 310,
+        "test": 78,
+        "excluded": 0
+      },
+      "identity_disjoint_80_20": {
+        "train": 303,
+        "test": 34,
+        "excluded": 51
+      }
+    }
+  ]
+}

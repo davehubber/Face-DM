@@ -1,0 +1,20 @@
+{
+  "dataset": "SMDD",
+  "root": "/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/SMDD",
+  "morph_dir": "/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/SMDD/m15k_t",
+  "bonafide_dir": "/nas-ctm01/datasets/public/BIOMETRICS/Face_Morphing/SMDD/os25k_m_t",
+  "out_dir": "SMDD_embeddings",
+  "split_json": "smdd_fixed_1000_test_seed42.json",
+  "valid_records": 15000,
+  "discovery_stats": {
+    "total_images": 15000,
+    "valid_morphs": 15000,
+    "invalid_name": 0,
+    "missing_bonafide": 0
+  },
+  "identity_disjoint_fixed_1000": {
+    "train": 10107,
+    "test": 750,
+    "excluded": 4143
+  }
+}

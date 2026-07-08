@@ -1,0 +1,36 @@
+{
+  "dataset": "SMDD",
+  "method": "SMDD",
+  "scenario": "identity_disjoint_fixed_1000",
+  "out_dir": "SMDD_embeddings/SMDD/identity_disjoint_fixed_1000",
+  "semantic_only_for_train": true,
+  "stochastic_only_for_test_morphs": true,
+  "stochastic_T": 20,
+  "num_records_total_valid": 15000,
+  "num_train_morphs": 10107,
+  "num_test_morphs": 750,
+  "num_excluded_morphs": 4143,
+  "morph_discovery_stats": {
+    "total_images": 15000,
+    "valid_morphs": 15000,
+    "invalid_name": 0,
+    "missing_bonafide": 0
+  },
+  "split_source": {
+    "type": "fixed_test_source_image_split_from_json",
+    "json_path": "smdd_fixed_1000_test_seed42.json",
+    "target_test_morphs": 750,
+    "exact_target_satisfied": true,
+    "json_train_bonafide_count": 24249,
+    "json_test_bonafide_count": 751,
+    "excluded_cross_source_split_morphs": 4143
+  },
+  "normalization": {
+    "files": [
+      "train_zsem_mean.npy",
+      "train_zsem_std.npy"
+    ],
+    "computed_over": "train_acc_zsem.npy + train_cri_zsem.npy",
+    "morph_embeddings_included": false
+  }
+}
