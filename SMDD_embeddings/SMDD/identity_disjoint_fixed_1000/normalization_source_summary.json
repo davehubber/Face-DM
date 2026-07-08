@@ -1,0 +1,24 @@
+{
+  "normalization_files": [
+    "train_zsem_mean.npy",
+    "train_zsem_std.npy"
+  ],
+  "computed_from": {
+    "dataset": "SMDD",
+    "scenario": "identity_disjoint_fixed_1000",
+    "policy": "all_bonafide_images_listed_in_train_bonafide_ids",
+    "split_json": "smdd_fixed_1000_test_seed42.json",
+    "num_train_bonafide_ids": 24249,
+    "target_test_morphs": 750,
+    "exact_target_satisfied": true
+  },
+  "num_unique_bonafide_stems": 24249,
+  "num_unique_cache_indices": 24249,
+  "mean_shape": [
+    512
+  ],
+  "std_shape": [
+    512
+  ],
+  "note": "These statistics were recomputed from the unique base bona fide training set. Repeated train morph source occurrences were not used."
+}

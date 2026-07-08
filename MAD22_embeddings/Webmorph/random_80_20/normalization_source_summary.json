@@ -1,0 +1,22 @@
+{
+  "normalization_files": [
+    "train_zsem_mean.npy",
+    "train_zsem_std.npy"
+  ],
+  "computed_from": {
+    "dataset": "MAD22",
+    "scenario": "random_80_20",
+    "policy": "all_bonafide_images_whose_identity_appears_as_train_accomplice_or_criminal_in_train_metadata",
+    "train_metadata": "/nas-ctm01/homes/dacordeiro/Face-DM/MAD22_embeddings/Webmorph/random_80_20/train_metadata.csv",
+    "num_train_source_identities": 91
+  },
+  "num_unique_bonafide_stems": 174,
+  "num_unique_cache_indices": 174,
+  "mean_shape": [
+    512
+  ],
+  "std_shape": [
+    512
+  ],
+  "note": "These statistics were recomputed from the unique base bona fide training set. Repeated train morph source occurrences were not used."
+}
