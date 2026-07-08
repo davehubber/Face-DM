@@ -1,16 +1,16 @@
 --- CROSS-ATTENTION BRANCH ONLY EVALUATION ---
-Condition A -> Recover B Learned MSE : 1.262096
-Condition A -> Recover B Learned L1  : 0.860718
-Condition A -> Recover B Learned Cos : 0.696210
-Condition A -> Recover B Learned %S  : 12.17%
-Condition B -> Recover A Learned MSE : 1.374627
-Condition B -> Recover A Learned L1  : 0.897956
-Condition B -> Recover A Learned Cos : 0.675531
-Condition B -> Recover A Learned %S  : 19.63%
-Mean Learned MSE                     : 1.318362
-Mean Learned L1                      : 0.879337
-Mean Learned Cos                     : 0.685871
-Mean Learned %S                      : 15.90%
+Condition A -> Recover B Learned MSE : 1.228574
+Condition A -> Recover B Learned L1  : 0.849904
+Condition A -> Recover B Learned Cos : 0.699699
+Condition A -> Recover B Learned %S  : 11.58%
+Condition B -> Recover A Learned MSE : 1.237007
+Condition B -> Recover A Learned L1  : 0.860754
+Condition B -> Recover A Learned Cos : 0.689925
+Condition B -> Recover A Learned %S  : 0.88%
+Mean Learned MSE                     : 1.232790
+Mean Learned L1                      : 0.855329
+Mean Learned Cos                     : 0.694812
+Mean Learned %S                      : 6.23%
 
 --- ANALYTICAL INVERSE INTERPOLATION BASELINE ---
 Condition A -> Recover B Linear MSE  : 1.505341

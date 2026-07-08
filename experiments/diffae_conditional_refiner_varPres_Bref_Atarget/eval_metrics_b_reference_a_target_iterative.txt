@@ -1,0 +1,6 @@
+--- MATH BASELINE B-REFERENCE/A-TARGET CONDITIONAL EVALUATION (ITERATIVE) ---
+Direction                       : reference=B, target=A
+Number of evaluated morphs      : 1019
+Conditional L1 Distance         : 0.462705
+Conditional Cosine Sim          : 0.819864
+Conditional %S                  : 100.00%

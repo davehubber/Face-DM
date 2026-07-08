@@ -1,0 +1,4 @@
+--- MATH BASELINE UNCONDITIONED SINGLE-DIRECTION EVALUATION (ONE_SHOT) ---
+Condition -> Recover Target L1 Distance : 0.479561
+Condition -> Recover Target Cosine Sim  : 0.799272
+Condition -> Recover Target %S          : 98.23%

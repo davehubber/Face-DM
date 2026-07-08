@@ -1,0 +1,6 @@
+--- MATH BASELINE A-REFERENCE/B-TARGET CONDITIONAL EVALUATION (ONE_SHOT) ---
+Direction                       : reference=A, target=B
+Number of evaluated morphs      : 1019
+Conditional L1 Distance         : 0.918256
+Conditional Cosine Sim          : 0.145724
+Conditional %S                  : 68.89%

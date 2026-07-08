@@ -1,0 +1,6 @@
+--- MATH BASELINE SINGLE-DIRECTION CONDITIONAL EVALUATION (ITERATIVE) ---
+Evaluation direction seed       : 1
+Number of evaluated morphs      : 1019
+Conditional L1 Distance         : 0.477067
+Conditional Cosine Sim          : 0.801350
+Conditional %S                  : 99.61%
