@@ -846,8 +846,8 @@ def build_argparser() -> argparse.ArgumentParser:
 
     # Model/training
     parser.add_argument("--num-timesteps", type=int, default=10)
-    parser.add_argument("--hidden-dim", type=int, default=2048)
-    parser.add_argument("--num-layers", type=int, default=10)
+    parser.add_argument("--hidden-dim", type=int, default=512)
+    parser.add_argument("--num-layers", type=int, default=6)
     parser.add_argument("--time-emb-dim", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--eval-batch-size", type=int, default=500)
