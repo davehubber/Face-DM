@@ -1,0 +1,8 @@
+Mode: fixed_inverse
+Number of evaluated morphs: 145
+Embedding dim: 512
+L1: 4.410292
+MSE: 31.149842
+Cosine similarity: 0.025471
+%S vs morph-target cosine: 17.24%
+%S vs fixed-inverse-target cosine: 0.00%

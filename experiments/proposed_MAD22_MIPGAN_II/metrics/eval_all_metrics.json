@@ -1,0 +1,32 @@
+[
+  {
+    "mode": "coarse",
+    "n": 145,
+    "embedding_dim": 512,
+    "l1": 4.090864931303879,
+    "mse": 27.431633890086207,
+    "cosine": 0.04093613460146148,
+    "success_vs_morph_target_pct": 13.10344827586207,
+    "success_vs_coarse_target_pct": 0.0
+  },
+  {
+    "mode": "one_shot",
+    "n": 145,
+    "embedding_dim": 512,
+    "l1": 0.36933201756970635,
+    "mse": 0.25231367966224405,
+    "cosine": 0.8566116333007813,
+    "success_vs_morph_target_pct": 100.0,
+    "success_vs_coarse_target_pct": 100.0
+  },
+  {
+    "mode": "iterative",
+    "n": 145,
+    "embedding_dim": 512,
+    "l1": 0.3418815875875539,
+    "mse": 0.22706456677667025,
+    "cosine": 0.8717435639480065,
+    "success_vs_morph_target_pct": 100.0,
+    "success_vs_coarse_target_pct": 100.0
+  }
+]

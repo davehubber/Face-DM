@@ -1,0 +1,42 @@
+[
+  {
+    "mode": "fixed_inverse",
+    "n": 78,
+    "embedding_dim": 512,
+    "l1": 0.877766340206831,
+    "mse": 1.282136966020633,
+    "cosine": 0.6727734590188051,
+    "success_vs_morph_target_pct": 83.33333333333333,
+    "success_vs_fixed_inverse_target_pct": 0.0
+  },
+  {
+    "mode": "attn_branch",
+    "n": 78,
+    "embedding_dim": 512,
+    "l1": 0.8017168778639573,
+    "mse": 1.0661773681640625,
+    "cosine": 0.6831077184432592,
+    "success_vs_morph_target_pct": 75.64102564102564,
+    "success_vs_fixed_inverse_target_pct": 56.41025641025641
+  },
+  {
+    "mode": "mlp_branch",
+    "n": 78,
+    "embedding_dim": 512,
+    "l1": 1.0894284370617988,
+    "mse": 1.9001329862154448,
+    "cosine": -0.013676172647720728,
+    "success_vs_morph_target_pct": 0.0,
+    "success_vs_fixed_inverse_target_pct": 0.0
+  },
+  {
+    "mode": "proposed",
+    "n": 78,
+    "embedding_dim": 512,
+    "l1": 0.3802930391751803,
+    "mse": 0.23971007420466497,
+    "cosine": 0.8926226298014323,
+    "success_vs_morph_target_pct": 100.0,
+    "success_vs_fixed_inverse_target_pct": 100.0
+  }
+]

@@ -1,0 +1,8 @@
+Mode: attn_branch
+Number of evaluated morphs: 145
+Embedding dim: 512
+L1: 1.054107
+MSE: 1.901565
+Cosine similarity: 0.459078
+%S vs morph-target cosine: 99.31%
+%S vs fixed-inverse-target cosine: 100.00%

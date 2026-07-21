@@ -1,0 +1,8 @@
+Mode: mlp_branch
+Number of evaluated morphs: 145
+Embedding dim: 512
+L1: 1.078065
+MSE: 1.976571
+Cosine similarity: 0.000693
+%S vs morph-target cosine: 33.79%
+%S vs fixed-inverse-target cosine: 40.00%

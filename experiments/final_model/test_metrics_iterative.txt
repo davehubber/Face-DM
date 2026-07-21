@@ -1,8 +1,0 @@
---- FINAL MODEL CONDITIONAL TEST EVALUATION (ITERATIVE) ---
-Dataset                         : MAD22 MIPGAN_II
-Split                           : held-out 20% morph split
-Direction                       : accomplice/reference -> criminal/target
-Number of evaluated morphs      : 98
-Criminal L1 Distance            : 0.411830
-Criminal Cosine Sim             : 0.821462
-Criminal %S                     : 100.00%

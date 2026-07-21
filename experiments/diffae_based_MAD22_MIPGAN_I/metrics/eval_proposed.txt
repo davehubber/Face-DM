@@ -1,0 +1,8 @@
+Mode: proposed
+Number of evaluated morphs: 145
+Embedding dim: 512
+L1: 0.767332
+MSE: 0.949724
+Cosine similarity: 0.603748
+%S vs morph-target cosine: 100.00%
+%S vs fixed-inverse-target cosine: 100.00%

@@ -1,0 +1,8 @@
+Mode: one_shot
+Number of evaluated morphs: 750
+Embedding dim: 512
+L1: 0.472743
+MSE: 0.358610
+Cosine similarity: 0.797449
+%S vs morph-target cosine: 100.00%
+%S vs coarse-target cosine: 100.00%

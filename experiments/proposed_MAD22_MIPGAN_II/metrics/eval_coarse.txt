@@ -1,0 +1,8 @@
+Mode: coarse
+Number of evaluated morphs: 145
+Embedding dim: 512
+L1: 4.090865
+MSE: 27.431634
+Cosine similarity: 0.040936
+%S vs morph-target cosine: 13.10%
+%S vs coarse-target cosine: 0.00%

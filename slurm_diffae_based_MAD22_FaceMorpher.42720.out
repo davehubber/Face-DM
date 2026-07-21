@@ -1,0 +1,166 @@
+
+====================================================================================================
+DUAL-BRANCH IDENTITY SEPARATION TRAINING SETUP
+====================================================================================================
+Dataset:             mad22
+Method:              FaceMorpher
+Scenario:            random_80_20
+Data directory:      /nas-ctm01/homes/dacordeiro/Face-DM/MAD22_embeddings/FaceMorpher/random_80_20
+Run name:            diffae_based_MAD22_FaceMorpher
+Experiment dir:      experiments/diffae_based_MAD22_FaceMorpher
+Device:              cuda
+Direction:           morph + criminal -> accomplice
+Network:             cross-attention inverse interpolation branch + MLP branch
+Loss:                MSE(predicted accomplice z_sem, target accomplice z_sem)
+Evaluation:          latent losses only, no image decoding
+====================================================================================================
+Train samples:       579
+Test samples:        145
+Embedding dim:       512
+Attention tokens:    1
+Attention note:      paper-faithful single-token 512-D attention
+Trainable params:    39.10 M
+Epoch 001 | train_mse_loss: 6.907200 | val_mse_loss: 3.645352
+Epoch 002 | train_mse_loss: 3.037798 | val_mse_loss: 2.707789
+Epoch 003 | train_mse_loss: 2.371496 | val_mse_loss: 2.278266
+Epoch 004 | train_mse_loss: 1.993718 | val_mse_loss: 2.001241
+Epoch 005 | train_mse_loss: 1.737951 | val_mse_loss: 1.832773
+Epoch 006 | train_mse_loss: 1.575084 | val_mse_loss: 1.657422
+Epoch 007 | train_mse_loss: 1.419954 | val_mse_loss: 1.560988
+Epoch 008 | train_mse_loss: 1.298022 | val_mse_loss: 1.454488
+Epoch 009 | train_mse_loss: 1.215446 | val_mse_loss: 1.377064
+Epoch 010 | train_mse_loss: 1.142643 | val_mse_loss: 1.329783 | val_proposed_l1: 0.903102 | val_proposed_mse: 1.336326 | val_proposed_cosine: 0.516054 | val_proposed_success_vs_morph_target_pct: 100.000000 | val_proposed_success_vs_fixed_inverse_target_pct: 100.000000
+Epoch 011 | train_mse_loss: 1.081922 | val_mse_loss: 1.270560
+Epoch 012 | train_mse_loss: 1.018583 | val_mse_loss: 1.233886
+Epoch 013 | train_mse_loss: 0.966988 | val_mse_loss: 1.162489
+Epoch 014 | train_mse_loss: 0.919917 | val_mse_loss: 1.137457
+Epoch 015 | train_mse_loss: 0.896567 | val_mse_loss: 1.109992
+Epoch 016 | train_mse_loss: 0.850543 | val_mse_loss: 1.104089
+Epoch 017 | train_mse_loss: 0.822200 | val_mse_loss: 1.041957
+Epoch 018 | train_mse_loss: 0.806955 | val_mse_loss: 1.021145
+Epoch 019 | train_mse_loss: 0.771445 | val_mse_loss: 1.012063
+Epoch 020 | train_mse_loss: 0.748145 | val_mse_loss: 0.953797 | val_proposed_l1: 0.767346 | val_proposed_mse: 0.964756 | val_proposed_cosine: 0.600819 | val_proposed_success_vs_morph_target_pct: 100.000000 | val_proposed_success_vs_fixed_inverse_target_pct: 100.000000
+Epoch 021 | train_mse_loss: 0.725061 | val_mse_loss: 0.956400
+Epoch 022 | train_mse_loss: 0.700827 | val_mse_loss: 0.934696
+Epoch 023 | train_mse_loss: 0.683991 | val_mse_loss: 0.908744
+Epoch 024 | train_mse_loss: 0.667409 | val_mse_loss: 0.902872
+Epoch 025 | train_mse_loss: 0.645644 | val_mse_loss: 0.891123
+Epoch 026 | train_mse_loss: 0.634303 | val_mse_loss: 0.873354
+Epoch 027 | train_mse_loss: 0.626456 | val_mse_loss: 0.889442
+Epoch 028 | train_mse_loss: 0.614775 | val_mse_loss: 0.844291
+Epoch 029 | train_mse_loss: 0.593802 | val_mse_loss: 0.851458
+Epoch 030 | train_mse_loss: 0.587528 | val_mse_loss: 0.841394 | val_proposed_l1: 0.716737 | val_proposed_mse: 0.837454 | val_proposed_cosine: 0.636700 | val_proposed_success_vs_morph_target_pct: 100.000000 | val_proposed_success_vs_fixed_inverse_target_pct: 100.000000
+Epoch 031 | train_mse_loss: 0.564365 | val_mse_loss: 0.807053
+Epoch 032 | train_mse_loss: 0.565928 | val_mse_loss: 0.807005
+Epoch 033 | train_mse_loss: 0.556407 | val_mse_loss: 0.823267
+Epoch 034 | train_mse_loss: 0.540614 | val_mse_loss: 0.792209
+Epoch 035 | train_mse_loss: 0.532745 | val_mse_loss: 0.786243
+Epoch 036 | train_mse_loss: 0.521220 | val_mse_loss: 0.784957
+Epoch 037 | train_mse_loss: 0.520632 | val_mse_loss: 0.774686
+Epoch 038 | train_mse_loss: 0.513995 | val_mse_loss: 0.780809
+Epoch 039 | train_mse_loss: 0.501243 | val_mse_loss: 0.777572
+Epoch 040 | train_mse_loss: 0.490928 | val_mse_loss: 0.746422 | val_proposed_l1: 0.676367 | val_proposed_mse: 0.748382 | val_proposed_cosine: 0.665846 | val_proposed_success_vs_morph_target_pct: 100.000000 | val_proposed_success_vs_fixed_inverse_target_pct: 100.000000
+Epoch 041 | train_mse_loss: 0.481605 | val_mse_loss: 0.756173
+Epoch 042 | train_mse_loss: 0.481226 | val_mse_loss: 0.762603
+Epoch 043 | train_mse_loss: 0.472411 | val_mse_loss: 0.729425
+Epoch 044 | train_mse_loss: 0.457269 | val_mse_loss: 0.737190
+Epoch 045 | train_mse_loss: 0.454346 | val_mse_loss: 0.718370
+Epoch 046 | train_mse_loss: 0.457778 | val_mse_loss: 0.714475
+Epoch 047 | train_mse_loss: 0.446872 | val_mse_loss: 0.710010
+Epoch 048 | train_mse_loss: 0.439943 | val_mse_loss: 0.706176
+Epoch 049 | train_mse_loss: 0.437065 | val_mse_loss: 0.713370
+Epoch 050 | train_mse_loss: 0.433385 | val_mse_loss: 0.720875 | val_proposed_l1: 0.663113 | val_proposed_mse: 0.716233 | val_proposed_cosine: 0.677298 | val_proposed_success_vs_morph_target_pct: 100.000000 | val_proposed_success_vs_fixed_inverse_target_pct: 100.000000
+Epoch 051 | train_mse_loss: 0.426242 | val_mse_loss: 0.684028
+Epoch 052 | train_mse_loss: 0.420336 | val_mse_loss: 0.708949
+Epoch 053 | train_mse_loss: 0.424196 | val_mse_loss: 0.675990
+Epoch 054 | train_mse_loss: 0.415791 | val_mse_loss: 0.700435
+Epoch 055 | train_mse_loss: 0.400648 | val_mse_loss: 0.688415
+Epoch 056 | train_mse_loss: 0.437225 | val_mse_loss: 0.683397
+Epoch 057 | train_mse_loss: 0.395790 | val_mse_loss: 0.667364
+Epoch 058 | train_mse_loss: 0.399277 | val_mse_loss: 0.656182
+Epoch 059 | train_mse_loss: 0.383730 | val_mse_loss: 0.656389
+Epoch 060 | train_mse_loss: 0.377973 | val_mse_loss: 0.648376 | val_proposed_l1: 0.632061 | val_proposed_mse: 0.651802 | val_proposed_cosine: 0.699659 | val_proposed_success_vs_morph_target_pct: 100.000000 | val_proposed_success_vs_fixed_inverse_target_pct: 100.000000
+Epoch 061 | train_mse_loss: 0.377905 | val_mse_loss: 0.642631
+Epoch 062 | train_mse_loss: 0.369613 | val_mse_loss: 0.644065
+Epoch 063 | train_mse_loss: 0.367016 | val_mse_loss: 0.636084
+Epoch 064 | train_mse_loss: 0.361637 | val_mse_loss: 0.658236
+Epoch 065 | train_mse_loss: 0.362523 | val_mse_loss: 0.624996
+Epoch 066 | train_mse_loss: 0.351506 | val_mse_loss: 0.634643
+Epoch 067 | train_mse_loss: 0.358733 | val_mse_loss: 0.656510
+Epoch 068 | train_mse_loss: 0.358856 | val_mse_loss: 0.655437
+Epoch 069 | train_mse_loss: 0.346946 | val_mse_loss: 0.621512
+Epoch 070 | train_mse_loss: 0.342029 | val_mse_loss: 0.639175 | val_proposed_l1: 0.626668 | val_proposed_mse: 0.638683 | val_proposed_cosine: 0.706902 | val_proposed_success_vs_morph_target_pct: 100.000000 | val_proposed_success_vs_fixed_inverse_target_pct: 100.000000
+Epoch 071 | train_mse_loss: 0.336107 | val_mse_loss: 0.620793
+Epoch 072 | train_mse_loss: 0.340758 | val_mse_loss: 0.619820
+Epoch 073 | train_mse_loss: 0.334159 | val_mse_loss: 0.646399
+Epoch 074 | train_mse_loss: 0.340885 | val_mse_loss: 0.622323
+Epoch 075 | train_mse_loss: 0.332326 | val_mse_loss: 0.614187
+Epoch 076 | train_mse_loss: 0.324234 | val_mse_loss: 0.615509
+Epoch 077 | train_mse_loss: 0.315252 | val_mse_loss: 0.614191
+Epoch 078 | train_mse_loss: 0.321266 | val_mse_loss: 0.593971
+Epoch 079 | train_mse_loss: 0.312452 | val_mse_loss: 0.599796
+Epoch 080 | train_mse_loss: 0.317222 | val_mse_loss: 0.629940 | val_proposed_l1: 0.615867 | val_proposed_mse: 0.618687 | val_proposed_cosine: 0.714922 | val_proposed_success_vs_morph_target_pct: 100.000000 | val_proposed_success_vs_fixed_inverse_target_pct: 100.000000
+Epoch 081 | train_mse_loss: 0.313979 | val_mse_loss: 0.620736
+Epoch 082 | train_mse_loss: 0.306934 | val_mse_loss: 0.587069
+Epoch 083 | train_mse_loss: 0.305887 | val_mse_loss: 0.589670
+Epoch 084 | train_mse_loss: 0.302306 | val_mse_loss: 0.605114
+Epoch 085 | train_mse_loss: 0.305656 | val_mse_loss: 0.620397
+Epoch 086 | train_mse_loss: 0.299744 | val_mse_loss: 0.579662
+Epoch 087 | train_mse_loss: 0.293349 | val_mse_loss: 0.589794
+Epoch 088 | train_mse_loss: 0.293639 | val_mse_loss: 0.583890
+Epoch 089 | train_mse_loss: 0.288709 | val_mse_loss: 0.570076
+Epoch 090 | train_mse_loss: 0.284554 | val_mse_loss: 0.571492 | val_proposed_l1: 0.590920 | val_proposed_mse: 0.568820 | val_proposed_cosine: 0.733204 | val_proposed_success_vs_morph_target_pct: 100.000000 | val_proposed_success_vs_fixed_inverse_target_pct: 100.000000
+Epoch 091 | train_mse_loss: 0.280259 | val_mse_loss: 0.580282
+Epoch 092 | train_mse_loss: 0.279791 | val_mse_loss: 0.564688
+Epoch 093 | train_mse_loss: 0.284974 | val_mse_loss: 0.589326
+Epoch 094 | train_mse_loss: 0.285374 | val_mse_loss: 0.570658
+Epoch 095 | train_mse_loss: 0.281630 | val_mse_loss: 0.573015
+Epoch 096 | train_mse_loss: 0.274627 | val_mse_loss: 0.576635
+Epoch 097 | train_mse_loss: 0.278629 | val_mse_loss: 0.578557
+Epoch 098 | train_mse_loss: 0.276517 | val_mse_loss: 0.579448
+Epoch 099 | train_mse_loss: 0.276325 | val_mse_loss: 0.554991
+Epoch 100 | train_mse_loss: 0.269333 | val_mse_loss: 0.619762 | val_proposed_l1: 0.614152 | val_proposed_mse: 0.610377 | val_proposed_cosine: 0.720363 | val_proposed_success_vs_morph_target_pct: 100.000000 | val_proposed_success_vs_fixed_inverse_target_pct: 100.000000
+
+Loading checkpoint for final evaluation: experiments/diffae_based_MAD22_FaceMorpher/checkpoints/best.pt
+
+Mode: fixed_inverse
+Number of evaluated morphs: 145
+Embedding dim: 512
+L1: 4.410292
+MSE: 31.149842
+Cosine similarity: 0.025471
+%S vs morph-target cosine: 17.24%
+%S vs fixed-inverse-target cosine: 0.00%
+
+
+Mode: attn_branch
+Number of evaluated morphs: 145
+Embedding dim: 512
+L1: 0.939780
+MSE: 1.531871
+Cosine similarity: 0.528524
+%S vs morph-target cosine: 100.00%
+%S vs fixed-inverse-target cosine: 100.00%
+
+
+Mode: mlp_branch
+Number of evaluated morphs: 145
+Embedding dim: 512
+L1: 1.070570
+MSE: 1.915489
+Cosine similarity: 0.042799
+%S vs morph-target cosine: 49.66%
+%S vs fixed-inverse-target cosine: 57.24%
+
+
+Mode: proposed
+Number of evaluated morphs: 145
+Embedding dim: 512
+L1: 0.583739
+MSE: 0.553671
+Cosine similarity: 0.739328
+%S vs morph-target cosine: 100.00%
+%S vs fixed-inverse-target cosine: 100.00%
+
+
+Done. Outputs saved to: experiments/diffae_based_MAD22_FaceMorpher
